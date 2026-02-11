@@ -29,6 +29,11 @@ class Frame:
     N: int = 0
     N_updates: int = 0
     K: Optional[torch.Tensor] = None
+    # Gaussian Splatting parameters from Splatt3R decoder
+    # gaussian_pred: self-prediction (view1's Gaussians in view1's frame)
+    # gaussian_pred_cross: cross-prediction (view2's Gaussians in view1's frame)
+    gaussian_pred: Optional[dict] = None
+    gaussian_pred_cross: Optional[dict] = None
 
     def get_score(self, C):
         filtering_score = config["tracking"]["filtering_score"]

@@ -23,6 +23,7 @@ from splatt3r_slam.splatt3r_utils import (
     load_splatt3r,
     load_retriever,
     splatt3r_inference_mono,
+    splatt3r_render,
 )
 from splatt3r_slam.multiprocess_utils import new_queue, try_get_msg
 from splatt3r_slam.tracker import FrameTracker
@@ -166,6 +167,16 @@ if __name__ == "__main__":
         default=None,
         help="Path to Splatt3R checkpoint (downloads if not provided)",
     )
+    parser.add_argument(
+        "--render-gaussians",
+        action="store_true",
+        help="Enable Gaussian Splatting rendering via model.decoder (DecoderSplattingCUDA)",
+    )
+    parser.add_argument(
+        "--render-dir",
+        default="logs/gaussian_renders",
+        help="Directory to save Gaussian-rendered images",
+    )
 
     args = parser.parse_args()
 
@@ -234,6 +245,14 @@ if __name__ == "__main__":
     tracker = FrameTracker(model, keyframes, device)
     last_msg = WindowMsg()
 
+    # Gaussian rendering setup
+    render_gaussians = args.render_gaussians
+    render_dir = None
+    if render_gaussians:
+        render_dir = pathlib.Path(args.render_dir)
+        render_dir.mkdir(exist_ok=True, parents=True)
+        print(f"[Gaussian Rendering] Enabled. Saving to {render_dir}")
+
     backend = mp.Process(target=run_backend, args=(config, model, states, keyframes, K))
     backend.start()
 
@@ -282,6 +301,18 @@ if __name__ == "__main__":
             states.queue_global_optimization(len(keyframes) - 1)
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
+
+            # --- Gaussian Splatting render (init self-render) ---
+            if render_gaussians:
+                rendered = splatt3r_render(model, frame, frame, K=K)
+                if rendered is not None:
+                    rendered_img = rendered[0, 0].cpu()  # (3, H, W)
+                    rendered_img = (
+                        rendered_img.clamp(0, 1).permute(1, 2, 0).numpy() * 255
+                    ).astype("uint8")
+                    rendered_bgr = cv2.cvtColor(rendered_img, cv2.COLOR_RGB2BGR)
+                    cv2.imwrite(str(render_dir / f"gs_init_{i:06d}.png"), rendered_bgr)
+
             i += 1
             continue
 
@@ -290,6 +321,27 @@ if __name__ == "__main__":
             if try_reloc:
                 states.set_mode(Mode.RELOC)
             states.set_frame(frame)
+
+            # --- Gaussian Splatting render (after tracking) ---
+            if render_gaussians and not try_reloc:
+                keyframe = keyframes.last_keyframe()
+                if keyframe is not None:
+                    rendered = splatt3r_render(
+                        model,
+                        frame,
+                        keyframe,
+                        K=K,
+                        target_T_WC=frame.T_WC,
+                    )
+                    if rendered is not None:
+                        rendered_img = rendered[0, 0].cpu()  # (3, H, W)
+                        rendered_img = (
+                            rendered_img.clamp(0, 1).permute(1, 2, 0).numpy() * 255
+                        ).astype("uint8")
+                        rendered_bgr = cv2.cvtColor(rendered_img, cv2.COLOR_RGB2BGR)
+                        cv2.imwrite(
+                            str(render_dir / f"gs_track_{i:06d}.png"), rendered_bgr
+                        )
 
         elif mode == Mode.RELOC:
             X, C = splatt3r_inference_mono(model, frame)
