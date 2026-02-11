@@ -42,7 +42,7 @@ Splatt3R-SLAM integrates [Splatt3R](https://splatt3r.active.vision) (Zero-shot G
 
 ### Prerequisites
 - Ubuntu 20.04+ (or WSL2 on Windows)
-- NVIDIA GPU with CUDA 11.8+
+- NVIDIA GPU with CUDA 11.8+ **or** AMD GPU with ROCm 7.1
 - Conda/Miniconda
 - Git
 
@@ -62,6 +62,9 @@ conda activate splatt3r-slam
 ```
 
 ### Step 3: Install PyTorch
+Choose one backend and install the matching PyTorch build.
+
+**CUDA (NVIDIA)**
 Check your CUDA version with `nvcc --version`, then install matching PyTorch:
 ```bash
 # For CUDA 11.8
@@ -72,6 +75,15 @@ conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=
 
 # For CUDA 12.4
 conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
+```
+
+**ROCm 7.1 (AMD)**
+```bash
+# Use the ROCm 7.1 wheel index
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.1
+
+# Optional but recommended for deterministic arch targeting
+export PYTORCH_ROCM_ARCH="gfx90a;gfx942;gfx1100;gfx1101;gfx1200"
 ```
 
 ### Step 4: Install Dependencies (IN THIS ORDER!)
@@ -89,8 +101,17 @@ pip install -e thirdparty/diff-gaussian-rasterization-modified
 
 **4c. Install main package**:
 ```bash
+# Auto-detect (default): picks ROCm when PyTorch is ROCm build, otherwise CUDA when available.
 pip install --no-build-isolation -e .
+
+# Force CUDA extension build
+SPLATT3R_GPU_BACKEND=cuda pip install --no-build-isolation -e .
+
+# Force ROCm extension build (for AMD + ROCm 7.1)
+SPLATT3R_GPU_BACKEND=rocm pip install --no-build-isolation -e .
 ```
+
+If you are on AMD/ROCm, choose `SPLATT3R_GPU_BACKEND=rocm` (or leave default auto-detect with ROCm PyTorch). If you are on NVIDIA/CUDA, choose `SPLATT3R_GPU_BACKEND=cuda`.
 
 **4d. Install Splatt3R-specific dependencies**:
 ```bash

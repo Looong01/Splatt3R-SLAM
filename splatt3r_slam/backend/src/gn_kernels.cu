@@ -4,8 +4,12 @@
 // Any modifications made are licensed under the CC BY-NC-SA 4.0 License.
 
 #include <torch/extension.h>
+#if defined(USE_ROCM) || defined(__HIP_PLATFORM_AMD__)
+#include <hip/hip_runtime.h>
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 
 #include <vector>
 #include <iostream>

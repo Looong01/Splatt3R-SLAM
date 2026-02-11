@@ -4,14 +4,26 @@
 */
 
 #include <torch/extension.h>
+#if defined(USE_ROCM) || defined(__HIP_PLATFORM_AMD__)
+#include <hip/hip_runtime.h>
+using gpuError_t = hipError_t;
+static constexpr gpuError_t gpuSuccess = hipSuccess;
+#define gpuGetLastError hipGetLastError
+#define gpuGetErrorString hipGetErrorString
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
+using gpuError_t = cudaError_t;
+static constexpr gpuError_t gpuSuccess = cudaSuccess;
+#define gpuGetLastError cudaGetLastError
+#define gpuGetErrorString cudaGetErrorString
+#endif
 #include <vector>
 
 #define CHECK_CUDA(tensor) {\
     TORCH_CHECK((tensor).is_cuda(), #tensor " is not in cuda memory"); \
     TORCH_CHECK((tensor).is_contiguous(), #tensor " is not contiguous"); }
-void CHECK_KERNEL() {auto error = cudaGetLastError(); TORCH_CHECK( error == cudaSuccess, cudaGetErrorString(error));}
+void CHECK_KERNEL() {auto error = gpuGetLastError(); TORCH_CHECK(error == gpuSuccess, gpuGetErrorString(error));}
 
 
 template < typename scalar_t  >
