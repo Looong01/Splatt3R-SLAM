@@ -17,6 +17,15 @@
 </p>
 <br>
 
+## ⚠️ Important: Installation Required
+
+**Before running Splatt3R-SLAM**, you MUST install all dependencies following the instructions below. The system will check for missing dependencies and provide installation commands if needed.
+
+If you get import errors, see:
+- [Installation Instructions](#installation) (below)
+- [QUICKSTART.md](QUICKSTART.md) - Step-by-step guide
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
+
 ## Overview
 
 Splatt3R-SLAM integrates [Splatt3R](https://splatt3r.active.vision) (Zero-shot Gaussian Splatting from Uncalibrated Image Pairs) into a real-time SLAM system. This combines the dense 3D reconstruction capabilities of MASt3R-SLAM with Splatt3R's 3D Gaussian Splatting for improved scene representation.
@@ -29,46 +38,95 @@ Splatt3R-SLAM integrates [Splatt3R](https://splatt3r.active.vision) (Zero-shot G
 
 # Getting Started
 ## Installation
-```
+
+**⚠️ IMPORTANT: Follow these steps IN ORDER**
+
+### 1. Create Environment
+```bash
 conda create -n splatt3r-slam python=3.11
 conda activate splatt3r-slam
 ```
-Check the system's CUDA version with nvcc
-```
+### 2. Install PyTorch
+
+Check your system's CUDA version:
+```bash
 nvcc --version
 ```
-Install pytorch with **matching** CUDA version following:
-```
-# CUDA 11.8
-conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1  pytorch-cuda=11.8 -c pytorch -c nvidia
-# CUDA 12.1
+
+Install PyTorch with **matching** CUDA version:
+```bash
+# For CUDA 11.8
+conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=11.8 -c pytorch -c nvidia
+
+# For CUDA 12.1
 conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.1 -c pytorch -c nvidia
-# CUDA 12.4
+
+# For CUDA 12.4
 conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
 ```
 
-Clone the repo and install the dependencies.
+### 3. Clone Repository
+
 ```bash
 git clone https://github.com/Looong01/Splatt3R-SLAM.git --recursive
 cd Splatt3R-SLAM/
 
-# if you've cloned the repo without --recursive run:
+# If you cloned without --recursive, run:
 # git submodule update --init --recursive
+```
 
-# Install lietorch first (required dependency)
+### 4. Install Dependencies (IN THIS ORDER!)
+
+**Step 4a: Install lietorch FIRST** (critical dependency):
+```bash
 pip install git+https://github.com/princeton-vl/lietorch.git
+```
 
-# Install other dependencies
+**Step 4b: Install thirdparty dependencies**:
+```bash
 pip install -e thirdparty/in3d
-pip install --no-build-isolation -e .
+```
 
-# Install Splatt3R-specific dependencies
+**Step 4c: Install main package**:
+```bash
+pip install --no-build-isolation -e .
+```
+
+**Step 4d: Install Splatt3R-specific dependencies**:
+```bash
 pip install lightning lpips omegaconf huggingface_hub gitpython
 pip install git+https://github.com/dcharatan/diff-gaussian-rasterization-modified
+```
 
-# Optionally install torchcodec for faster mp4 loading
+**Step 4e (Optional): Install torchcodec for faster mp4 loading**:
+```bash
 pip install torchcodec==0.1
 ```
+
+### 5. Verify Installation
+
+After installation, verify dependencies are correctly installed:
+```bash
+python -c "import lietorch, PIL, cv2, lightning, lpips, omegaconf; print('✓ All dependencies OK')"
+```
+
+If you see any import errors, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+---
+
+## Quick Test
+
+Download a test dataset and run:
+```bash
+bash ./scripts/download_tum.sh
+python main_splatt3r.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config config/base.yaml
+```
+
+If you get dependency errors, the script will tell you exactly what to install.
+
+---
+
+## Checkpoint Download
 
 The Splatt3R checkpoint will be automatically downloaded from HuggingFace when you first run the system.
 You can also manually download it:
@@ -79,7 +137,7 @@ mkdir -p checkpoints/
 ```
 
 ## WSL Users
-We have primarily tested on Ubuntu.  If you are using WSL, please checkout to the windows branch and follow the above installation.
+We have primarily tested on Ubuntu. If you are using WSL, please checkout to the windows branch and follow the above installation.
 ```
 git checkout windows
 ```
