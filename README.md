@@ -107,7 +107,7 @@ pip install torchcodec==0.1
 
 After installation, verify dependencies are correctly installed:
 ```bash
-python -c "import lietorch, PIL, cv2, lightning, lpips, omegaconf; print('✓ All dependencies OK')"
+python -c "import lietorch, PIL, cv2, einops, lightning, lpips, omegaconf; print('✓ All dependencies OK')"
 ```
 
 If you see any import errors, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

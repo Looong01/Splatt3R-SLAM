@@ -7,7 +7,14 @@ import lightning as L
 import lpips
 import omegaconf
 import torch
-import wandb
+
+# wandb is optional - only needed for training with wandb logging
+try:
+    import wandb
+    HAS_WANDB = True
+except ImportError:
+    HAS_WANDB = False
+    wandb = None
 
 # Add MAST3R and PixelSplat to the sys.path to prevent issues during importing
 _current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -289,15 +296,18 @@ def run_experiment(config):
         )
         loggers.append(csv_logger)
     if config.loggers.use_wandb:
-        wandb_logger = L.pytorch.loggers.WandbLogger(
-            project='splatt3r',
-            name=config.name,
-            save_dir=config.save_dir,
-            config=omegaconf.OmegaConf.to_container(config),
-        )
-        if wandb.run is not None:
-            wandb.run.log_code(".")
-        loggers.append(wandb_logger)
+        if not HAS_WANDB:
+            print("Warning: wandb is not installed. Skipping wandb logging. Install with: pip install wandb")
+        else:
+            wandb_logger = L.pytorch.loggers.WandbLogger(
+                project='splatt3r',
+                name=config.name,
+                save_dir=config.save_dir,
+                config=omegaconf.OmegaConf.to_container(config),
+            )
+            if wandb.run is not None:
+                wandb.run.log_code(".")
+            loggers.append(wandb_logger)
 
     # Set up profiler
     if config.use_profiler:

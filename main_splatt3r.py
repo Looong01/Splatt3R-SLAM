@@ -26,6 +26,11 @@ def check_dependencies():
         missing_deps.append("opencv-python")
     
     try:
+        import einops
+    except ImportError:
+        missing_deps.append("einops")
+    
+    try:
         import lightning
     except ImportError:
         missing_deps.append("lightning")
