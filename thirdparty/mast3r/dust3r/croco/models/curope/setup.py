@@ -1,34 +1,59 @@
-# Copyright (C) 2022-present Naver Corporation. All rights reserved.
-# Licensed under CC BY-NC-SA 4.0 (non-commercial use only).
-
 from setuptools import setup
 from torch import cuda
-from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+from torch.utils.cpp_extension import BuildExtension, CUDAExtension, ROCM_HOME
 
-# compile for all possible CUDA architectures
-all_cuda_archs = cuda.get_gencode_flags().replace('compute=','arch=').split()
-# alternatively, you can list cuda archs that you want, eg:
-# all_cuda_archs = [
-    # '-gencode', 'arch=compute_70,code=sm_70',
-    # '-gencode', 'arch=compute_75,code=sm_75',
-    # '-gencode', 'arch=compute_80,code=sm_80',
-    # '-gencode', 'arch=compute_86,code=sm_86'
-# ]
+import os
+import torch
+
+
+def _select_backend() -> str:
+    requested = os.environ.get("CUROPE_GPU_BACKEND", "auto").strip().lower()
+    if requested not in {"auto", "cuda", "rocm"}:
+        raise RuntimeError(
+            f"Invalid CUROPE_GPU_BACKEND='{requested}', expected one of ['auto', 'cuda', 'rocm']"
+        )
+
+    has_rocm = bool(getattr(torch.version, "hip", None)) and bool(ROCM_HOME)
+    has_cuda = bool(getattr(torch.version, "cuda", None))
+
+    if requested == "auto":
+        if has_rocm:
+            return "rocm"
+        if has_cuda:
+            return "cuda"
+        raise RuntimeError(
+            "Neither ROCm nor CUDA PyTorch build detected; cannot compile curope extension."
+        )
+
+    if requested == "rocm" and not has_rocm:
+        raise RuntimeError(
+            "CUROPE_GPU_BACKEND=rocm requires ROCm-enabled PyTorch and ROCM_HOME."
+        )
+    if requested == "cuda" and not has_cuda:
+        raise RuntimeError("CUROPE_GPU_BACKEND=cuda requires CUDA-enabled PyTorch.")
+    return requested
+
+
+backend = _select_backend()
+
+if backend == "cuda":
+    all_gpu_archs = cuda.get_gencode_flags().replace("compute=", "arch=").split()
+    extra_nvcc = ["-O3", "--ptxas-options=-v", "--use_fast_math"] + all_gpu_archs
+else:
+    rocm_arch = os.environ.get(
+        "PYTORCH_ROCM_ARCH", "gfx90a;gfx942;gfx1100;gfx1101;gfx1200"
+    )
+    os.environ.setdefault("PYTORCH_ROCM_ARCH", rocm_arch)
+    extra_nvcc = ["-O3", "--use_fast_math", "-std=c++17"]
 
 setup(
-    name = 'curope',
-    ext_modules = [
+    name="curope",
+    ext_modules=[
         CUDAExtension(
-                name='curope',
-                sources=[
-                    "curope.cpp",
-                    "kernels.cu",
-                ],
-                extra_compile_args = dict(
-                    nvcc=['-O3','--ptxas-options=-v',"--use_fast_math"]+all_cuda_archs, 
-                    cxx=['-O3'])
-                )
+            name="curope",
+            sources=["curope.cpp", "kernels.cu"],
+            extra_compile_args={"nvcc": extra_nvcc, "cxx": ["-O3"]},
+        )
     ],
-    cmdclass = {
-        'build_ext': BuildExtension
-    })
+    cmdclass={"build_ext": BuildExtension},
+)

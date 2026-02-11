@@ -1,15 +1,20 @@
 #include <torch/extension.h>
+#if defined(USE_ROCM) || defined(__HIP_PLATFORM_AMD__)
+#include <hip/hip_runtime.h>
+#include <hip/hip_fp16.h>
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include <vector>
 #include <cuda_fp16.h>
+#endif
+#include <vector>
 
 
 #include <ATen/ATen.h>
 #include <ATen/NativeFunctions.h>
 #include <ATen/Parallel.h>
 
-#include <cuda/std/limits>
+#include <limits>
 
 #define BLOCK 16
 
@@ -43,7 +48,7 @@ __global__ void refine_matches_kernel(
   long u0 = p1[b][n][0];
   long v0 = p1[b][n][1];
 
-  scalar_t max_score = ::cuda::std::numeric_limits<scalar_t>::min();
+  scalar_t max_score = std::numeric_limits<scalar_t>::lowest();
   long u_new = u0;
   long v_new = v0;
 
