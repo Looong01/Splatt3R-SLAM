@@ -1,5 +1,3 @@
-# Splatt3R-SLAM: Real-Time Dense SLAM with 3D Gaussian Splatting
-
 <p align="center">
   <h1 align="center">Splatt3R-SLAM: Real-Time Dense SLAM with 3D Gaussian Splatting</h1>
   <p align="center">
