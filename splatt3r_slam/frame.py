@@ -29,6 +29,17 @@ class Frame:
     N: int = 0
     N_updates: int = 0
     K: Optional[torch.Tensor] = None
+    # Gaussian Splatting parameters from Splatt3R decoder
+    # gaussian_pred: self-prediction (view1's Gaussians in view1's frame)
+    # gaussian_pred_cross: cross-prediction (view2's Gaussians in view1's frame)
+    # NOTE: These are NOT stored in SharedKeyframes/SharedStates shared memory
+    # because the per-frame Gaussian parameter tensors (means, scales, rotations,
+    # sh, opacities) would consume too much GPU memory for the keyframe buffer.
+    # Gaussian rendering via splatt3r_render() must therefore be performed in the
+    # main process immediately after inference, while the local Frame object still
+    # holds these fields.
+    gaussian_pred: Optional[dict] = None
+    gaussian_pred_cross: Optional[dict] = None
 
     def get_score(self, C):
         filtering_score = config["tracking"]["filtering_score"]
@@ -151,6 +162,9 @@ class SharedStates:
         self.C = torch.zeros(h * w, 1, device=device, dtype=dtype).share_memory_()
         self.feat = torch.zeros(1, self.num_patches, self.feat_dim, device=device, dtype=dtype).share_memory_()
         self.pos = torch.zeros(1, self.num_patches, 2, device=device, dtype=torch.long).share_memory_()
+        # Gaussian-rendered image from DecoderSplattingCUDA (CPU shared memory)
+        self.gs_rendered = torch.zeros(h, w, 3, device="cpu", dtype=dtype).share_memory_()
+        self.gs_rendered_valid = manager.Value("i", 0)
         # fmt: on
 
     def set_frame(self, frame):
@@ -181,6 +195,19 @@ class SharedStates:
             frame.feat = self.feat
             frame.pos = self.pos
             return frame
+
+    def set_gs_rendered(self, img):
+        """Set gaussian-rendered image. img: (H, W, 3) float32 tensor in [0,1]."""
+        with self.lock:
+            self.gs_rendered[:] = img
+            self.gs_rendered_valid.value = 1
+
+    def get_gs_rendered(self):
+        """Get gaussian-rendered image as (H, W, 3) float32 numpy array, or None."""
+        with self.lock:
+            if self.gs_rendered_valid.value == 0:
+                return None
+            return self.gs_rendered.numpy().copy()
 
     def queue_global_optimization(self, idx):
         with self.lock:
@@ -325,3 +352,112 @@ class SharedKeyframes:
         assert config["use_calib"]
         with self.lock:
             return self.K
+
+
+class SharedGaussians:
+    """Cross-process shared buffer for accumulated world-space Gaussian primitives.
+
+    The main process converts per-keyframe Gaussian predictions to world coordinates
+    and appends them here.  The visualization process reads from this buffer to perform
+    real-time Gaussian rasterization from an interactive camera.
+
+    Memory layout (all tensors are ``share_memory_()``):
+        means       (max_gaussians, 3)   – world-space centres
+        cov_triu    (max_gaussians, 6)   – upper-triangle of 3×3 covariance
+        colors      (max_gaussians, 3)   – RGB colour (from SH 0-th order)
+        opacities   (max_gaussians,)     – per-Gaussian opacity
+        kf_id       (max_gaussians,)     – source keyframe index (for pruning)
+    """
+
+    def __init__(
+        self, manager, max_gaussians: int = 4 * 1024 * 1024, device: str = "cuda"
+    ):
+        self.lock = manager.RLock()
+        self.max_gaussians = max_gaussians
+        self.n_gaussians = manager.Value("i", 0)
+        self.device = device
+
+        # fmt: off
+        self.means     = torch.zeros(max_gaussians, 3, device=device, dtype=torch.float32).share_memory_()
+        self.cov_triu  = torch.zeros(max_gaussians, 6, device=device, dtype=torch.float32).share_memory_()
+        self.colors    = torch.zeros(max_gaussians, 3, device=device, dtype=torch.float32).share_memory_()
+        self.opacities = torch.zeros(max_gaussians,    device=device, dtype=torch.float32).share_memory_()
+        self.kf_id     = torch.zeros(max_gaussians,    device=device, dtype=torch.int32).share_memory_()
+        # fmt: on
+
+    def append(
+        self,
+        means,
+        cov_triu,
+        colors,
+        opacities,
+        kf_idx: int,
+        opacity_threshold: float = 0.05,
+    ):
+        """Append a batch of world-space Gaussians, filtering low-opacity ones.
+
+        Args:
+            means:      (G, 3) world-space centres
+            cov_triu:   (G, 6) upper-triangle covariance
+            colors:     (G, 3) RGB
+            opacities:  (G,)   opacity
+            kf_idx:     keyframe index for provenance tracking
+            opacity_threshold: discard Gaussians below this opacity
+        """
+        # Filter low-opacity
+        mask = opacities > opacity_threshold
+        means = means[mask]
+        cov_triu = cov_triu[mask]
+        colors = colors[mask]
+        opacities = opacities[mask]
+
+        n_new = means.shape[0]
+        if n_new == 0:
+            return
+
+        with self.lock:
+            n = self.n_gaussians.value
+            space = self.max_gaussians - n
+            if space <= 0:
+                # FIFO eviction: drop oldest half
+                half = self.max_gaussians // 2
+                self.means[:half] = self.means[self.max_gaussians - half :].clone()
+                self.cov_triu[:half] = self.cov_triu[
+                    self.max_gaussians - half :
+                ].clone()
+                self.colors[:half] = self.colors[self.max_gaussians - half :].clone()
+                self.opacities[:half] = self.opacities[
+                    self.max_gaussians - half :
+                ].clone()
+                self.kf_id[:half] = self.kf_id[self.max_gaussians - half :].clone()
+                n = half
+                space = self.max_gaussians - n
+
+            # Truncate if still too many
+            n_add = min(n_new, space)
+            self.means[n : n + n_add] = means[:n_add]
+            self.cov_triu[n : n + n_add] = cov_triu[:n_add]
+            self.colors[n : n + n_add] = colors[:n_add]
+            self.opacities[n : n + n_add] = opacities[:n_add]
+            self.kf_id[n : n + n_add] = kf_idx
+            self.n_gaussians.value = n + n_add
+
+    def get_all(self):
+        """Return current Gaussians as a tuple of tensors (no copy, lock held externally).
+
+        Returns (means, cov_triu, colors, opacities) each sliced to [:n].
+        """
+        with self.lock:
+            n = self.n_gaussians.value
+            if n == 0:
+                return None
+            return (
+                self.means[:n],
+                self.cov_triu[:n],
+                self.colors[:n],
+                self.opacities[:n],
+            )
+
+    def clear(self):
+        with self.lock:
+            self.n_gaussians.value = 0

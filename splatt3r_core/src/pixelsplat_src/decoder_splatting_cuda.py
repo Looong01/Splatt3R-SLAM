@@ -8,7 +8,13 @@ except ImportError:
 try:
     from utils.geometry import normalize_intrinsics
 except ImportError:
-    pass
+
+    def normalize_intrinsics(intrinsics, image_shape):
+        """Fallback: normalize intrinsics matrix by image dimensions."""
+        intrinsics = intrinsics.clone()
+        intrinsics[..., 0, :] /= image_shape[1]
+        intrinsics[..., 1, :] /= image_shape[0]
+        return intrinsics
 
 
 class DecoderSplattingCUDA(torch.nn.Module):

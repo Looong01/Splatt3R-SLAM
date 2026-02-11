@@ -17,43 +17,54 @@
 </p>
 <br>
 
-## ⚠️ Important: Installation Required
-
-**Before running Splatt3R-SLAM**, you MUST install all dependencies following the instructions below. The system will check for missing dependencies and provide installation commands if needed.
-
-If you get import errors, see:
-- [Installation Instructions](#installation) (below)
-- [QUICKSTART.md](QUICKSTART.md) - Step-by-step guide
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
-
 ## Overview
 
 Splatt3R-SLAM integrates [Splatt3R](https://splatt3r.active.vision) (Zero-shot Gaussian Splatting from Uncalibrated Image Pairs) into a real-time SLAM system. This combines the dense 3D reconstruction capabilities of MASt3R-SLAM with Splatt3R's 3D Gaussian Splatting for improved scene representation.
 
 ### Key Features
 - **3D Gaussian Splatting**: Uses Splatt3R to predict 3D Gaussians directly from image pairs
-- **Zero-shot Reconstruction**: No scene-specific training required  
+- **Zero-shot Reconstruction**: No scene-specific training required
 - **Real-time Performance**: Maintains real-time SLAM capabilities
 - **Dense 3D Reconstruction**: Produces detailed 3D reconstructions with Gaussian splats
+- **Per-frame PNG Export**: Saves Gaussian-rendered images for every frame by default
 
-# Getting Started
+### Differences from MASt3R-SLAM
+
+| Aspect | MASt3R-SLAM | Splatt3R-SLAM |
+|--------|-------------|---------------|
+| **Model** | MASt3R | MAST3RGaussians (Splatt3R) |
+| **Output** | Points + Descriptors | Points + Descriptors + Gaussians |
+| **Visualization** | OpenGL point cloud | Interactive Gaussian Splatting |
+| **View Synthesis** | Limited | Excellent |
+| **Entry Point** | `main.py` | `main_splatt3r.py` |
+
+---
+
 ## Installation
 
-**⚠️ IMPORTANT: Follow these steps IN ORDER**
+### Prerequisites
+- Ubuntu 20.04+ (or WSL2 on Windows)
+- NVIDIA GPU with CUDA 11.8+
+- Conda/Miniconda
+- Git
 
-### 1. Create Environment
+### Step 1: Clone Repository
+```bash
+git clone https://github.com/Looong01/Splatt3R-SLAM.git --recursive
+cd Splatt3R-SLAM/
+
+# If you cloned without --recursive:
+# git submodule update --init --recursive
+```
+
+### Step 2: Create Environment
 ```bash
 conda create -n splatt3r-slam python=3.11
 conda activate splatt3r-slam
 ```
-### 2. Install PyTorch
 
-Check your system's CUDA version:
-```bash
-nvcc --version
-```
-
-Install PyTorch with **matching** CUDA version:
+### Step 3: Install PyTorch
+Check your CUDA version with `nvcc --version`, then install matching PyTorch:
 ```bash
 # For CUDA 11.8
 conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=11.8 -c pytorch -c nvidia
@@ -65,151 +76,317 @@ conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=
 conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
 ```
 
-### 3. Clone Repository
+### Step 4: Install Dependencies (IN THIS ORDER!)
 
-```bash
-git clone https://github.com/Looong01/Splatt3R-SLAM.git --recursive
-cd Splatt3R-SLAM/
-
-# If you cloned without --recursive, run:
-# git submodule update --init --recursive
-```
-
-### 4. Install Dependencies (IN THIS ORDER!)
-
-**Step 4a: Install lietorch FIRST** (critical dependency):
+**4a. Install lietorch FIRST** (critical dependency):
 ```bash
 pip install git+https://github.com/princeton-vl/lietorch.git
 ```
 
-**Step 4b: Install thirdparty dependencies**:
+**4b. Install thirdparty dependencies**:
 ```bash
 pip install -e thirdparty/in3d
 ```
 
-**Step 4c: Install main package**:
+**4c. Install main package**:
 ```bash
 pip install --no-build-isolation -e .
 ```
 
-**Step 4d: Install Splatt3R-specific dependencies**:
+**4d. Install Splatt3R-specific dependencies**:
 ```bash
-pip install lightning lpips omegaconf huggingface_hub gitpython
+pip install lightning lpips omegaconf huggingface_hub gitpython einops
 pip install git+https://github.com/dcharatan/diff-gaussian-rasterization-modified
 ```
 
-**Step 4e (Optional): Install torchcodec for faster mp4 loading**:
+**4e. (Optional) Install torchcodec** for faster mp4 loading:
 ```bash
 pip install torchcodec==0.1
 ```
 
+### Verify Installation
+```bash
+python -c "import lietorch, PIL, cv2, einops, lightning, lpips, omegaconf; print('All dependencies OK')"
+python -c "from splatt3r_slam.splatt3r_utils import load_splatt3r; print('splatt3r_slam OK')"
+```
+
+### Checkpoint
+The Splatt3R checkpoint (~150MB) is **automatically downloaded** from HuggingFace on first run.
+To download manually:
+```bash
+mkdir -p checkpoints/
+# https://huggingface.co/brandonsmart/splatt3r_v1.0/blob/main/epoch=19-step=1200.ckpt
+```
+
 ---
 
-## Quick Test
+## Usage
 
-Download a test dataset and run:
+### Command-Line Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--dataset` | `datasets/tum/rgbd_dataset_freiburg1_desk` | Path to dataset, video, or `realsense` |
+| `--config` | `config/base.yaml` | Path to config YAML |
+| `--calib` | `""` | Path to camera intrinsics YAML (optional) |
+| `--checkpoint` | `None` | Path to Splatt3R checkpoint (auto-downloads if not set) |
+| `--no-viz` | `False` | Disable visualization window |
+| `--render-gaussians` | **`True`** | Save per-frame Gaussian-rendered PNGs |
+| `--no-render-gaussians` | `False` | Disable per-frame PNG saving |
+| `--render-dir` | `logs/gaussian_renders` | Directory for rendered PNGs |
+| `--max-gaussians` | `4194304` (4M) | Max Gaussians in shared visualization buffer |
+| `--spatial-stride` | `4` | Spatial subsampling stride (1 = no subsampling, 4 = 16× fewer Gaussians per frame) |
+| `--save-as` | `default` | Save tag for results |
+
+### Quick Test
 ```bash
 bash ./scripts/download_tum.sh
 python main_splatt3r.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config config/base.yaml
 ```
 
-If you get dependency errors, the script will tell you exactly what to install.
+By default, per-frame Gaussian-rendered PNGs are saved to `logs/gaussian_renders/`.
+
+### Custom Gaussian Parameters
+```bash
+# Higher density Gaussians (slower, better quality)
+python main_splatt3r.py \
+    --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
+    --config config/base.yaml \
+    --spatial-stride 1 \
+    --max-gaussians 8388608
+
+# Lower density Gaussians (faster, less memory)
+python main_splatt3r.py \
+    --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
+    --config config/base.yaml \
+    --spatial-stride 8 \
+    --max-gaussians 2097152
+```
+
+### Disable PNG Saving
+```bash
+python main_splatt3r.py \
+    --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
+    --config config/base.yaml \
+    --no-render-gaussians
+```
+
+### With Camera Calibration
+```bash
+python main_splatt3r.py \
+    --dataset datasets/tum/rgbd_dataset_freiburg1_room/ \
+    --config config/calib.yaml
+
+# With custom intrinsics
+python main_splatt3r.py \
+    --dataset path/to/data \
+    --config config/base.yaml \
+    --calib config/intrinsics.yaml
+```
+
+### Run on Video / Image Folder
+```bash
+python main_splatt3r.py --dataset path/to/video.mp4 --config config/base.yaml
+python main_splatt3r.py --dataset path/to/image_folder --config config/base.yaml
+```
+
+### Live Demo (RealSense)
+```bash
+python main_splatt3r.py --dataset realsense --config config/base.yaml
+```
+
+### Headless Mode (No GUI)
+```bash
+python main_splatt3r.py \
+    --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
+    --config config/base.yaml \
+    --no-viz
+```
+
+### Original MASt3R-SLAM (for comparison)
+```bash
+python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config config/base.yaml
+```
 
 ---
 
-## Checkpoint Download
+## Output
 
-The Splatt3R checkpoint will be automatically downloaded from HuggingFace when you first run the system.
-You can also manually download it:
-```bash
-mkdir -p checkpoints/
-# The system will download this automatically:
-# https://huggingface.co/brandonsmart/splatt3r_v1.0/blob/main/epoch=19-step=1200.ckpt
-```
+| Output | Location | Description |
+|--------|----------|-------------|
+| Trajectory | `logs/<dataset>/trajectory.txt` | Camera trajectory (TUM format) |
+| Reconstruction | `logs/<dataset>/reconstruction.ply` | 3D point cloud |
+| Keyframes | `logs/keyframes/` | Saved keyframe images |
+| GS Renders | `logs/gaussian_renders/` | Per-frame Gaussian-rendered PNGs |
 
-## WSL Users
-We have primarily tested on Ubuntu. If you are using WSL, please checkout to the windows branch and follow the above installation.
-```
-git checkout windows
-```
-This disables multiprocessing which causes an issue with shared memory as discussed [here](https://github.com/rmurai0610/MASt3R-SLAM/issues/21).
+---
 
-## Examples
-Run Splatt3R-SLAM on TUM dataset:
-```
-bash ./scripts/download_tum.sh
-python main_splatt3r.py --dataset datasets/tum/rgbd_dataset_freiburg1_room/ --config config/calib.yaml
-```
+## Architecture
 
-For the original MASt3R-SLAM version (without Gaussian Splatting):
 ```
-python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_room/ --config config/calib.yaml
-```
-## Live Demo
-Connect a realsense camera to the PC and run
-```
-python main_splatt3r.py --dataset realsense --config config/base.yaml
-```
-## Running on a video
-Our system can process either MP4 videos or folders containing RGB images.
-```
-python main_splatt3r.py --dataset <path/to/video>.mp4 --config config/base.yaml
-python main_splatt3r.py --dataset <path/to/folder> --config config/base.yaml
-```
-If the calibration parameters are known, you can specify them in intrinsics.yaml
-```
-python main_splatt3r.py --dataset <path/to/video>.mp4 --config config/base.yaml --calib config/intrinsics.yaml
-python main_splatt3r.py --dataset <path/to/folder> --config config/base.yaml --calib config/intrinsics.yaml
+Splatt3R-SLAM/
+├── main_splatt3r.py         # Main entry point (Splatt3R-SLAM)
+├── main.py                  # Original MASt3R-SLAM entry point
+├── splatt3r_core/           # Core Splatt3R implementation
+│   ├── main.py              # MAST3RGaussians Lightning module
+│   ├── src/
+│   │   ├── mast3r_src/      # MASt3R encoder with Gaussian head
+│   │   └── pixelsplat_src/  # PixelSplat decoder (CUDA rasterizer)
+│   └── utils/               # Geometry, SH, loss utilities
+├── splatt3r_slam/           # SLAM package with Splatt3R
+│   ├── splatt3r_utils.py    # Model loading, inference, Gaussian conversion
+│   ├── tracker.py           # Frame tracking
+│   ├── global_opt.py        # Global optimization / bundle adjustment
+│   ├── frame.py             # Frame + SharedGaussians buffer
+│   ├── visualization.py     # Interactive GS rendering + OpenGL
+│   └── ...                  # Other SLAM components
+├── mast3r_slam/             # Original MASt3R-SLAM (for comparison)
+├── config/                  # YAML configuration files
+├── scripts/                 # Dataset download & evaluation scripts
+└── checkpoints/             # Model checkpoints
 ```
 
-## Downloading Dataset
+### Inference Pipeline
+
+1. **Encode**: `model.encoder._encode_image()` → features + positions
+2. **Decode**: `model.encoder._decoder()` → cross-attention tokens
+3. **Downstream Head**: `model.encoder._downstream_head()` → 3D points, confidence, descriptors, **Gaussian params** (means, scales, rotations, SH, opacities)
+4. **SH Residual**: Network outputs SH residuals; original image colour is added: `sh[..., 0] += RGB2SH(original_image)`
+5. **World Transform**: Per-frame Gaussians are transformed to world coordinates via camera pose
+6. **Rasterize**: `diff_gaussian_rasterization` renders from any viewpoint
+
+### Splatt3R Model Output
+
+| Parameter | Shape | Description |
+|-----------|-------|-------------|
+| `pts3d` | (B, H, W, 3) | 3D point estimates |
+| `conf` | (B, H, W) | Confidence scores |
+| `desc` | (B, H, W, 24) | Feature descriptors |
+| `means` | (B, H, W, 3) | Gaussian centres |
+| `scales` | (B, H, W, 3) | Gaussian scales (exp-activated) |
+| `rotations` | (B, H, W, 4) | Quaternion rotations (L2-normalised) |
+| `sh` | (B, H, W, 3, 1) | SH residuals (degree 0 DC only) |
+| `opacities` | (B, H, W, 1) | Opacity (sigmoid-activated, [0,1]) |
+
+---
+
+## Downloading Datasets
+
 ### TUM-RGBD Dataset
-```
+```bash
 bash ./scripts/download_tum.sh
 ```
 
 ### 7-Scenes Dataset
-```
+```bash
 bash ./scripts/download_7_scenes.sh
 ```
 
 ### EuRoC Dataset
-```
+```bash
 bash ./scripts/download_euroc.sh
 ```
+
 ### ETH3D SLAM Dataset
-```
+```bash
 bash ./scripts/download_eth3d.sh
 ```
 
-## Running Evaluations
-All evaluation script will run our system in a single-threaded, headless mode.
-We can run evaluations with/without calibration:
-### TUM-RGBD Dataset
-```
-bash ./scripts/eval_tum.sh 
+---
+
+## Evaluations
+
+All evaluation scripts run in single-threaded headless mode. Can run with or without calibration:
+
+### TUM-RGBD
+```bash
+bash ./scripts/eval_tum.sh
 bash ./scripts/eval_tum.sh --no-calib
 ```
 
-### 7-Scenes Dataset
-```
-bash ./scripts/eval_7_scenes.sh 
+### 7-Scenes
+```bash
+bash ./scripts/eval_7_scenes.sh
 bash ./scripts/eval_7_scenes.sh --no-calib
 ```
 
-### EuRoC Dataset
-```
-bash ./scripts/eval_euroc.sh 
+### EuRoC
+```bash
+bash ./scripts/eval_euroc.sh
 bash ./scripts/eval_euroc.sh --no-calib
 ```
-### ETH3D SLAM Dataset
-```
-bash ./scripts/eval_eth3d.sh 
+
+### ETH3D
+```bash
+bash ./scripts/eval_eth3d.sh
 ```
 
+---
+
+## Troubleshooting
+
+### "No module named 'lietorch'"
+lietorch must be installed **before** the main package:
+```bash
+pip install git+https://github.com/princeton-vl/lietorch.git
+pip install --no-build-isolation -e .
+```
+
+### "No module named 'torch'" / wrong environment
+```bash
+conda activate splatt3r-slam
+```
+
+### "CUDA out of memory"
+Reduce Gaussian density or image resolution:
+```bash
+# Increase spatial stride (fewer Gaussians)
+python main_splatt3r.py --dataset ... --spatial-stride 8 --max-gaussians 2097152
+
+# Or reduce image resolution in config:
+# config/base.yaml → dataset.img_downsample: 2
+```
+
+### "Failed to download checkpoint"
+Download manually:
+```bash
+mkdir -p checkpoints/
+# Download from: https://huggingface.co/brandonsmart/splatt3r_v1.0/blob/main/epoch%3D19-step%3D1200.ckpt
+python main_splatt3r.py --checkpoint checkpoints/epoch=19-step=1200.ckpt ...
+```
+
+### Visualization not showing
+Run headless:
+```bash
+python main_splatt3r.py --dataset ... --no-viz
+```
+
+### WSL Users
+```bash
+git checkout windows
+```
+This disables multiprocessing which causes shared memory issues ([details](https://github.com/rmurai0610/MASt3R-SLAM/issues/21)).
+
+### Quick Fix Commands
+```bash
+# Reinstall lietorch
+pip uninstall lietorch -y && pip install git+https://github.com/princeton-vl/lietorch.git
+
+# Reinstall main package
+pip uninstall Splatt3R-SLAM -y && pip install --no-build-isolation -e .
+
+# Install missing dependencies
+pip install Pillow opencv-python tqdm pyyaml einops
+pip install lightning lpips omegaconf huggingface_hub gitpython
+```
+
+---
+
 ## Reproducibility
-There might be minor differences between the released version and the results in the paper after developing this multi-processing version. 
-We run all our experiments on an RTX 4090, and the performance may differ when running with a different GPU.
+There might be minor differences between the released version and results in the paper after developing this multi-processing version.
+We run all experiments on an RTX 4090; performance may differ with a different GPU.
+
+---
 
 ## Acknowledgement
 We sincerely thank the developers and contributors of the many open-source projects that our code is built upon.
@@ -221,10 +398,11 @@ We sincerely thank the developers and contributors of the many open-source proje
 - [ModernGL](https://github.com/moderngl/moderngl)
 - [PixelSplat](https://github.com/dcharatan/pixelsplat) - Gaussian Splatting components
 
-# Citation
-If you found this code/work to be useful in your own research, please considering citing the following:
+---
 
-## Splatt3R
+## Citation
+
+### Splatt3R
 ```bibtex
 @article{smart2024splatt3r,
   title={Splatt3R: Zero-shot Gaussian Splatting from Uncalibrated Image Pairs}, 
@@ -236,7 +414,7 @@ If you found this code/work to be useful in your own research, please considerin
 }
 ```
 
-## MASt3R-SLAM
+### MASt3R-SLAM
 ```bibtex
 @inproceedings{murai2024_mast3rslam,
   title={{MASt3R-SLAM}: Real-Time Dense {SLAM} with {3D} Reconstruction Priors},
