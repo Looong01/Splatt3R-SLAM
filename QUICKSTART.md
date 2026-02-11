@@ -39,10 +39,19 @@ conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=
 
 ### 4. Install Dependencies
 ```bash
+# Install lietorch first (required dependency)
+pip install git+https://github.com/princeton-vl/lietorch.git
+
+# Install thirdparty dependencies
 pip install -e thirdparty/in3d
+
+# Install the main package
 pip install --no-build-isolation -e .
+
+# Install Splatt3R-specific dependencies
 pip install lightning lpips omegaconf huggingface_hub gitpython
 pip install git+https://github.com/dcharatan/diff-gaussian-rasterization-modified
+```
 ```
 
 ## Quick Test (2 minutes)

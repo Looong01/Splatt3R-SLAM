@@ -48,18 +48,23 @@ conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=
 ```
 
 Clone the repo and install the dependencies.
-```
+```bash
 git clone https://github.com/Looong01/Splatt3R-SLAM.git --recursive
 cd Splatt3R-SLAM/
 
-# if you've clone the repo without --recursive run
+# if you've cloned the repo without --recursive run:
 # git submodule update --init --recursive
 
+# Install lietorch first (required dependency)
+pip install git+https://github.com/princeton-vl/lietorch.git
+
+# Install other dependencies
 pip install -e thirdparty/in3d
 pip install --no-build-isolation -e .
-pip install lightning lpips omegaconf huggingface_hub
+
+# Install Splatt3R-specific dependencies
+pip install lightning lpips omegaconf huggingface_hub gitpython
 pip install git+https://github.com/dcharatan/diff-gaussian-rasterization-modified
- 
 
 # Optionally install torchcodec for faster mp4 loading
 pip install torchcodec==0.1
@@ -67,7 +72,7 @@ pip install torchcodec==0.1
 
 The Splatt3R checkpoint will be automatically downloaded from HuggingFace when you first run the system.
 You can also manually download it:
-```
+```bash
 mkdir -p checkpoints/
 # The system will download this automatically:
 # https://huggingface.co/brandonsmart/splatt3r_v1.0/blob/main/epoch=19-step=1200.ckpt
