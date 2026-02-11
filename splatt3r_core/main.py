@@ -10,20 +10,24 @@ import torch
 import wandb
 
 # Add MAST3R and PixelSplat to the sys.path to prevent issues during importing
-sys.path.append('src/pixelsplat_src')
-sys.path.append('src/mast3r_src')
-sys.path.append('src/mast3r_src/dust3r')
-from src.mast3r_src.dust3r.dust3r.losses import L21
-from src.mast3r_src.mast3r.losses import ConfLoss, Regr3D
-import data.scannetpp.scannetpp as scannetpp
-import src.mast3r_src.mast3r.model as mast3r_model
-import src.pixelsplat_src.benchmarker as benchmarker
-import src.pixelsplat_src.decoder_splatting_cuda as pixelsplat_decoder
-import utils.compute_ssim as compute_ssim
-import utils.export as export
-import utils.geometry as geometry
-import utils.loss_mask as loss_mask
-import utils.sh_utils as sh_utils
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_current_dir, 'src', 'pixelsplat_src'))
+sys.path.insert(0, os.path.join(_current_dir, 'src', 'mast3r_src'))
+sys.path.insert(0, os.path.join(_current_dir, 'src', 'mast3r_src', 'dust3r'))
+sys.path.insert(0, _current_dir)
+
+# Now import with proper paths
+import mast3r.utils.path_to_dust3r  # noqa
+from dust3r.losses import L21
+from mast3r.losses import ConfLoss, Regr3D
+import mast3r.model as mast3r_model
+import benchmarker
+import decoder_splatting_cuda as pixelsplat_decoder
+from utils import compute_ssim
+from utils import export
+from utils import geometry
+from utils import loss_mask
+from utils import sh_utils
 import workspace
 
 
@@ -264,6 +268,13 @@ class MAST3RGaussians(L.LightningModule):
 
 
 def run_experiment(config):
+    # Lazy import for training-only dependencies
+    try:
+        import data.scannetpp.scannetpp as scannetpp
+    except ImportError:
+        # If data module doesn't exist, we can't train but can still load models
+        print("Warning: scannetpp data module not available. Training functionality disabled.")
+        scannetpp = None
 
     # Set the seed
     L.seed_everything(config.seed, workers=True)
@@ -315,6 +326,9 @@ def run_experiment(config):
         del ckpt
 
     # Training Datasets
+    if scannetpp is None:
+        raise RuntimeError("Cannot run training without scannetpp data module. This is for inference only.")
+    
     print(f'Building Datasets')
     train_dataset = scannetpp.get_scannet_dataset(
         config.data.root,
