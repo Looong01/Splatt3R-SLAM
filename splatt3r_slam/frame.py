@@ -162,6 +162,9 @@ class SharedStates:
         self.C = torch.zeros(h * w, 1, device=device, dtype=dtype).share_memory_()
         self.feat = torch.zeros(1, self.num_patches, self.feat_dim, device=device, dtype=dtype).share_memory_()
         self.pos = torch.zeros(1, self.num_patches, 2, device=device, dtype=torch.long).share_memory_()
+        # Gaussian-rendered image from DecoderSplattingCUDA (CPU shared memory)
+        self.gs_rendered = torch.zeros(h, w, 3, device="cpu", dtype=dtype).share_memory_()
+        self.gs_rendered_valid = manager.Value("i", 0)
         # fmt: on
 
     def set_frame(self, frame):
@@ -192,6 +195,19 @@ class SharedStates:
             frame.feat = self.feat
             frame.pos = self.pos
             return frame
+
+    def set_gs_rendered(self, img):
+        """Set gaussian-rendered image. img: (H, W, 3) float32 tensor in [0,1]."""
+        with self.lock:
+            self.gs_rendered[:] = img
+            self.gs_rendered_valid.value = 1
+
+    def get_gs_rendered(self):
+        """Get gaussian-rendered image as (H, W, 3) float32 numpy array, or None."""
+        with self.lock:
+            if self.gs_rendered_valid.value == 0:
+                return None
+            return self.gs_rendered.numpy().copy()
 
     def queue_global_optimization(self, idx):
         with self.lock:

@@ -95,12 +95,52 @@ class Window(WindowEvents):
         self.main2viz = main2viz
         self.viz2main = viz2main
 
+        # --- Gaussian Splatting visualization ---
+        self.use_gs_rendering = True  # default ON: use DecoderSplattingCUDA output
+        self.gs_render_img = Image()  # preview image for GUI panel
+        self.gs_tex = None  # moderngl texture for fullscreen quad
+        # Fullscreen quad shader for displaying GS-rendered images
+        self.gs_quad_prog = self.ctx.program(
+            vertex_shader="""
+            #version 330 core
+            out vec2 uv;
+            void main() {
+                float x = float(gl_VertexID % 2) * 2.0 - 1.0;
+                float y = float(gl_VertexID / 2) * 2.0 - 1.0;
+                gl_Position = vec4(x, y, 0.0, 1.0);
+                uv = vec2((x + 1.0) * 0.5, (-y + 1.0) * 0.5);
+            }
+            """,
+            fragment_shader="""
+            #version 330 core
+            uniform sampler2D gs_texture;
+            in vec2 uv;
+            out vec4 fragColor;
+            void main() {
+                fragColor = vec4(texture(gs_texture, uv).rgb, 1.0);
+            }
+            """,
+        )
+        self.gs_quad_vao = self.ctx.vertex_array(self.gs_quad_prog, [])
+
     def render(self, t: float, frametime: float):
         self.viewport.use()
         self.ctx.enable(moderngl.DEPTH_TEST)
         if self.culling:
             self.ctx.enable(moderngl.CULL_FACE)
         self.ctx.clear(*self.clear)
+
+        # --- Gaussian Splatting background rendering ---
+        gs_img = self.states.get_gs_rendered()
+        gs_active = gs_img is not None and self.use_gs_rendering
+        if gs_active:
+            self.ctx.disable(moderngl.DEPTH_TEST)
+            self.ctx.disable(moderngl.CULL_FACE)
+            self._render_gs_fullscreen(gs_img)
+            self.gs_render_img.write(gs_img)
+            self.ctx.enable(moderngl.DEPTH_TEST)
+            if self.culling:
+                self.ctx.enable(moderngl.CULL_FACE)
 
         self.ctx.point_size = 2
         if self.show_axis:
@@ -167,7 +207,7 @@ class Window(WindowEvents):
                 )
 
             ptex, ctex, itex = self.textures[keyframe.frame_id]
-            if self.show_all:
+            if self.show_all and not gs_active:
                 self.render_pointmap(keyframe.T_WC.cpu(), w, h, ptex, ctex, itex)
 
         if self.show_keyframe_edges:
@@ -186,7 +226,7 @@ class Window(WindowEvents):
                     thickness=self.line_thickness * self.scale,
                     color=[0, 1, 0, 1],
                 )
-        if self.show_curr_pointmap and self.states.get_mode() != Mode.INIT:
+        if self.show_curr_pointmap and not gs_active and self.states.get_mode() != Mode.INIT:
             if config["use_calib"]:
                 curr_frame.K = self.keyframes.get_intrinsics()
             h, w = curr_frame.img_shape.flatten()
@@ -250,54 +290,66 @@ class Window(WindowEvents):
         _, self.follow_cam = imgui.checkbox("follow cam", self.follow_cam)
 
         imgui.spacing()
-        shader_options = [
-            "surfelmap.glsl",
-            "trianglemap.glsl",
-        ]
-        current_shader = shader_options.index(
-            self.pointmap_prog.extra["meta"].resolved_path.name
-        )
-
-        for i, shader in enumerate(shader_options):
-            if imgui.radio_button(shader, current_shader == i):
-                current_shader = i
-
-        selected_shader = shader_options[current_shader]
-        if selected_shader != self.pointmap_prog.extra["meta"].resolved_path.name:
-            self.pointmap_prog = self.load_program(f"programs/{selected_shader}")
-
-        imgui.spacing()
-
-        _, self.show_keyframe_edges = imgui.checkbox(
-            "show_keyframe_edges", self.show_keyframe_edges
+        _, self.use_gs_rendering = imgui.checkbox(
+            "GS rendering (Splatt3R)", self.use_gs_rendering
         )
         imgui.spacing()
 
-        _, self.pointmap_prog["show_normal"].value = imgui.checkbox(
-            "show_normal", self.pointmap_prog["show_normal"].value
-        )
-        imgui.same_line()
-        _, self.culling = imgui.checkbox("culling", self.culling)
-        if "radius" in self.pointmap_prog:
-            _, self.pointmap_prog["radius"].value = imgui.drag_float(
-                "radius",
-                self.pointmap_prog["radius"].value,
-                0.0001,
-                min_value=0.0,
-                max_value=0.1,
+        # Point-cloud shader options (only relevant when GS rendering is off)
+        if not self.use_gs_rendering:
+            shader_options = [
+                "surfelmap.glsl",
+                "trianglemap.glsl",
+            ]
+            current_shader = shader_options.index(
+                self.pointmap_prog.extra["meta"].resolved_path.name
             )
-        if "slant_threshold" in self.pointmap_prog:
-            _, self.pointmap_prog["slant_threshold"].value = imgui.drag_float(
-                "slant_threshold",
-                self.pointmap_prog["slant_threshold"].value,
-                0.1,
-                min_value=0.0,
-                max_value=1.0,
+
+            for i, shader in enumerate(shader_options):
+                if imgui.radio_button(shader, current_shader == i):
+                    current_shader = i
+
+            selected_shader = shader_options[current_shader]
+            if selected_shader != self.pointmap_prog.extra["meta"].resolved_path.name:
+                self.pointmap_prog = self.load_program(f"programs/{selected_shader}")
+
+            imgui.spacing()
+
+            _, self.show_keyframe_edges = imgui.checkbox(
+                "show_keyframe_edges", self.show_keyframe_edges
             )
+            imgui.spacing()
+
+            _, self.pointmap_prog["show_normal"].value = imgui.checkbox(
+                "show_normal", self.pointmap_prog["show_normal"].value
+            )
+            imgui.same_line()
+            _, self.culling = imgui.checkbox("culling", self.culling)
+            if "radius" in self.pointmap_prog:
+                _, self.pointmap_prog["radius"].value = imgui.drag_float(
+                    "radius",
+                    self.pointmap_prog["radius"].value,
+                    0.0001,
+                    min_value=0.0,
+                    max_value=0.1,
+                )
+            if "slant_threshold" in self.pointmap_prog:
+                _, self.pointmap_prog["slant_threshold"].value = imgui.drag_float(
+                    "slant_threshold",
+                    self.pointmap_prog["slant_threshold"].value,
+                    0.1,
+                    min_value=0.0,
+                    max_value=1.0,
+                )
+            _, self.show_curr_pointmap = imgui.checkbox(
+                "show_curr_pointmap", self.show_curr_pointmap
+            )
+        else:
+            _, self.show_keyframe_edges = imgui.checkbox(
+                "show_keyframe_edges", self.show_keyframe_edges
+            )
+            imgui.spacing()
         _, self.show_keyframe = imgui.checkbox("show_keyframe", self.show_keyframe)
-        _, self.show_curr_pointmap = imgui.checkbox(
-            "show_curr_pointmap", self.show_curr_pointmap
-        )
         _, self.show_axis = imgui.checkbox("show_axis", self.show_axis)
         _, self.line_thickness = imgui.drag_float(
             "line_thickness", self.line_thickness, 0.1, 10, 0.5
@@ -316,6 +368,7 @@ class Window(WindowEvents):
             self.curr_img.texture.size[0] * scale,
             self.curr_img.texture.size[1] * scale,
         )
+        image_with_text(self.gs_render_img, size, "gs_render", same_line=False)
         image_with_text(self.kf_img, size, "kf", same_line=False)
         image_with_text(self.curr_img, size, "curr", same_line=False)
 
@@ -330,6 +383,23 @@ class Window(WindowEvents):
 
     def send_msg(self):
         self.viz2main.put(self.state)
+
+    def _render_gs_fullscreen(self, gs_img_np):
+        """Render gaussian-splatted image as fullscreen background quad.
+
+        Args:
+            gs_img_np: (H, W, 3) float32 numpy array in [0, 1].
+        """
+        h, w = gs_img_np.shape[:2]
+        if self.gs_tex is None or self.gs_tex.size != (w, h):
+            if self.gs_tex is not None:
+                self.gs_tex.release()
+            self.gs_tex = self.ctx.texture((w, h), 3, dtype="f4")
+            self.gs_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self.gs_tex.write(gs_img_np.astype(np.float32).tobytes())
+        self.gs_tex.use(0)
+        self.gs_quad_prog["gs_texture"].value = 0
+        self.gs_quad_vao.render(mode=moderngl.TRIANGLE_STRIP, vertices=4)
 
     def render_pointmap(self, T_WC, w, h, ptex, ctex, itex, use_img=True, depth_bias=0):
         w, h = int(w), int(h)

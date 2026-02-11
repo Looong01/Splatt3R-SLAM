@@ -253,6 +253,9 @@ if __name__ == "__main__":
         render_dir.mkdir(exist_ok=True, parents=True)
         print(f"[Gaussian Rendering] Enabled. Saving to {render_dir}")
 
+    # Enable gaussian splatting visualization whenever the viz window is active
+    enable_gs_viz = not args.no_viz
+
     backend = mp.Process(target=run_backend, args=(config, model, states, keyframes, K))
     backend.start()
 
@@ -303,15 +306,20 @@ if __name__ == "__main__":
             states.set_frame(frame)
 
             # --- Gaussian Splatting render (init self-render) ---
-            if render_gaussians:
+            if enable_gs_viz or render_gaussians:
                 rendered = splatt3r_render(model, frame, frame, K=K)
                 if rendered is not None:
-                    rendered_img = rendered[0, 0].cpu()  # (3, H, W)
                     rendered_img = (
-                        rendered_img.clamp(0, 1).permute(1, 2, 0).numpy() * 255
-                    ).astype("uint8")
-                    rendered_bgr = cv2.cvtColor(rendered_img, cv2.COLOR_RGB2BGR)
-                    cv2.imwrite(str(render_dir / f"gs_init_{i:06d}.png"), rendered_bgr)
+                        rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
+                    )  # (H,W,3)
+                    if enable_gs_viz:
+                        states.set_gs_rendered(rendered_img)
+                    if render_gaussians:
+                        rendered_np = (rendered_img.numpy() * 255).astype("uint8")
+                        rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
+                        cv2.imwrite(
+                            str(render_dir / f"gs_init_{i:06d}.png"), rendered_bgr
+                        )
 
             i += 1
             continue
@@ -323,7 +331,7 @@ if __name__ == "__main__":
             states.set_frame(frame)
 
             # --- Gaussian Splatting render (after tracking) ---
-            if render_gaussians and not try_reloc:
+            if (enable_gs_viz or render_gaussians) and not try_reloc:
                 keyframe = keyframes.last_keyframe()
                 if keyframe is not None:
                     rendered = splatt3r_render(
@@ -334,14 +342,17 @@ if __name__ == "__main__":
                         target_T_WC=frame.T_WC,
                     )
                     if rendered is not None:
-                        rendered_img = rendered[0, 0].cpu()  # (3, H, W)
                         rendered_img = (
-                            rendered_img.clamp(0, 1).permute(1, 2, 0).numpy() * 255
-                        ).astype("uint8")
-                        rendered_bgr = cv2.cvtColor(rendered_img, cv2.COLOR_RGB2BGR)
-                        cv2.imwrite(
-                            str(render_dir / f"gs_track_{i:06d}.png"), rendered_bgr
-                        )
+                            rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
+                        )  # (H,W,3)
+                        if enable_gs_viz:
+                            states.set_gs_rendered(rendered_img)
+                        if render_gaussians:
+                            rendered_np = (rendered_img.numpy() * 255).astype("uint8")
+                            rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(
+                                str(render_dir / f"gs_track_{i:06d}.png"), rendered_bgr
+                            )
 
         elif mode == Mode.RELOC:
             X, C = splatt3r_inference_mono(model, frame)
