@@ -74,7 +74,7 @@ def load_retriever(splatt3r_model, retriever_path=None, device="cuda"):
     return retriever
 
 
-@torch.inference_mode
+@torch.inference_mode()
 def decoder(model, feat1, feat2, pos1, pos2, shape1, shape2):
     """Decode features using Splatt3R decoder"""
     dec1, dec2 = model.encoder._decoder(feat1, pos1, feat2, pos2)
@@ -97,7 +97,7 @@ def downsample(X, C, D, Q):
     return X, C, D, Q
 
 
-@torch.inference_mode
+@torch.inference_mode()
 def splatt3r_symmetric_inference(model, frame_i, frame_j):
     """
     Symmetric inference using Splatt3R model.
@@ -128,7 +128,7 @@ def splatt3r_symmetric_inference(model, frame_i, frame_j):
     return X, C, D, Q
 
 
-@torch.inference_mode
+@torch.inference_mode()
 def splatt3r_decode_symmetric_batch(
     model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j
 ):
@@ -164,7 +164,7 @@ def splatt3r_decode_symmetric_batch(
     return X, C, D, Q
 
 
-@torch.inference_mode
+@torch.inference_mode()
 def splatt3r_inference_mono(model, frame):
     """
     Monocular inference using Splatt3R.
@@ -234,7 +234,7 @@ def splatt3r_match_symmetric(model, feat_i, pos_i, feat_j, pos_j, shape_i, shape
     )
 
 
-@torch.inference_mode
+@torch.inference_mode()
 def splatt3r_asymmetric_inference(model, frame_i, frame_j):
     """Asymmetric inference using Splatt3R"""
     if frame_i.feat is None:

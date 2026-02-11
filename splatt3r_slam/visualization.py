@@ -39,7 +39,7 @@ class WindowMsg:
 
 
 class Window(WindowEvents):
-    title = "MASt3R-SLAM"
+    title = "Splatt3R-SLAM"
     window_size = (1960, 1080)
 
     def __init__(self, states, keyframes, main2viz, viz2main, **kwargs):

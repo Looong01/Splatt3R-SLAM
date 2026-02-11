@@ -3,76 +3,6 @@ Main script for Splatt3R-SLAM
 This version uses Splatt3R (with Gaussian Splatting) instead of MASt3R.
 """
 
-# Check for required dependencies before importing
-import sys
-
-def check_dependencies():
-    """Check for required dependencies and provide installation instructions if missing."""
-    missing_deps = []
-    
-    try:
-        import lietorch
-    except ImportError:
-        missing_deps.append("lietorch")
-    
-    try:
-        import PIL
-    except ImportError:
-        missing_deps.append("Pillow")
-    
-    try:
-        import cv2
-    except ImportError:
-        missing_deps.append("opencv-python")
-    
-    try:
-        import einops
-    except ImportError:
-        missing_deps.append("einops")
-    
-    try:
-        import lightning
-    except ImportError:
-        missing_deps.append("lightning")
-    
-    try:
-        import lpips
-    except ImportError:
-        missing_deps.append("lpips")
-    
-    try:
-        import omegaconf
-    except ImportError:
-        missing_deps.append("omegaconf")
-    
-    if missing_deps:
-        print("\n" + "="*70)
-        print("ERROR: Missing required dependencies!")
-        print("="*70)
-        print("\nThe following packages are missing:")
-        for dep in missing_deps:
-            print(f"  - {dep}")
-        
-        print("\nPlease install them using the following commands:")
-        print("\n# Install lietorch first (if missing):")
-        if "lietorch" in missing_deps:
-            print("pip install git+https://github.com/princeton-vl/lietorch.git")
-        
-        print("\n# Install other dependencies:")
-        other_deps = [d for d in missing_deps if d != "lietorch"]
-        if other_deps:
-            print(f"pip install {' '.join(other_deps)}")
-        
-        print("\n# For complete installation instructions, see:")
-        print("  - README.md")
-        print("  - QUICKSTART.md")
-        print("  - TROUBLESHOOTING.md")
-        print("="*70 + "\n")
-        sys.exit(1)
-
-# Check dependencies first
-check_dependencies()
-
 import argparse
 import datetime
 import pathlib
@@ -82,6 +12,7 @@ import lietorch
 import torch
 import tqdm
 import yaml
+import sys
 from splatt3r_slam.global_opt import FactorGraph
 
 from splatt3r_slam.config import load_config, config, set_global_config
@@ -230,7 +161,11 @@ if __name__ == "__main__":
     parser.add_argument("--save-as", default="default")
     parser.add_argument("--no-viz", action="store_true")
     parser.add_argument("--calib", default="")
-    parser.add_argument("--checkpoint", default=None, help="Path to Splatt3R checkpoint (downloads if not provided)")
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Path to Splatt3R checkpoint (downloads if not provided)",
+    )
 
     args = parser.parse_args()
 
