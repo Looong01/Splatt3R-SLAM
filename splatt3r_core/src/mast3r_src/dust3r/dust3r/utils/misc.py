@@ -9,6 +9,7 @@ import torch
 
 def fill_default_args(kwargs, func):
     import inspect  # a bit hacky but it works reliably
+
     signature = inspect.signature(func)
 
     for k, v in signature.parameters.items():
@@ -30,8 +31,8 @@ def freeze_all_params(modules):
 
 
 def is_symmetrized(gt1, gt2):
-    x = gt1['instance']
-    y = gt2['instance']
+    x = gt1["instance"]
+    y = gt2["instance"]
     if len(x) == len(y) and len(x) == 1:
         return False  # special case of batchsize 1
     ok = True
@@ -41,7 +42,7 @@ def is_symmetrized(gt1, gt2):
 
 
 def flip(tensor):
-    """ flip so that tensor[0::2] <=> tensor[1::2] """
+    """flip so that tensor[0::2] <=> tensor[1::2]"""
     return torch.stack((tensor[1::2], tensor[0::2]), dim=1).flatten(0, 1)
 
 
@@ -52,36 +53,57 @@ def interleave(tensor1, tensor2):
 
 
 def transpose_to_landscape(head, activate=True):
-    """ Predict in the correct aspect-ratio,
-        then transpose the result in landscape 
-        and stack everything back together.
+    """Predict in the correct aspect-ratio,
+    then transpose the result in landscape
+    and stack everything back together.
     """
-    def wrapper_no(decout, true_shape):
+    if activate:
+        return _LandscapeWrapperYes(head)
+    else:
+        return _LandscapeWrapperNo(head)
+
+
+class _LandscapeWrapperNo:
+    """Picklable wrapper for transpose_to_landscape (no activation)."""
+
+    def __init__(self, head):
+        self.head = head
+
+    def __call__(self, decout, true_shape):
         B = len(true_shape)
-        assert true_shape[0:1].allclose(true_shape), 'true_shape must be all identical'
+        assert true_shape[0:1].allclose(true_shape), "true_shape must be all identical"
         H, W = true_shape[0].cpu().tolist()
-        res = head(decout, (H, W))
+        res = self.head(decout, (H, W))
         return res
 
-    def wrapper_yes(decout, true_shape):
+
+class _LandscapeWrapperYes:
+    """Picklable wrapper for transpose_to_landscape (with activation)."""
+
+    def __init__(self, head):
+        self.head = head
+
+    def __call__(self, decout, true_shape):
         B = len(true_shape)
         # by definition, the batch is in landscape mode so W >= H
         H, W = int(true_shape.min()), int(true_shape.max())
 
         height, width = true_shape.T
-        is_landscape = (width >= height)
+        is_landscape = width >= height
         is_portrait = ~is_landscape
 
         # true_shape = true_shape.cpu()
         if is_landscape.all():
-            return head(decout, (H, W))
+            return self.head(decout, (H, W))
         if is_portrait.all():
-            return transposed(head(decout, (W, H)))
+            return transposed(self.head(decout, (W, H)))
 
         # batch is a mix of both portraint & landscape
-        def selout(ar): return [d[ar] for d in decout]
-        l_result = head(selout(is_landscape), (H, W))
-        p_result = transposed(head(selout(is_portrait), (W, H)))
+        def selout(ar):
+            return [d[ar] for d in decout]
+
+        l_result = self.head(selout(is_landscape), (H, W))
+        p_result = transposed(self.head(selout(is_portrait), (W, H)))
 
         # allocate full result
         result = {}
@@ -93,8 +115,6 @@ def transpose_to_landscape(head, activate=True):
 
         return result
 
-    return wrapper_yes if activate else wrapper_no
-
 
 def transposed(dic):
     return {k: v.swapaxes(1, 2) for k, v in dic.items()}
@@ -103,7 +123,7 @@ def transposed(dic):
 def invalid_to_nans(arr, valid_mask, ndim=999):
     if valid_mask is not None:
         arr = arr.clone()
-        arr[~valid_mask] = float('nan')
+        arr[~valid_mask] = float("nan")
     if arr.ndim > ndim:
         arr = arr.flatten(-2 - (arr.ndim - ndim), -2)
     return arr

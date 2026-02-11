@@ -7,8 +7,8 @@ import torch
 import pyrealsense2 as rs
 import yaml
 
-from mast3r_slam.mast3r_utils import resize_img
-from mast3r_slam.config import config
+from splatt3r_slam.splatt3r_utils import resize_img
+from splatt3r_slam.config import config
 
 HAS_TORCHCODEC = True
 try:

@@ -3,11 +3,11 @@ from typing import Optional
 import cv2
 import numpy as np
 import torch
-from mast3r_slam.dataloader import Intrinsics
-from mast3r_slam.frame import SharedKeyframes
-from mast3r_slam.lietorch_utils import as_SE3
-from mast3r_slam.config import config
-from mast3r_slam.geometry import constrain_points_to_ray
+from splatt3r_slam.dataloader import Intrinsics
+from splatt3r_slam.frame import SharedKeyframes
+from splatt3r_slam.lietorch_utils import as_SE3
+from splatt3r_slam.config import config
+from splatt3r_slam.geometry import constrain_points_to_ray
 from plyfile import PlyData, PlyElement
 
 

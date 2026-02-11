@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
-import mast3r_slam.image as img_utils
-from mast3r_slam.config import config
+import splatt3r_slam.image as img_utils
+from splatt3r_slam.config import config
 import mast3r_slam_backends
 
 

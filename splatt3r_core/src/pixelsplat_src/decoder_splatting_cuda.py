@@ -1,8 +1,14 @@
 import torch
 from einops import rearrange, repeat
 
-from .cuda_splatting import render_cuda
-from utils.geometry import normalize_intrinsics
+try:
+    from .cuda_splatting import render_cuda
+except ImportError:
+    from cuda_splatting import render_cuda
+try:
+    from utils.geometry import normalize_intrinsics
+except ImportError:
+    pass
 
 
 class DecoderSplattingCUDA(torch.nn.Module):
@@ -14,14 +20,18 @@ class DecoderSplattingCUDA(torch.nn.Module):
             torch.tensor(background_color, dtype=torch.float32),
             persistent=False,
         )
-    
+
     def forward(self, batch, pred1, pred2, image_shape):
 
-        base_pose = batch['context'][0]['camera_pose'] # [b, 4, 4]
+        base_pose = batch["context"][0]["camera_pose"]  # [b, 4, 4]
         inv_base_pose = torch.inverse(base_pose)
 
-        extrinsics = torch.stack([target_view['camera_pose'] for target_view in batch['target']], dim=1)
-        intrinsics = torch.stack([target_view['camera_intrinsics'] for target_view in batch['target']], dim=1)
+        extrinsics = torch.stack(
+            [target_view["camera_pose"] for target_view in batch["target"]], dim=1
+        )
+        intrinsics = torch.stack(
+            [target_view["camera_intrinsics"] for target_view in batch["target"]], dim=1
+        )
         intrinsics = normalize_intrinsics(intrinsics, image_shape)[..., :3, :3]
 
         # Rotate the ground truth extrinsics into the coordinate system used by MAST3R
@@ -44,10 +54,24 @@ class DecoderSplattingCUDA(torch.nn.Module):
             rearrange(far, "b v -> (b v)"),
             image_shape,
             repeat(self.background_color, "c -> (b v) c", b=b, v=v),
-            repeat(rearrange(means, "b v h w xyz -> b (v h w) xyz"), "b g xyz -> (b v) g xyz", v=v),
-            repeat(rearrange(covariances, "b v h w i j -> b (v h w) i j"), "b g i j -> (b v) g i j", v=v),
-            repeat(rearrange(harmonics, "b v h w c d_sh -> b (v h w) c d_sh"), "b g c d_sh -> (b v) g c d_sh", v=v),
-            repeat(rearrange(opacities, "b v h w 1 -> b (v h w)"), "b g -> (b v) g", v=v),
+            repeat(
+                rearrange(means, "b v h w xyz -> b (v h w) xyz"),
+                "b g xyz -> (b v) g xyz",
+                v=v,
+            ),
+            repeat(
+                rearrange(covariances, "b v h w i j -> b (v h w) i j"),
+                "b g i j -> (b v) g i j",
+                v=v,
+            ),
+            repeat(
+                rearrange(harmonics, "b v h w c d_sh -> b (v h w) c d_sh"),
+                "b g c d_sh -> (b v) g c d_sh",
+                v=v,
+            ),
+            repeat(
+                rearrange(opacities, "b v h w 1 -> b (v h w)"), "b g -> (b v) g", v=v
+            ),
         )
         color = rearrange(color, "(b v) c h w -> b v c h w", b=b, v=v)
         return color, None

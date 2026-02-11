@@ -6,9 +6,9 @@ import einops
 import mast3r.utils.path_to_dust3r  # noqa
 from dust3r.utils.image import ImgNorm
 from mast3r.model import AsymmetricMASt3R
-from mast3r_slam.retrieval_database import RetrievalDatabase
-from mast3r_slam.config import config
-import mast3r_slam.matching as matching
+from splatt3r_slam.retrieval_database import RetrievalDatabase
+from splatt3r_slam.config import config
+import splatt3r_slam.matching as matching
 
 
 def load_mast3r(path=None, device="cuda"):

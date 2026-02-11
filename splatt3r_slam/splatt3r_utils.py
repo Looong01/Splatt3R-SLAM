@@ -2,6 +2,7 @@
 Splatt3R utilities for SLAM
 Adapted from mast3r_utils.py to use Splatt3R models and Gaussian splatting.
 """
+
 import PIL
 import numpy as np
 import torch
@@ -9,11 +10,11 @@ import einops
 import sys
 import os
 
-# Add splatt3r_core to path
+# Add splatt3r_core to path (also done via __init__.py/_setup_paths.py)
 _root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(_root_dir, 'splatt3r_core'))
-sys.path.insert(0, os.path.join(_root_dir, 'splatt3r_core', 'src', 'mast3r_src'))
-sys.path.insert(0, os.path.join(_root_dir, 'splatt3r_core', 'src', 'mast3r_src', 'dust3r'))
+_splatt3r_core_dir = os.path.join(_root_dir, "splatt3r_core")
+if _splatt3r_core_dir not in sys.path:
+    sys.path.insert(0, _splatt3r_core_dir)
 
 import mast3r.utils.path_to_dust3r  # noqa
 from dust3r.utils.image import ImgNorm
@@ -26,23 +27,24 @@ import splatt3r_slam.matching as matching
 def load_splatt3r(path=None, device="cuda"):
     """
     Load Splatt3R model (with Gaussian splatting capabilities).
-    
+
     Args:
         path: Path to checkpoint. If None, downloads from HuggingFace.
         device: Device to load model on.
-    
+
     Returns:
         Splatt3R model (MAST3RGaussians)
     """
     if path is None:
         from huggingface_hub import hf_hub_download
+
         model_name = "brandonsmart/splatt3r_v1.0"
         filename = "epoch=19-step=1200.ckpt"
         print(f"Downloading Splatt3R checkpoint from {model_name}")
         weights_path = hf_hub_download(repo_id=model_name, filename=filename)
     else:
         weights_path = path
-    
+
     print(f"Loading Splatt3R model from {weights_path}")
     model = MAST3RGaussians.load_from_checkpoint(weights_path, device)
     model.eval()
@@ -52,12 +54,12 @@ def load_splatt3r(path=None, device="cuda"):
 def load_retriever(splatt3r_model, retriever_path=None, device="cuda"):
     """
     Load retrieval database. Uses the encoder from Splatt3R model.
-    
+
     Args:
         splatt3r_model: Splatt3R model with encoder
         retriever_path: Path to retriever checkpoint
         device: Device to load on
-    
+
     Returns:
         RetrievalDatabase instance
     """
@@ -66,7 +68,9 @@ def load_retriever(splatt3r_model, retriever_path=None, device="cuda"):
         if retriever_path is None
         else retriever_path
     )
-    retriever = RetrievalDatabase(retriever_path, backbone=splatt3r_model.encoder, device=device)
+    retriever = RetrievalDatabase(
+        retriever_path, backbone=splatt3r_model.encoder, device=device
+    )
     return retriever
 
 
@@ -167,7 +171,9 @@ def splatt3r_inference_mono(model, frame):
     Predicts 3D points and optionally Gaussian parameters from a single view.
     """
     if frame.feat is None:
-        frame.feat, frame.pos, _ = model.encoder._encode_image(frame.img, frame.img_true_shape)
+        frame.feat, frame.pos, _ = model.encoder._encode_image(
+            frame.img, frame.img_true_shape
+        )
 
     feat = frame.feat
     pos = frame.pos

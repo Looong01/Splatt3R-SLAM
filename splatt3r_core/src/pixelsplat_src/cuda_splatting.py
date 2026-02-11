@@ -9,7 +9,10 @@ from diff_gaussian_rasterization import (
 from einops import einsum, rearrange, repeat
 from torch import Tensor
 
-from .projection import get_fov, homogenize_points
+try:
+    from .projection import get_fov, homogenize_points
+except ImportError:
+    from projection import get_fov, homogenize_points
 
 
 def get_projection_matrix(

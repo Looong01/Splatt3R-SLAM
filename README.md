@@ -21,11 +21,6 @@
 
 **Before running Splatt3R-SLAM**, you MUST install all dependencies following the instructions below. The system will check for missing dependencies and provide installation commands if needed.
 
-**To diagnose installation issues, run:**
-```bash
-python check_dependencies.py
-```
-
 If you get import errors, see:
 - [Installation Instructions](#installation) (below)
 - [QUICKSTART.md](QUICKSTART.md) - Step-by-step guide
@@ -107,24 +102,6 @@ pip install git+https://github.com/dcharatan/diff-gaussian-rasterization-modifie
 ```bash
 pip install torchcodec==0.1
 ```
-
-### 5. Verify Installation
-
-After installation, verify dependencies are correctly installed:
-
-**Quick check:**
-```bash
-python -c "import lietorch, PIL, cv2, einops, lightning, lpips, omegaconf; print('✓ All dependencies OK')"
-```
-
-**Comprehensive diagnostic (recommended):**
-```bash
-python check_dependencies.py
-```
-
-This will test all dependencies and show exactly what's missing with installation commands.
-
-If you see any import errors, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ---
 

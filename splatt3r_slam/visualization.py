@@ -18,16 +18,16 @@ from in3d.image import Image
 from moderngl_window import resources
 from moderngl_window.timers.clock import Timer
 
-from mast3r_slam.frame import Mode
-from mast3r_slam.geometry import get_pixel_coords
-from mast3r_slam.lietorch_utils import as_SE3
-from mast3r_slam.visualization_utils import (
+from splatt3r_slam.frame import Mode
+from splatt3r_slam.geometry import get_pixel_coords
+from splatt3r_slam.lietorch_utils import as_SE3
+from splatt3r_slam.visualization_utils import (
     Frustums,
     Lines,
     depth2rgb,
     image_with_text,
 )
-from mast3r_slam.config import load_config, config, set_global_config
+from splatt3r_slam.config import load_config, config, set_global_config
 
 
 @dataclasses.dataclass
