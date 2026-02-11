@@ -32,6 +32,12 @@ class Frame:
     # Gaussian Splatting parameters from Splatt3R decoder
     # gaussian_pred: self-prediction (view1's Gaussians in view1's frame)
     # gaussian_pred_cross: cross-prediction (view2's Gaussians in view1's frame)
+    # NOTE: These are NOT stored in SharedKeyframes/SharedStates shared memory
+    # because the per-frame Gaussian parameter tensors (means, scales, rotations,
+    # sh, opacities) would consume too much GPU memory for the keyframe buffer.
+    # Gaussian rendering via splatt3r_render() must therefore be performed in the
+    # main process immediately after inference, while the local Frame object still
+    # holds these fields.
     gaussian_pred: Optional[dict] = None
     gaussian_pred_cross: Optional[dict] = None
 
