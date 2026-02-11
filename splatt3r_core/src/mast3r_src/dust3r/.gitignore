@@ -1,7 +1,5 @@
+data/
 checkpoints/
-
-# Mac
-.DS_Store
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -132,12 +130,3 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-
-ckpt/
-datasets
-logs/
-*.prof
-screen.yaml
-*.pt
-*.ini
-notebooks/*

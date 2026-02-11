@@ -3,20 +3,31 @@ requires = ["setuptools==70.0.0", "torch"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "MAST3R-SLAM"
-version = "0.0.1"
+name = "Splatt3R-SLAM"
+version = "0.1.0"
 dependencies = [
     "numpy==1.26.4",
     "einops",
     "pyrealsense2",
     "evo",
     "natsort",
-    # "torchcodec==0.1",
-    "lietorch @ git+https://github.com/princeton-vl/lietorch.git",
     "plyfile",
+    "Pillow",
+    "opencv-python",
+    "tqdm",
+    "pyyaml",
+    # Splatt3r dependencies
+    "lightning",
+    "lpips",
+    "omegaconf",
+    "huggingface_hub",
+    "gitpython",
+    # lietorch needs to be installed separately
+    # "lietorch @ git+https://github.com/princeton-vl/lietorch.git",
+    # "torchcodec==0.1",  # Optional
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["mast3r_slam"]
+include = ["mast3r_slam", "splatt3r_slam", "splatt3r_core"]
 namespaces = false
