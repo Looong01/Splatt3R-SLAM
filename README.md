@@ -110,7 +110,7 @@ pip install torchcodec==0.1
 Download a test dataset and run:
 ```bash
 bash ./scripts/download_tum.sh
-python main_splatt3r.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config config/base.yaml
+python main_splatt3r.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config config/base.yaml --render-gaussians --render-dir logs/gaussian_renders
 ```
 
 If you get dependency errors, the script will tell you exactly what to install.
@@ -138,12 +138,12 @@ This disables multiprocessing which causes an issue with shared memory as discus
 Run Splatt3R-SLAM on TUM dataset:
 ```
 bash ./scripts/download_tum.sh
-python main_splatt3r.py --dataset datasets/tum/rgbd_dataset_freiburg1_room/ --config config/calib.yaml
+python main_splatt3r.py --dataset datasets/tum/rgbd_dataset_freiburg1_room/ --config config/calib.yaml --render-gaussians --render-dir logs/gaussian_renders
 ```
 
 For the original MASt3R-SLAM version (without Gaussian Splatting):
 ```
-python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_room/ --config config/calib.yaml
+python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_room/ --config config/calib.yaml --render-gaussians --render-dir logs/gaussian_renders
 ```
 ## Live Demo
 Connect a realsense camera to the PC and run
@@ -153,13 +153,13 @@ python main_splatt3r.py --dataset realsense --config config/base.yaml
 ## Running on a video
 Our system can process either MP4 videos or folders containing RGB images.
 ```
-python main_splatt3r.py --dataset <path/to/video>.mp4 --config config/base.yaml
-python main_splatt3r.py --dataset <path/to/folder> --config config/base.yaml
+python main_splatt3r.py --dataset <path/to/video>.mp4 --config config/base.yaml --render-gaussians --render-dir logs/gaussian_renders
+python main_splatt3r.py --dataset <path/to/folder> --config config/base.yaml --render-gaussians --render-dir logs/gaussian_renders
 ```
 If the calibration parameters are known, you can specify them in intrinsics.yaml
 ```
-python main_splatt3r.py --dataset <path/to/video>.mp4 --config config/base.yaml --calib config/intrinsics.yaml
-python main_splatt3r.py --dataset <path/to/folder> --config config/base.yaml --calib config/intrinsics.yaml
+python main_splatt3r.py --dataset <path/to/video>.mp4 --config config/base.yaml --calib config/intrinsics.yaml --render-gaussians --render-dir logs/gaussian_renders
+python main_splatt3r.py --dataset <path/to/folder> --config config/base.yaml --calib config/intrinsics.yaml --render-gaussians --render-dir logs/gaussian_renders
 ```
 
 ## Downloading Dataset
