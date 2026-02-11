@@ -7,12 +7,24 @@ import argparse
 import datetime
 import pathlib
 import time
+import warnings
 import cv2
 import lietorch
 import torch
 import tqdm
 import yaml
 import sys
+
+# Suppress known safe warnings from third-party libraries
+warnings.filterwarnings("ignore", message=".*weights_only.*", category=FutureWarning)
+warnings.filterwarnings(
+    "ignore",
+    message=".*The parameter 'pretrained' is deprecated.*",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore", message=".*Arguments other than a weight enum.*", category=UserWarning
+)
 from splatt3r_slam.global_opt import FactorGraph
 
 from splatt3r_slam.config import load_config, config, set_global_config

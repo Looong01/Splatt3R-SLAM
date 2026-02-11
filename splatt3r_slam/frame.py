@@ -124,7 +124,7 @@ def create_frame(i, img, T_WC, img_size=512, device="cuda:0"):
     rgb = img["img"].to(device=device)
     img_shape = torch.tensor(img["true_shape"], device=device)
     img_true_shape = img_shape.clone()
-    uimg = torch.from_numpy(img["unnormalized_img"]) / 255.0
+    uimg = torch.from_numpy(img["unnormalized_img"].copy()) / 255.0
     downsample = config["dataset"]["img_downsample"]
     if downsample > 1:
         uimg = uimg[::downsample, ::downsample]

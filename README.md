@@ -84,6 +84,7 @@ pip install git+https://github.com/princeton-vl/lietorch.git
 **4b. Install thirdparty dependencies**:
 ```bash
 pip install -e thirdparty/in3d
+pip install -e thirdparty/diff-gaussian-rasterization-modified
 ```
 
 **4c. Install main package**:
@@ -94,7 +95,6 @@ pip install --no-build-isolation -e .
 **4d. Install Splatt3R-specific dependencies**:
 ```bash
 pip install lightning lpips omegaconf huggingface_hub gitpython einops
-pip install git+https://github.com/dcharatan/diff-gaussian-rasterization-modified
 ```
 
 **4e. (Optional) Install torchcodec** for faster mp4 loading:
@@ -109,11 +109,18 @@ python -c "from splatt3r_slam.splatt3r_utils import load_splatt3r; print('splatt
 ```
 
 ### Checkpoint
-The Splatt3R checkpoint (~150MB) is **automatically downloaded** from HuggingFace on first run.
-To download manually:
+Download MASt3R backbone weights (required):
 ```bash
 mkdir -p checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -P checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
+```
+
+The Splatt3R checkpoint (`epoch=19-step=1200.ckpt`, ~150MB) will be **automatically loaded** from `checkpoints/` if present, or **downloaded from HuggingFace** on first run.
+To download manually:
+```bash
 # https://huggingface.co/brandonsmart/splatt3r_v1.0/blob/main/epoch=19-step=1200.ckpt
+wget 'https://huggingface.co/brandonsmart/splatt3r_v1.0/resolve/main/epoch%3D19-step%3D1200.ckpt' -O checkpoints/epoch=19-step=1200.ckpt
 ```
 
 ---
@@ -225,6 +232,11 @@ python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config confi
 Splatt3R-SLAM/
 ├── main_splatt3r.py         # Main entry point (Splatt3R-SLAM)
 ├── main.py                  # Original MASt3R-SLAM entry point
+├── thirdparty/
+│   ├── in3d/                # OpenGL camera/visualization library
+│   ├── diff-gaussian-rasterization-modified/  # CUDA Gaussian rasterizer (submodule)
+│   ├── mast3r/              # MASt3R upstream (submodule)
+│   └── eigen/               # Eigen headers
 ├── splatt3r_core/           # Core Splatt3R implementation
 │   ├── main.py              # MAST3RGaussians Lightning module
 │   ├── src/

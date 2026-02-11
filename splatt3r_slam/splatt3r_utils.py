@@ -33,19 +33,30 @@ def load_splatt3r(path=None, device="cuda"):
     Load Splatt3R model (with Gaussian splatting capabilities).
 
     Args:
-        path: Path to checkpoint. If None, downloads from HuggingFace.
+        path: Path to checkpoint. If None, checks checkpoints/ dir first,
+              then downloads from HuggingFace.
         device: Device to load model on.
 
     Returns:
         Splatt3R model (MAST3RGaussians)
     """
     if path is None:
-        from huggingface_hub import hf_hub_download
+        # Check local checkpoints directory first
+        local_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "checkpoints",
+            "epoch=19-step=1200.ckpt",
+        )
+        if os.path.exists(local_path):
+            print(f"Found local Splatt3R checkpoint: {local_path}")
+            weights_path = local_path
+        else:
+            from huggingface_hub import hf_hub_download
 
-        model_name = "brandonsmart/splatt3r_v1.0"
-        filename = "epoch=19-step=1200.ckpt"
-        print(f"Downloading Splatt3R checkpoint from {model_name}")
-        weights_path = hf_hub_download(repo_id=model_name, filename=filename)
+            model_name = "brandonsmart/splatt3r_v1.0"
+            filename = "epoch=19-step=1200.ckpt"
+            print(f"Local checkpoint not found, downloading from {model_name}")
+            weights_path = hf_hub_download(repo_id=model_name, filename=filename)
     else:
         weights_path = path
 

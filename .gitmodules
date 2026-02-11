@@ -4,3 +4,6 @@
 [submodule "thirdparty/in3d/thirdparty/pyimgui"]
 	path = thirdparty/in3d/thirdparty/pyimgui
 	url = https://github.com/pyimgui/pyimgui.git
+[submodule "thirdparty/diff-gaussian-rasterization-modified"]
+	path = thirdparty/diff-gaussian-rasterization-modified
+	url = https://github.com/dcharatan/diff-gaussian-rasterization-modified.git

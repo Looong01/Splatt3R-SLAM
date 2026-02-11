@@ -23,18 +23,29 @@ def load_splatt3r_model(checkpoint_path=None, device="cuda"):
     Load Splatt3R model from checkpoint.
 
     Args:
-        checkpoint_path: Path to checkpoint file. If None, downloads from HuggingFace
+        checkpoint_path: Path to checkpoint file. If None, checks checkpoints/ dir
+                        first, then downloads from HuggingFace
         device: Device to load model on ('cuda' or 'cpu')
 
     Returns:
         Loaded MAST3RGaussians model
     """
     if checkpoint_path is None:
-        # Download from HuggingFace
-        model_name = "brandonsmart/splatt3r_v1.0"
-        filename = "epoch=19-step=1200.ckpt"
-        print(f"Downloading Splatt3R checkpoint from {model_name}")
-        checkpoint_path = hf_hub_download(repo_id=model_name, filename=filename)
+        # Check local checkpoints directory first
+        local_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "checkpoints",
+            "epoch=19-step=1200.ckpt",
+        )
+        if os.path.exists(local_path):
+            print(f"Found local Splatt3R checkpoint: {local_path}")
+            checkpoint_path = local_path
+        else:
+            # Download from HuggingFace
+            model_name = "brandonsmart/splatt3r_v1.0"
+            filename = "epoch=19-step=1200.ckpt"
+            print(f"Local checkpoint not found, downloading from {model_name}")
+            checkpoint_path = hf_hub_download(repo_id=model_name, filename=filename)
 
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
