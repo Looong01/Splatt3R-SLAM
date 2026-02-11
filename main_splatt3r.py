@@ -18,12 +18,19 @@ from splatt3r_slam.global_opt import FactorGraph
 from splatt3r_slam.config import load_config, config, set_global_config
 from splatt3r_slam.dataloader import Intrinsics, load_dataset
 import splatt3r_slam.evaluate as eval
-from splatt3r_slam.frame import Mode, SharedKeyframes, SharedStates, create_frame
+from splatt3r_slam.frame import (
+    Mode,
+    SharedKeyframes,
+    SharedStates,
+    SharedGaussians,
+    create_frame,
+)
 from splatt3r_slam.splatt3r_utils import (
     load_splatt3r,
     load_retriever,
     splatt3r_inference_mono,
     splatt3r_render,
+    gaussians_to_world,
 )
 from splatt3r_slam.multiprocess_utils import new_queue, try_get_msg
 from splatt3r_slam.tracker import FrameTracker
@@ -170,12 +177,30 @@ if __name__ == "__main__":
     parser.add_argument(
         "--render-gaussians",
         action="store_true",
-        help="Enable Gaussian Splatting rendering via model.decoder (DecoderSplattingCUDA)",
+        default=True,
+        help="Enable Gaussian Splatting rendering and save per-frame PNGs (default: True)",
+    )
+    parser.add_argument(
+        "--no-render-gaussians",
+        action="store_true",
+        help="Disable Gaussian Splatting rendering and per-frame PNG saving",
     )
     parser.add_argument(
         "--render-dir",
         default="logs/gaussian_renders",
-        help="Directory to save Gaussian-rendered images",
+        help="Directory to save Gaussian-rendered images (default: logs/gaussian_renders)",
+    )
+    parser.add_argument(
+        "--max-gaussians",
+        type=int,
+        default=4 * 1024 * 1024,
+        help="Max number of Gaussians in shared buffer (default: 4194304)",
+    )
+    parser.add_argument(
+        "--spatial-stride",
+        type=int,
+        default=4,
+        help="Spatial stride for subsampling Gaussians per frame (default: 4, stride=1 means no subsampling)",
     )
 
     args = parser.parse_args()
@@ -206,11 +231,12 @@ if __name__ == "__main__":
 
     keyframes = SharedKeyframes(manager, h, w)
     states = SharedStates(manager, h, w)
+    shared_gaussians = SharedGaussians(manager, max_gaussians=args.max_gaussians)
 
     if not args.no_viz:
         viz = mp.Process(
             target=run_visualization,
-            args=(config, states, keyframes, main2viz, viz2main),
+            args=(config, states, keyframes, shared_gaussians, main2viz, viz2main),
         )
         viz.start()
 
@@ -246,12 +272,16 @@ if __name__ == "__main__":
     last_msg = WindowMsg()
 
     # Gaussian rendering setup
-    render_gaussians = args.render_gaussians
+    render_gaussians = args.render_gaussians and not args.no_render_gaussians
+    spatial_stride = args.spatial_stride
     render_dir = None
     if render_gaussians:
         render_dir = pathlib.Path(args.render_dir)
         render_dir.mkdir(exist_ok=True, parents=True)
         print(f"[Gaussian Rendering] Enabled. Saving to {render_dir}")
+    print(
+        f"[Gaussians] max_gaussians={args.max_gaussians}, spatial_stride={spatial_stride}"
+    )
 
     # Enable gaussian splatting visualization whenever the viz window is active
     enable_gs_viz = not args.no_viz
@@ -305,21 +335,33 @@ if __name__ == "__main__":
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
 
-            # --- Gaussian Splatting render (init self-render) ---
+            # --- Gaussian Splatting: accumulate world-space Gaussians ---
             if enable_gs_viz or render_gaussians:
-                rendered = splatt3r_render(model, frame, frame, K=K)
-                if rendered is not None:
-                    rendered_img = (
-                        rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
-                    )  # (H,W,3)
+                gs_world = gaussians_to_world(
+                    frame, include_cross=False, spatial_stride=spatial_stride
+                )
+                if gs_world is not None:
+                    means_w, cov_w, colors_w, opas_w = gs_world
                     if enable_gs_viz:
-                        states.set_gs_rendered(rendered_img)
-                    if render_gaussians:
-                        rendered_np = (rendered_img.numpy() * 255).astype("uint8")
-                        rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
-                        cv2.imwrite(
-                            str(render_dir / f"gs_init_{i:06d}.png"), rendered_bgr
+                        shared_gaussians.append(
+                            means_w,
+                            cov_w,
+                            colors_w,
+                            opas_w,
+                            kf_idx=len(keyframes) - 1,
+                            opacity_threshold=0.3,
                         )
+                    if render_gaussians:
+                        rendered = splatt3r_render(model, frame, frame, K=K)
+                        if rendered is not None:
+                            rendered_img = (
+                                rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
+                            )
+                            rendered_np = (rendered_img.numpy() * 255).astype("uint8")
+                            rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(
+                                str(render_dir / f"gs_init_{i:06d}.png"), rendered_bgr
+                            )
 
             i += 1
             continue
@@ -330,8 +372,23 @@ if __name__ == "__main__":
                 states.set_mode(Mode.RELOC)
             states.set_frame(frame)
 
-            # --- Gaussian Splatting render (after tracking) ---
+            # --- Gaussian Splatting: accumulate world-space Gaussians every tracked frame ---
             if (enable_gs_viz or render_gaussians) and not try_reloc:
+                gs_world = gaussians_to_world(
+                    frame, include_cross=False, spatial_stride=spatial_stride
+                )
+                if gs_world is not None:
+                    means_w, cov_w, colors_w, opas_w = gs_world
+                    if enable_gs_viz:
+                        shared_gaussians.append(
+                            means_w,
+                            cov_w,
+                            colors_w,
+                            opas_w,
+                            kf_idx=len(keyframes),
+                            opacity_threshold=0.3,
+                        )
+            if render_gaussians and not try_reloc:
                 keyframe = keyframes.last_keyframe()
                 if keyframe is not None:
                     rendered = splatt3r_render(
@@ -342,17 +399,12 @@ if __name__ == "__main__":
                         target_T_WC=frame.T_WC,
                     )
                     if rendered is not None:
-                        rendered_img = (
-                            rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
-                        )  # (H,W,3)
-                        if enable_gs_viz:
-                            states.set_gs_rendered(rendered_img)
-                        if render_gaussians:
-                            rendered_np = (rendered_img.numpy() * 255).astype("uint8")
-                            rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
-                            cv2.imwrite(
-                                str(render_dir / f"gs_track_{i:06d}.png"), rendered_bgr
-                            )
+                        rendered_img = rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
+                        rendered_np = (rendered_img.numpy() * 255).astype("uint8")
+                        rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
+                        cv2.imwrite(
+                            str(render_dir / f"gs_track_{i:06d}.png"), rendered_bgr
+                        )
 
         elif mode == Mode.RELOC:
             X, C = splatt3r_inference_mono(model, frame)

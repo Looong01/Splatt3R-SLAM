@@ -162,6 +162,95 @@ def _estimate_default_intrinsics(h, w, device="cuda"):
 
 
 @torch.inference_mode()
+def gaussians_to_world(frame, include_cross=True, spatial_stride=1):
+    """Convert camera-local Gaussian predictions to world coordinates.
+
+    Args:
+        frame:  Frame with gaussian_pred (and optionally gaussian_pred_cross) set.
+        include_cross: Also convert cross-predictions and concatenate.
+        spatial_stride: Subsample Gaussians spatially (stride in H and W dims).
+                        stride=4 reduces per-frame Gaussians by 16×.
+
+    Returns:
+        (means_world, cov_triu, colors, opacities) ready for SharedGaussians.append().
+        means_world: (G, 3)
+        cov_triu:    (G, 6)  upper-triangle of world-space 3×3 covariance
+        colors:      (G, 3)  RGB in [0, 1]
+        opacities:   (G,)
+    """
+    if frame.gaussian_pred is None:
+        return None
+
+    device = frame.gaussian_pred["means"].device
+    T_WC_mat = _sim3_to_4x4(frame.T_WC)  # (1, 4, 4)
+    R = T_WC_mat[0, :3, :3]  # (3, 3)
+    t = T_WC_mat[0, :3, 3]  # (3,)
+
+    preds = [frame.gaussian_pred]
+    imgs = [frame.img]
+    if include_cross and frame.gaussian_pred_cross is not None:
+        preds.append(frame.gaussian_pred_cross)
+        imgs.append(frame.img)  # same source image for SH residual
+
+    all_means = []
+    all_cov_triu = []
+    all_colors = []
+    all_opas = []
+
+    row, col = torch.triu_indices(3, 3)
+    s = max(1, int(spatial_stride))
+
+    for pred, img_tensor in zip(preds, imgs):
+        means = pred["means"][:, ::s, ::s, :]  # (B, H', W', 3)
+        scales = pred["scales"][:, ::s, ::s, :]  # (B, H', W', 3)
+        rotations = pred["rotations"][:, ::s, ::s, :]  # (B, H', W', 4)
+        sh = pred["sh"][:, ::s, ::s, :, :]  # (B, H', W', 3, sh_degree)
+        opas = pred["opacities"][:, ::s, ::s, :]  # (B, H', W', 1)
+
+        # The downstream head outputs SH *residuals*; the original image
+        # colour in SH space must be added to the DC component, matching
+        # the logic in splatt3r_core/main.py:forward() (learn_residual).
+        img_hwc = _get_original_img_hwc(img_tensor.to(means.device))  # (B, H, W, 3)
+        img_hwc = img_hwc[:, ::s, ::s, :]  # subsample to match
+        sh = sh.clone()
+        sh[..., 0] = sh[..., 0] + RGB2SH(img_hwc)
+
+        # Flatten spatial dims
+        means_flat = means.reshape(-1, 3)  # (G, 3)
+        scales_flat = scales.reshape(-1, 3)
+        rots_flat = rotations.reshape(-1, 4)
+        sh_flat = sh.reshape(-1, 3, sh.shape[-1])  # (G, 3, sh_degree)
+        opas_flat = opas.reshape(-1)  # (G,)
+
+        # Transform means to world: x_w = R @ x_c + t
+        means_world = (R @ means_flat.T).T + t  # (G, 3)
+
+        # Build covariance in camera space, then rotate to world
+        cov_cam = build_covariance(scales_flat, rots_flat)  # (G, 3, 3)
+        cov_world = R @ cov_cam @ R.T  # (G, 3, 3)
+        cov_tri = cov_world[:, row, col]  # (G, 6)
+
+        # Colour: SH zero-order → direct RGB via SH2RGB
+        # Full SH = network_residual + RGB2SH(img), so
+        # SH2RGB(sh0) = sh0 * C0 + 0.5  gives the final colour.
+        sh0 = sh_flat[:, :, 0]  # (G, 3)
+        C0 = 0.28209479177387814
+        colors_rgb = (sh0 * C0 + 0.5).clamp(0, 1)  # (G, 3)
+
+        all_means.append(means_world)
+        all_cov_triu.append(cov_tri)
+        all_colors.append(colors_rgb)
+        all_opas.append(opas_flat)
+
+    means_out = torch.cat(all_means, dim=0)
+    cov_out = torch.cat(all_cov_triu, dim=0)
+    colors_out = torch.cat(all_colors, dim=0)
+    opas_out = torch.cat(all_opas, dim=0)
+
+    return means_out, cov_out, colors_out, opas_out
+
+
+@torch.inference_mode()
 def splatt3r_render(model, frame, ref_frame, K=None, target_T_WC=None):
     """Render a target view via model.decoder (DecoderSplattingCUDA).
 
