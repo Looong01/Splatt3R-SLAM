@@ -1,18 +1,15 @@
-[comment]: <> (# MASt3R-SLAM: Real-Time Dense SLAM with 3D Reconstruction Priors)
+# Splatt3R-SLAM: Real-Time Dense SLAM with 3D Gaussian Splatting
 
 <p align="center">
-  <h1 align="center">MASt3R-SLAM: Real-Time Dense SLAM with 3D Reconstruction Priors</h1>
+  <h1 align="center">Splatt3R-SLAM: Real-Time Dense SLAM with 3D Gaussian Splatting</h1>
   <p align="center">
-    <a href="https://rmurai.co.uk/"><strong>Riku Murai*</strong></a>
-    ·
-    <a href="https://edexheim.github.io/"><strong>Eric Dexheimer*</strong></a>
-    ·
-    <a href="https://www.doc.ic.ac.uk/~ajd/"><strong>Andrew J. Davison</strong></a>
+    Built on top of <a href="https://edexheim.github.io/mast3r-slam/">MASt3R-SLAM</a> and integrated with <a href="https://splatt3r.active.vision">Splatt3R</a>
   </p>
-  <p align="center">(* Equal Contribution)</p>
 
-[comment]: <> (  <h2 align="center">PAPER</h2>)
-  <h3 align="center"><a href="https://arxiv.org/abs/2412.12392">Paper</a> | <a href="https://youtu.be/wozt71NBFTQ">Video</a> | <a href="https://edexheim.github.io/mast3r-slam/">Project Page</a></h3>
+  <h3 align="center">
+    <a href="https://splatt3r.active.vision">Splatt3R Project</a> | 
+    <a href="https://edexheim.github.io/mast3r-slam/">MASt3R-SLAM Project</a>
+  </h3>
   <div align="center"></div>
 
 <p align="center">
@@ -20,11 +17,21 @@
 </p>
 <br>
 
+## Overview
+
+Splatt3R-SLAM integrates [Splatt3R](https://splatt3r.active.vision) (Zero-shot Gaussian Splatting from Uncalibrated Image Pairs) into a real-time SLAM system. This combines the dense 3D reconstruction capabilities of MASt3R-SLAM with Splatt3R's 3D Gaussian Splatting for improved scene representation.
+
+### Key Features
+- **3D Gaussian Splatting**: Uses Splatt3R to predict 3D Gaussians directly from image pairs
+- **Zero-shot Reconstruction**: No scene-specific training required  
+- **Real-time Performance**: Maintains real-time SLAM capabilities
+- **Dense 3D Reconstruction**: Produces detailed 3D reconstructions with Gaussian splats
+
 # Getting Started
 ## Installation
 ```
-conda create -n mast3r-slam python=3.11
-conda activate mast3r-slam
+conda create -n splatt3r-slam python=3.11
+conda activate splatt3r-slam
 ```
 Check the system's CUDA version with nvcc
 ```
@@ -42,27 +49,28 @@ conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=
 
 Clone the repo and install the dependencies.
 ```
-git clone https://github.com/rmurai0610/MASt3R-SLAM.git --recursive
-cd MASt3R-SLAM/
+git clone https://github.com/Looong01/Splatt3R-SLAM.git --recursive
+cd Splatt3R-SLAM/
 
 # if you've clone the repo without --recursive run
 # git submodule update --init --recursive
 
-pip install -e thirdparty/mast3r
 pip install -e thirdparty/in3d
 pip install --no-build-isolation -e .
+pip install lightning lpips omegaconf huggingface_hub
+pip install git+https://github.com/dcharatan/diff-gaussian-rasterization-modified
  
 
 # Optionally install torchcodec for faster mp4 loading
 pip install torchcodec==0.1
 ```
 
-Setup the checkpoints for MASt3R and retrieval.  The license for the checkpoints and more information on the datasets used is written [here](https://github.com/naver/mast3r/blob/mast3r_sfm/CHECKPOINTS_NOTICE).
+The Splatt3R checkpoint will be automatically downloaded from HuggingFace when you first run the system.
+You can also manually download it:
 ```
 mkdir -p checkpoints/
-wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth -P checkpoints/
-wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -P checkpoints/
-wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
+# The system will download this automatically:
+# https://huggingface.co/brandonsmart/splatt3r_v1.0/blob/main/epoch=19-step=1200.ckpt
 ```
 
 ## WSL Users
@@ -73,25 +81,31 @@ git checkout windows
 This disables multiprocessing which causes an issue with shared memory as discussed [here](https://github.com/rmurai0610/MASt3R-SLAM/issues/21).
 
 ## Examples
+Run Splatt3R-SLAM on TUM dataset:
 ```
 bash ./scripts/download_tum.sh
+python main_splatt3r.py --dataset datasets/tum/rgbd_dataset_freiburg1_room/ --config config/calib.yaml
+```
+
+For the original MASt3R-SLAM version (without Gaussian Splatting):
+```
 python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_room/ --config config/calib.yaml
 ```
 ## Live Demo
 Connect a realsense camera to the PC and run
 ```
-python main.py --dataset realsense --config config/base.yaml
+python main_splatt3r.py --dataset realsense --config config/base.yaml
 ```
 ## Running on a video
 Our system can process either MP4 videos or folders containing RGB images.
 ```
-python main.py --dataset <path/to/video>.mp4 --config config/base.yaml
-python main.py --dataset <path/to/folder> --config config/base.yaml
+python main_splatt3r.py --dataset <path/to/video>.mp4 --config config/base.yaml
+python main_splatt3r.py --dataset <path/to/folder> --config config/base.yaml
 ```
 If the calibration parameters are known, you can specify them in intrinsics.yaml
 ```
-python main.py --dataset <path/to/video>.mp4 --config config/base.yaml --calib config/intrinsics.yaml
-python main.py --dataset <path/to/folder> --config config/base.yaml --calib config/intrinsics.yaml
+python main_splatt3r.py --dataset <path/to/video>.mp4 --config config/base.yaml --calib config/intrinsics.yaml
+python main_splatt3r.py --dataset <path/to/folder> --config config/base.yaml --calib config/intrinsics.yaml
 ```
 
 ## Downloading Dataset
@@ -145,14 +159,30 @@ We run all our experiments on an RTX 4090, and the performance may differ when r
 
 ## Acknowledgement
 We sincerely thank the developers and contributors of the many open-source projects that our code is built upon.
-- [MASt3R](https://github.com/naver/mast3r)
+- [Splatt3R](https://splatt3r.active.vision) - Zero-shot Gaussian Splatting
+- [MASt3R](https://github.com/naver/mast3r) - Matching and Stereo 3D Reconstruction
 - [MASt3R-SfM](https://github.com/naver/mast3r/tree/mast3r_sfm)
+- [MASt3R-SLAM](https://edexheim.github.io/mast3r-slam/) - Original SLAM system
 - [DROID-SLAM](https://github.com/princeton-vl/DROID-SLAM)
 - [ModernGL](https://github.com/moderngl/moderngl)
+- [PixelSplat](https://github.com/dcharatan/pixelsplat) - Gaussian Splatting components
 
 # Citation
 If you found this code/work to be useful in your own research, please considering citing the following:
 
+## Splatt3R
+```bibtex
+@article{smart2024splatt3r,
+  title={Splatt3R: Zero-shot Gaussian Splatting from Uncalibrated Image Pairs}, 
+  author={Brandon Smart and Chuanxia Zheng and Iro Laina and Victor Adrian Prisacariu},
+  year={2024},
+  eprint={2408.13912},
+  archivePrefix={arXiv},
+  primaryClass={cs.CV},
+}
+```
+
+## MASt3R-SLAM
 ```bibtex
 @inproceedings{murai2024_mast3rslam,
   title={{MASt3R-SLAM}: Real-Time Dense {SLAM} with {3D} Reconstruction Priors},

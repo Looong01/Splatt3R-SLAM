@@ -1,11 +1,11 @@
 import lietorch
 import torch
-from mast3r_slam.config import config
-from mast3r_slam.frame import SharedKeyframes
-from mast3r_slam.geometry import (
+from splatt3r_slam.config import config
+from splatt3r_slam.frame import SharedKeyframes
+from splatt3r_slam.geometry import (
     constrain_points_to_ray,
 )
-from mast3r_slam.mast3r_utils import mast3r_match_symmetric
+from splatt3r_slam.splatt3r_utils import splatt3r_match_symmetric
 import mast3r_slam_backends
 
 
@@ -46,7 +46,7 @@ class FactorGraph:
             Qjj,
             Qji,
             Qij,
-        ) = mast3r_match_symmetric(
+        ) = splatt3r_match_symmetric(
             self.model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j
         )
 

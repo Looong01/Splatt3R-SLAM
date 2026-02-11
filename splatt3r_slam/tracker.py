@@ -1,15 +1,15 @@
 import torch
-from mast3r_slam.frame import Frame
-from mast3r_slam.geometry import (
+from splatt3r_slam.frame import Frame
+from splatt3r_slam.geometry import (
     act_Sim3,
     point_to_ray_dist,
     get_pixel_coords,
     constrain_points_to_ray,
     project_calib,
 )
-from mast3r_slam.nonlinear_optimizer import check_convergence, huber
-from mast3r_slam.config import config
-from mast3r_slam.mast3r_utils import mast3r_match_asymmetric
+from splatt3r_slam.nonlinear_optimizer import check_convergence, huber
+from splatt3r_slam.config import config
+from splatt3r_slam.splatt3r_utils import splatt3r_match_asymmetric
 
 
 class FrameTracker:
@@ -28,7 +28,7 @@ class FrameTracker:
     def track(self, frame: Frame):
         keyframe = self.keyframes.last_keyframe()
 
-        idx_f2k, valid_match_k, Xff, Cff, Qff, Xkf, Ckf, Qkf = mast3r_match_asymmetric(
+        idx_f2k, valid_match_k, Xff, Cff, Qff, Xkf, Ckf, Qkf = splatt3r_match_asymmetric(
             self.model, frame, keyframe, idx_i2j_init=self.idx_f2k
         )
         # Save idx for next
