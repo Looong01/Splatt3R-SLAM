@@ -96,7 +96,13 @@ pip install git+https://github.com/princeton-vl/lietorch.git
 **4b. Install thirdparty dependencies**:
 ```bash
 pip install -e thirdparty/in3d
+
+# diff-gaussian-rasterization-modified (auto-detects CUDA or ROCm)
 pip install -e thirdparty/diff-gaussian-rasterization-modified
+
+# Force CUDA or ROCm for diff-gaussian-rasterization-modified:
+# DIFFGAUSS_GPU_BACKEND=cuda pip install -e thirdparty/diff-gaussian-rasterization-modified
+# DIFFGAUSS_GPU_BACKEND=rocm pip install -e thirdparty/diff-gaussian-rasterization-modified
 ```
 
 **4c. Install main package**:

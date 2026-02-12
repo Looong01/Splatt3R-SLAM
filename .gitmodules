@@ -6,4 +6,4 @@
 	url = https://github.com/pyimgui/pyimgui.git
 [submodule "thirdparty/diff-gaussian-rasterization-modified"]
 	path = thirdparty/diff-gaussian-rasterization-modified
-	url = https://github.com/dcharatan/diff-gaussian-rasterization-modified.git
+	url = https://github.com/Looong01/diff-gaussian-rasterization-modified.git
