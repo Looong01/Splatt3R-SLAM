@@ -56,50 +56,23 @@ cd Splatt3R-SLAM/
 
 ### Step 2: Create Environment
 ```bash
-conda create -n splatt3r-slam python=3.11
+conda create -n splatt3r-slam python=3.11 -y
 conda activate splatt3r-slam
 ```
 
 ### Step 3: Install PyTorch
 Check your CUDA version with `nvcc --version`, then install matching PyTorch:
 ```bash
-# For CUDA 11.8
-conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=11.8 -c pytorch -c nvidia
-
-# For CUDA 12.1
-conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.1 -c pytorch -c nvidia
-
-# For CUDA 12.4
-conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
+pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 ```
 
 ### Step 4: Install Dependencies (IN THIS ORDER!)
 
-**4a. Install lietorch FIRST** (critical dependency):
 ```bash
-pip install git+https://github.com/princeton-vl/lietorch.git
-```
-
-**4b. Install thirdparty dependencies**:
-```bash
+pip install -r requirements.txt
 pip install -e thirdparty/in3d
-
-pip install --no-build-isolation -e thirdparty/diff-gaussian-rasterization-modified
-```
-
-**4c. Install main package**:
-```bash
-pip install --no-build-isolation -e .
-```
-
-**4d. Install Splatt3R-specific dependencies**:
-```bash
-pip install lightning lpips omegaconf huggingface_hub gitpython einops
-```
-
-**4e. (Optional) Install torchcodec** for faster mp4 loading:
-```bash
-pip install torchcodec==0.1
+pip install --no-build-isolation thirdparty/lietorch
+pip install --no-build-isolation thirdparty/diff-gaussian-rasterization-modified
 ```
 
 ### Checkpoint

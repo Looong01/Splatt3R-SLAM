@@ -11,6 +11,7 @@ natsort
 # SLAM-specific
 pyrealsense2
 evo
+torchcodec==0.1
 
 # Splatt3R-specific
 lightning
@@ -19,9 +20,10 @@ omegaconf
 huggingface_hub
 gitpython
 
+
 # Note: The following need to be installed separately:
 # - PyTorch (see README.md for version matching CUDA)
 # - lietorch: pip install git+https://github.com/princeton-vl/lietorch.git
-# - diff-gaussian-rasterization: pip install git+https://github.com/dcharatan/diff-gaussian-rasterization-modified
+# - diff-gaussian-rasterization: pip install -e thirdparty/diff-gaussian-rasterization-modified
 # - thirdparty/in3d: pip install -e thirdparty/in3d
 # - torchcodec (optional): pip install torchcodec==0.1
