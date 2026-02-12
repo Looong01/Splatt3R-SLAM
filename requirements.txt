@@ -19,6 +19,9 @@ lpips
 omegaconf
 huggingface_hub
 gitpython
+scikit-learn
+scikit-image
+faiss-gpu-cu12
 
 
 # Note: The following need to be installed separately:

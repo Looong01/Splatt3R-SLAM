@@ -71,8 +71,10 @@ pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https
 ```bash
 pip install -r requirements.txt
 pip install -e thirdparty/in3d
+pip install --no-build-isolation thirdparty/asmk
 pip install --no-build-isolation thirdparty/lietorch
 pip install --no-build-isolation thirdparty/diff-gaussian-rasterization-modified
+pip install --no-build-isolation -e .
 ```
 
 ### Checkpoint
@@ -162,6 +164,12 @@ python main.py --dataset path/to/video.mp4 --config config/base.yaml
 python main.py --dataset path/to/image_folder --config config/base.yaml
 ```
 
+If the calibration parameters are known, you can specify them in intrinsics.yaml
+```bash
+python main.py --dataset <path/to/video>.mp4 --config config/base.yaml --calib config/intrinsics.yaml
+python main.py --dataset <path/to/folder> --config config/base.yaml --calib config/intrinsics.yaml
+```
+
 ### Live Demo (RealSense)
 ```bash
 python main.py --dataset realsense --config config/base.yaml
@@ -174,13 +182,6 @@ python main.py \
     --config config/base.yaml \
     --no-viz
 ```
-
-### Original MASt3R-SLAM (for comparison)
-```bash
-python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config config/base.yaml
-```
-
----
 
 ## Output
 

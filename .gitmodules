@@ -10,3 +10,6 @@
 [submodule "thirdparty/diff-gaussian-rasterization-modified"]
 	path = thirdparty/diff-gaussian-rasterization-modified
 	url = https://github.com/Looong01/diff-gaussian-rasterization-modified.git
+[submodule "thirdparty/asmk"]
+	path = thirdparty/asmk
+	url = https://github.com/Looong01/asmk
