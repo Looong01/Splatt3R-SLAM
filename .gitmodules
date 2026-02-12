@@ -7,3 +7,6 @@
 [submodule "thirdparty/diff-gaussian-rasterization-modified"]
 	path = thirdparty/diff-gaussian-rasterization-modified
 	url = https://github.com/dcharatan/diff-gaussian-rasterization-modified.git
+[submodule "thirdparty/lietorch"]
+	path = thirdparty/lietorch
+	url = https://github.com/princeton-vl/lietorch.git

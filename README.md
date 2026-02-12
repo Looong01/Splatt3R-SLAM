@@ -83,7 +83,8 @@ pip install git+https://github.com/princeton-vl/lietorch.git
 **4b. Install thirdparty dependencies**:
 ```bash
 pip install -e thirdparty/in3d
-pip install -e thirdparty/diff-gaussian-rasterization-modified
+
+pip install --no-build-isolation -e thirdparty/diff-gaussian-rasterization-modified
 ```
 
 **4c. Install main package**:
@@ -99,12 +100,6 @@ pip install lightning lpips omegaconf huggingface_hub gitpython einops
 **4e. (Optional) Install torchcodec** for faster mp4 loading:
 ```bash
 pip install torchcodec==0.1
-```
-
-### Verify Installation
-```bash
-python -c "import lietorch, PIL, cv2, einops, lightning, lpips, omegaconf; print('All dependencies OK')"
-python -c "from splatt3r_slam.splatt3r_utils import load_splatt3r; print('splatt3r_slam OK')"
 ```
 
 ### Checkpoint
