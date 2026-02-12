@@ -1,27 +1,52 @@
+"""
+Main script for Splatt3R-SLAM
+This version uses Splatt3R (with Gaussian Splatting) instead of MASt3R.
+"""
+
 import argparse
 import datetime
 import pathlib
-import sys
 import time
+import warnings
 import cv2
 import lietorch
 import torch
 import tqdm
 import yaml
-from mast3r_slam.global_opt import FactorGraph
+import sys
 
-from mast3r_slam.config import load_config, config, set_global_config
-from mast3r_slam.dataloader import Intrinsics, load_dataset
-import mast3r_slam.evaluate as eval
-from mast3r_slam.frame import Mode, SharedKeyframes, SharedStates, create_frame
-from mast3r_slam.mast3r_utils import (
-    load_mast3r,
-    load_retriever,
-    mast3r_inference_mono,
+# Suppress known safe warnings from third-party libraries
+warnings.filterwarnings("ignore", message=".*weights_only.*", category=FutureWarning)
+warnings.filterwarnings(
+    "ignore",
+    message=".*The parameter 'pretrained' is deprecated.*",
+    category=UserWarning,
 )
-from mast3r_slam.multiprocess_utils import new_queue, try_get_msg
-from mast3r_slam.tracker import FrameTracker
-from mast3r_slam.visualization import WindowMsg, run_visualization
+warnings.filterwarnings(
+    "ignore", message=".*Arguments other than a weight enum.*", category=UserWarning
+)
+from splatt3r_slam.global_opt import FactorGraph
+
+from splatt3r_slam.config import load_config, config, set_global_config
+from splatt3r_slam.dataloader import Intrinsics, load_dataset
+import splatt3r_slam.evaluate as eval
+from splatt3r_slam.frame import (
+    Mode,
+    SharedKeyframes,
+    SharedStates,
+    SharedGaussians,
+    create_frame,
+)
+from splatt3r_slam.splatt3r_utils import (
+    load_splatt3r,
+    load_retriever,
+    splatt3r_inference_mono,
+    splatt3r_render,
+    gaussians_to_world,
+)
+from splatt3r_slam.multiprocess_utils import new_queue, try_get_msg
+from splatt3r_slam.tracker import FrameTracker
+from splatt3r_slam.visualization import WindowMsg, run_visualization
 import torch.multiprocessing as mp
 
 
@@ -156,6 +181,39 @@ if __name__ == "__main__":
     parser.add_argument("--save-as", default="default")
     parser.add_argument("--no-viz", action="store_true")
     parser.add_argument("--calib", default="")
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Path to Splatt3R checkpoint (downloads if not provided)",
+    )
+    parser.add_argument(
+        "--render-gaussians",
+        action="store_true",
+        default=True,
+        help="Enable Gaussian Splatting rendering and save per-frame PNGs (default: True)",
+    )
+    parser.add_argument(
+        "--no-render-gaussians",
+        action="store_true",
+        help="Disable Gaussian Splatting rendering and per-frame PNG saving",
+    )
+    parser.add_argument(
+        "--render-dir",
+        default="logs/gaussian_renders",
+        help="Directory to save Gaussian-rendered images (default: logs/gaussian_renders)",
+    )
+    parser.add_argument(
+        "--max-gaussians",
+        type=int,
+        default=4 * 1024 * 1024,
+        help="Max number of Gaussians in shared buffer (default: 4194304)",
+    )
+    parser.add_argument(
+        "--spatial-stride",
+        type=int,
+        default=4,
+        help="Spatial stride for subsampling Gaussians per frame (default: 4, stride=1 means no subsampling)",
+    )
 
     args = parser.parse_args()
 
@@ -185,15 +243,18 @@ if __name__ == "__main__":
 
     keyframes = SharedKeyframes(manager, h, w)
     states = SharedStates(manager, h, w)
+    shared_gaussians = SharedGaussians(manager, max_gaussians=args.max_gaussians)
 
     if not args.no_viz:
         viz = mp.Process(
             target=run_visualization,
-            args=(config, states, keyframes, main2viz, viz2main),
+            args=(config, states, keyframes, shared_gaussians, main2viz, viz2main),
         )
         viz.start()
 
-    model = load_mast3r(device=device)
+    # Load Splatt3R model instead of MASt3R
+    print("Loading Splatt3R model...")
+    model = load_splatt3r(path=args.checkpoint, device=device)
     model.share_memory()
 
     has_calib = dataset.has_calib()
@@ -221,6 +282,21 @@ if __name__ == "__main__":
 
     tracker = FrameTracker(model, keyframes, device)
     last_msg = WindowMsg()
+
+    # Gaussian rendering setup
+    render_gaussians = args.render_gaussians and not args.no_render_gaussians
+    spatial_stride = args.spatial_stride
+    render_dir = None
+    if render_gaussians:
+        render_dir = pathlib.Path(args.render_dir)
+        render_dir.mkdir(exist_ok=True, parents=True)
+        print(f"[Gaussian Rendering] Enabled. Saving to {render_dir}")
+    print(
+        f"[Gaussians] max_gaussians={args.max_gaussians}, spatial_stride={spatial_stride}"
+    )
+
+    # Enable gaussian splatting visualization whenever the viz window is active
+    enable_gs_viz = not args.no_viz
 
     backend = mp.Process(target=run_backend, args=(config, model, states, keyframes, K))
     backend.start()
@@ -263,13 +339,42 @@ if __name__ == "__main__":
         frame = create_frame(i, img, T_WC, img_size=dataset.img_size, device=device)
 
         if mode == Mode.INIT:
-            # Initialize via mono inference, and encoded features neeed for database
-            X_init, C_init = mast3r_inference_mono(model, frame)
+            # Initialize via mono inference with Splatt3R
+            X_init, C_init = splatt3r_inference_mono(model, frame)
             frame.update_pointmap(X_init, C_init)
             keyframes.append(frame)
             states.queue_global_optimization(len(keyframes) - 1)
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
+
+            # --- Gaussian Splatting: accumulate world-space Gaussians ---
+            if enable_gs_viz or render_gaussians:
+                gs_world = gaussians_to_world(
+                    frame, include_cross=False, spatial_stride=spatial_stride
+                )
+                if gs_world is not None:
+                    means_w, cov_w, colors_w, opas_w = gs_world
+                    if enable_gs_viz:
+                        shared_gaussians.append(
+                            means_w,
+                            cov_w,
+                            colors_w,
+                            opas_w,
+                            kf_idx=len(keyframes) - 1,
+                            opacity_threshold=0.3,
+                        )
+                    if render_gaussians:
+                        rendered = splatt3r_render(model, frame, frame, K=K)
+                        if rendered is not None:
+                            rendered_img = (
+                                rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
+                            )
+                            rendered_np = (rendered_img.numpy() * 255).astype("uint8")
+                            rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(
+                                str(render_dir / f"gs_init_{i:06d}.png"), rendered_bgr
+                            )
+
             i += 1
             continue
 
@@ -279,8 +384,42 @@ if __name__ == "__main__":
                 states.set_mode(Mode.RELOC)
             states.set_frame(frame)
 
+            # --- Gaussian Splatting: accumulate world-space Gaussians every tracked frame ---
+            if (enable_gs_viz or render_gaussians) and not try_reloc:
+                gs_world = gaussians_to_world(
+                    frame, include_cross=False, spatial_stride=spatial_stride
+                )
+                if gs_world is not None:
+                    means_w, cov_w, colors_w, opas_w = gs_world
+                    if enable_gs_viz:
+                        shared_gaussians.append(
+                            means_w,
+                            cov_w,
+                            colors_w,
+                            opas_w,
+                            kf_idx=len(keyframes),
+                            opacity_threshold=0.3,
+                        )
+            if render_gaussians and not try_reloc:
+                keyframe = keyframes.last_keyframe()
+                if keyframe is not None:
+                    rendered = splatt3r_render(
+                        model,
+                        frame,
+                        keyframe,
+                        K=K,
+                        target_T_WC=frame.T_WC,
+                    )
+                    if rendered is not None:
+                        rendered_img = rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
+                        rendered_np = (rendered_img.numpy() * 255).astype("uint8")
+                        rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
+                        cv2.imwrite(
+                            str(render_dir / f"gs_track_{i:06d}.png"), rendered_bgr
+                        )
+
         elif mode == Mode.RELOC:
-            X, C = mast3r_inference_mono(model, frame)
+            X, C = splatt3r_inference_mono(model, frame)
             frame.update_pointmap(X, C)
             states.set_frame(frame)
             states.queue_reloc()

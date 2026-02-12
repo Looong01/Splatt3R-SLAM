@@ -34,7 +34,6 @@ Splatt3R-SLAM integrates [Splatt3R](https://splatt3r.active.vision) (Zero-shot G
 | **Output** | Points + Descriptors | Points + Descriptors + Gaussians |
 | **Visualization** | OpenGL point cloud | Interactive Gaussian Splatting |
 | **View Synthesis** | Limited | Excellent |
-| **Entry Point** | `main.py` | `main_splatt3r.py` |
 
 ---
 
@@ -146,7 +145,7 @@ wget 'https://huggingface.co/brandonsmart/splatt3r_v1.0/resolve/main/epoch%3D19-
 ### Quick Test
 ```bash
 bash ./scripts/download_tum.sh
-python main_splatt3r.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config config/base.yaml
+python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config config/base.yaml
 ```
 
 By default, per-frame Gaussian-rendered PNGs are saved to `logs/gaussian_renders/`.
@@ -154,14 +153,14 @@ By default, per-frame Gaussian-rendered PNGs are saved to `logs/gaussian_renders
 ### Custom Gaussian Parameters
 ```bash
 # Higher density Gaussians (slower, better quality)
-python main_splatt3r.py \
+python main.py \
     --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
     --config config/base.yaml \
     --spatial-stride 1 \
     --max-gaussians 8388608
 
 # Lower density Gaussians (faster, less memory)
-python main_splatt3r.py \
+python main.py \
     --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
     --config config/base.yaml \
     --spatial-stride 8 \
@@ -170,7 +169,7 @@ python main_splatt3r.py \
 
 ### Disable PNG Saving
 ```bash
-python main_splatt3r.py \
+python main.py \
     --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
     --config config/base.yaml \
     --no-render-gaussians
@@ -178,12 +177,12 @@ python main_splatt3r.py \
 
 ### With Camera Calibration
 ```bash
-python main_splatt3r.py \
+python main.py \
     --dataset datasets/tum/rgbd_dataset_freiburg1_room/ \
     --config config/calib.yaml
 
 # With custom intrinsics
-python main_splatt3r.py \
+python main.py \
     --dataset path/to/data \
     --config config/base.yaml \
     --calib config/intrinsics.yaml
@@ -191,18 +190,18 @@ python main_splatt3r.py \
 
 ### Run on Video / Image Folder
 ```bash
-python main_splatt3r.py --dataset path/to/video.mp4 --config config/base.yaml
-python main_splatt3r.py --dataset path/to/image_folder --config config/base.yaml
+python main.py --dataset path/to/video.mp4 --config config/base.yaml
+python main.py --dataset path/to/image_folder --config config/base.yaml
 ```
 
 ### Live Demo (RealSense)
 ```bash
-python main_splatt3r.py --dataset realsense --config config/base.yaml
+python main.py --dataset realsense --config config/base.yaml
 ```
 
 ### Headless Mode (No GUI)
 ```bash
-python main_splatt3r.py \
+python main.py \
     --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
     --config config/base.yaml \
     --no-viz
@@ -230,12 +229,10 @@ python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk --config confi
 
 ```
 Splatt3R-SLAM/
-├── main_splatt3r.py         # Main entry point (Splatt3R-SLAM)
-├── main.py                  # Original MASt3R-SLAM entry point
+├── main.py         # Main entry point (Splatt3R-SLAM)
 ├── thirdparty/
 │   ├── in3d/                # OpenGL camera/visualization library
 │   ├── diff-gaussian-rasterization-modified/  # CUDA Gaussian rasterizer (submodule)
-│   ├── mast3r/              # MASt3R upstream (submodule)
 │   └── eigen/               # Eigen headers
 ├── splatt3r_core/           # Core Splatt3R implementation
 │   ├── main.py              # MAST3RGaussians Lightning module
@@ -250,7 +247,6 @@ Splatt3R-SLAM/
 │   ├── frame.py             # Frame + SharedGaussians buffer
 │   ├── visualization.py     # Interactive GS rendering + OpenGL
 │   └── ...                  # Other SLAM components
-├── mast3r_slam/             # Original MASt3R-SLAM (for comparison)
 ├── config/                  # YAML configuration files
 ├── scripts/                 # Dataset download & evaluation scripts
 └── checkpoints/             # Model checkpoints
@@ -351,7 +347,7 @@ conda activate splatt3r-slam
 Reduce Gaussian density or image resolution:
 ```bash
 # Increase spatial stride (fewer Gaussians)
-python main_splatt3r.py --dataset ... --spatial-stride 8 --max-gaussians 2097152
+python main.py --dataset ... --spatial-stride 8 --max-gaussians 2097152
 
 # Or reduce image resolution in config:
 # config/base.yaml → dataset.img_downsample: 2
@@ -362,13 +358,13 @@ Download manually:
 ```bash
 mkdir -p checkpoints/
 # Download from: https://huggingface.co/brandonsmart/splatt3r_v1.0/blob/main/epoch%3D19-step%3D1200.ckpt
-python main_splatt3r.py --checkpoint checkpoints/epoch=19-step=1200.ckpt ...
+python main.py --checkpoint checkpoints/epoch=19-step=1200.ckpt ...
 ```
 
 ### Visualization not showing
 Run headless:
 ```bash
-python main_splatt3r.py --dataset ... --no-viz
+python main.py --dataset ... --no-viz
 ```
 
 ### WSL Users

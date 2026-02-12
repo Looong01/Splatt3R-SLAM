@@ -29,5 +29,5 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["mast3r_slam", "splatt3r_slam", "splatt3r_core"]
+include = ["splatt3r_slam", "splatt3r_core"]
 namespaces = false
