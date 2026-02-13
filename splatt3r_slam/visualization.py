@@ -36,10 +36,13 @@ try:
         GaussianRasterizationSettings,
         GaussianRasterizer,
     )
+
     _HAS_DIFF_GS = True
 except ImportError:
     _HAS_DIFF_GS = False
-    print("[viz] diff_gaussian_rasterization not found – GS interactive rendering disabled")
+    print(
+        "[viz] diff_gaussian_rasterization not found – GS interactive rendering disabled"
+    )
 
 
 @dataclasses.dataclass
@@ -48,13 +51,25 @@ class WindowMsg:
     is_paused: bool = False
     next: bool = False
     C_conf_threshold: float = 1.5
+    spatial_stride: int = 4
+    max_gaussians: int = 4 * 1024 * 1024
 
 
 class Window(WindowEvents):
     title = "Splatt3R-SLAM"
     window_size = (1960, 1080)
 
-    def __init__(self, states, keyframes, shared_gaussians, main2viz, viz2main, **kwargs):
+    def __init__(
+        self,
+        states,
+        keyframes,
+        shared_gaussians,
+        main2viz,
+        viz2main,
+        spatial_stride=4,
+        max_gaussians=4 * 1024 * 1024,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.ctx.gc_mode = "auto"
         # bit hacky, but detect whether user is using 4k monitor
@@ -80,7 +95,9 @@ class Window(WindowEvents):
         self.lines = Lines(self.line_prog)
 
         self.viewport = ViewportWindow("Scene", self.camera)
-        self.state = WindowMsg()
+        self.state = WindowMsg(
+            spatial_stride=spatial_stride, max_gaussians=max_gaussians
+        )
         self.keyframes = keyframes
         self.states = states
         self.shared_gaussians = shared_gaussians
@@ -107,6 +124,11 @@ class Window(WindowEvents):
 
         self.main2viz = main2viz
         self.viz2main = viz2main
+
+        # CLI defaults for GUI sliders
+        self.spatial_stride = spatial_stride
+        self.max_gaussians_limit = max_gaussians  # buffer allocation cap
+        self.max_gaussians = max_gaussians  # current effective value
 
         # --- Gaussian Splatting interactive rendering ---
         self.use_gs_rendering = _HAS_DIFF_GS  # ON by default when available
@@ -244,7 +266,11 @@ class Window(WindowEvents):
                     thickness=self.line_thickness * self.scale,
                     color=[0, 1, 0, 1],
                 )
-        if self.show_curr_pointmap and not gs_active and self.states.get_mode() != Mode.INIT:
+        if (
+            self.show_curr_pointmap
+            and not gs_active
+            and self.states.get_mode() != Mode.INIT
+        ):
             if config["use_calib"]:
                 curr_frame.K = self.keyframes.get_intrinsics()
             h, w = curr_frame.img_shape.flatten()
@@ -307,6 +333,17 @@ class Window(WindowEvents):
         imgui.same_line()
         _, self.follow_cam = imgui.checkbox("follow cam", self.follow_cam)
 
+        imgui.spacing()
+        _, new_state.spatial_stride = imgui.slider_int(
+            "spatial stride", self.state.spatial_stride, 1, 16
+        )
+        _, new_state.max_gaussians = imgui.slider_int(
+            "max gaussians (k)",
+            self.state.max_gaussians // 1024,
+            64,
+            self.max_gaussians_limit // 1024,
+        )
+        new_state.max_gaussians *= 1024
         imgui.spacing()
         if _HAS_DIFF_GS:
             _, self.use_gs_rendering = imgui.checkbox(
@@ -458,7 +495,9 @@ class Window(WindowEvents):
             T_CW_cv = cv2gl @ T_CW_gl  # (4, 4) OpenCV convention  (world-to-camera)
             T_WC_cv = np.linalg.inv(T_CW_cv)  # (4, 4) camera-to-world
 
-            extrinsics = torch.from_numpy(T_WC_cv).unsqueeze(0).to(means.device)  # (1, 4, 4)
+            extrinsics = (
+                torch.from_numpy(T_WC_cv).unsqueeze(0).to(means.device)
+            )  # (1, 4, 4)
 
             # --- Intrinsics (normalised by image dims, as expected by get_fov) ---
             # in3d uses glm.perspective(radians(hfov/2), ...) so actual vfov = hfov / 2
@@ -469,18 +508,27 @@ class Window(WindowEvents):
             fx = fy  # square pixels assumption
             cx, cy = render_w / 2.0, render_h / 2.0
             # normalised intrinsics (divide by image dims)
-            K_norm = torch.tensor([
-                [fx / render_w,  0,              cx / render_w],
-                [0,              fy / render_h,  cy / render_h],
-                [0,              0,              1            ],
-            ], dtype=torch.float32, device=means.device).unsqueeze(0)  # (1, 3, 3)
+            K_norm = torch.tensor(
+                [
+                    [fx / render_w, 0, cx / render_w],
+                    [0, fy / render_h, cy / render_h],
+                    [0, 0, 1],
+                ],
+                dtype=torch.float32,
+                device=means.device,
+            ).unsqueeze(
+                0
+            )  # (1, 3, 3)
 
             near = torch.tensor([0.05], device=means.device, dtype=torch.float32)
             far = torch.tensor([100.0], device=means.device, dtype=torch.float32)
-            bg = torch.tensor([[0.118, 0.137, 0.149]], device=means.device)  # match clear color
+            bg = torch.tensor(
+                [[0.118, 0.137, 0.149]], device=means.device
+            )  # match clear color
 
             # --- Build projection matrices (same pipeline as render_cuda) ---
             from splatt3r_core.src.pixelsplat_src.projection import get_fov
+
             fov_xy = get_fov(K_norm)  # (1, 2)
             fov_x, fov_y = fov_xy[0, 0], fov_xy[0, 1]
             tan_fov_x = (0.5 * fov_x).tan().item()
@@ -491,19 +539,26 @@ class Window(WindowEvents):
             ext = extrinsics.clone()
             ext[..., :3, 3] *= inv_near[:, None]
             sc_means = means * inv_near.item()
-            sc_cov_factor = (inv_near ** 2).item()
+            sc_cov_factor = (inv_near**2).item()
             sc_near = near * inv_near
             sc_far = far * inv_near
 
-            from splatt3r_core.src.pixelsplat_src.cuda_splatting import get_projection_matrix
-            proj = get_projection_matrix(sc_near, sc_far, fov_x.unsqueeze(0), fov_y.unsqueeze(0))  # (1,4,4)
+            from splatt3r_core.src.pixelsplat_src.cuda_splatting import (
+                get_projection_matrix,
+            )
+
+            proj = get_projection_matrix(
+                sc_near, sc_far, fov_x.unsqueeze(0), fov_y.unsqueeze(0)
+            )  # (1,4,4)
             proj_t = proj[0].T  # column-major
             view_t = ext[0].inverse().T  # column-major
             full_proj = view_t @ proj_t
 
             # --- Rasterize ---
             n_gauss = means.shape[0]
-            mean_grads = torch.zeros(n_gauss, 3, device=means.device, requires_grad=False)
+            mean_grads = torch.zeros(
+                n_gauss, 3, device=means.device, requires_grad=False
+            )
 
             settings = GaussianRasterizationSettings(
                 image_height=render_h,
@@ -593,7 +648,16 @@ class Window(WindowEvents):
         return frame.X_canon.cpu().numpy().astype(np.float32)
 
 
-def run_visualization(cfg, states, keyframes, shared_gaussians, main2viz, viz2main) -> None:
+def run_visualization(
+    cfg,
+    states,
+    keyframes,
+    shared_gaussians,
+    main2viz,
+    viz2main,
+    spatial_stride=4,
+    max_gaussians=4 * 1024 * 1024,
+) -> None:
     set_global_config(cfg)
 
     config_cls = Window
@@ -623,6 +687,8 @@ def run_visualization(cfg, states, keyframes, shared_gaussians, main2viz, viz2ma
         shared_gaussians=shared_gaussians,
         main2viz=main2viz,
         viz2main=viz2main,
+        spatial_stride=spatial_stride,
+        max_gaussians=max_gaussians,
         ctx=window.ctx,
         wnd=window,
         timer=timer,

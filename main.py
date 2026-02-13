@@ -249,6 +249,9 @@ if __name__ == "__main__":
         viz = mp.Process(
             target=run_visualization,
             args=(config, states, keyframes, shared_gaussians, main2viz, viz2main),
+            kwargs=dict(
+                spatial_stride=args.spatial_stride, max_gaussians=args.max_gaussians
+            ),
         )
         viz.start()
 
@@ -281,7 +284,9 @@ if __name__ == "__main__":
             recon_file.unlink()
 
     tracker = FrameTracker(model, keyframes, device)
-    last_msg = WindowMsg()
+    last_msg = WindowMsg(
+        spatial_stride=args.spatial_stride, max_gaussians=args.max_gaussians
+    )
 
     # Gaussian rendering setup
     render_gaussians = args.render_gaussians and not args.no_render_gaussians
@@ -310,6 +315,11 @@ if __name__ == "__main__":
         mode = states.get_mode()
         msg = try_get_msg(viz2main)
         last_msg = msg if msg is not None else last_msg
+
+        # Update runtime params from GUI sliders
+        spatial_stride = last_msg.spatial_stride
+        shared_gaussians.max_gaussians = last_msg.max_gaussians
+
         if last_msg.is_terminated:
             states.set_mode(Mode.TERMINATED)
             break
