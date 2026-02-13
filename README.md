@@ -96,21 +96,64 @@ wget 'https://huggingface.co/brandonsmart/splatt3r_v1.0/resolve/main/epoch%3D19-
 
 ## Usage
 
-### Command-Line Arguments
+## Command-Line Arguments
+
+`main.py` currently supports:
 
 | Argument | Default | Description |
-|----------|---------|-------------|
-| `--dataset` | `datasets/tum/rgbd_dataset_freiburg1_desk` | Path to dataset, video, or `realsense` |
-| `--config` | `config/base.yaml` | Path to config YAML |
-| `--calib` | `""` | Path to camera intrinsics YAML (optional) |
-| `--checkpoint` | `None` | Path to Splatt3R checkpoint (auto-downloads if not set) |
-| `--no-viz` | `False` | Disable visualization window |
-| `--render-gaussians` | **`True`** | Save per-frame Gaussian-rendered PNGs |
-| `--no-render-gaussians` | `False` | Disable per-frame PNG saving |
-| `--render-dir` | `logs/gaussian_renders` | Directory for rendered PNGs |
-| `--max-gaussians` | `4194304` (4M) | Max Gaussians in shared visualization buffer |
-| `--spatial-stride` | `4` | Spatial subsampling stride (1 = no subsampling, 4 = 16× fewer Gaussians per frame) |
-| `--save-as` | `default` | Save tag for results |
+|---|---:|---|
+| `--dataset` | `datasets/tum/rgbd_dataset_freiburg1_desk` | Input sequence folder, video path, or `realsense` |
+| `--config` | `config/base.yaml` | SLAM config YAML |
+| `--save-as` | `default` | Output naming for evaluation save path |
+| `--no-viz` | off | Disable interactive GUI window |
+| `--calib` | `""` | Optional calibration YAML path |
+| `--checkpoint` | `None` | Splatt3R checkpoint (auto-downloads if not set) |
+| `--render-gaussians` | on | Deprecated compatibility flag (rendering is enabled by default) |
+| `--no-render-gaussians` | off | Disable Splatt3R rendering and PNG export |
+| `--render-dir` | `logs/gaussian_renders` | Directory for per-frame rendered PNGs |
+| `--max-gaussians` | `4194304` | Max Gaussians in shared visualization buffer |
+| `--spatial-stride` | `4` | Per-frame Gaussian subsampling stride (`1` = no subsampling) |
+
+Example with explicit rendering-related parameters:
+
+```bash
+python main.py \
+  --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
+  --config config/base.yaml \
+  --spatial-stride 2 \
+  --max-gaussians 6000000 \
+  --render-dir logs/gaussian_renders
+```
+
+## GUI Controls (Interactive Viz)
+
+When GUI is enabled (default, without `--no-viz`), the left panel exposes runtime controls:
+
+| GUI Item | Range / Default | Effect |
+|---|---:|---|
+| `pause` | bool | Pause frame stepping |
+| `C_conf_threshold` | `0.0 .. 10.0` (default `1.5`) | Filters low-confidence points before rendering |
+| `show all` | bool (on) | Show all point maps |
+| `follow cam` | bool (on) | View follows current tracking camera |
+| `spatial stride` | `1 .. 16` (default from CLI `--spatial-stride`) | Subsampling density control per frame |
+| `max gaussians (k)` | `64k .. CLI upper bound` (default from CLI `--max-gaussians`) | Cap total active Gaussians in shared buffer |
+| `GS rendering (Splatt3R)` | bool (on) | Toggle Gaussian splatting rendering overlay |
+| `GS resolution` | `0.1 .. 1.0` (default `0.5`) | Rendering resolution scale in viewport |
+| `surfelmap` / `trianglemap` | radio | Point-cloud shader (when GS rendering is off) |
+| `show_keyframe_edges` / `show_keyframe` / `show_axis` | bool | Overlay debugging visuals |
+| `show_normal` / `culling` | bool | Normal display & face culling (point-cloud mode) |
+| `show_curr_pointmap` | bool (on) | Show current frame point map |
+| `radius` / `slant_threshold` | drag control | Point-cloud shader params |
+| `line_thickness` / `frustum_scale` | drag control | Frustum/edge visualization style |
+
+### CLI vs GUI Priority
+
+- `--spatial-stride` and `--max-gaussians` are **startup defaults** and initialize GUI sliders.
+- During GUI run, slider updates are applied live to subsequent frames.
+- For PNG export in `logs/gaussian_renders/`, current GUI values of `spatial_stride` and `max_gaussians` are used; other GUI sliders are viewport-only.
+- The `--max-gaussians` CLI value determines the **shared memory buffer size** allocated at startup, so the GUI slider cannot exceed this allocation.
+- In headless mode (`--no-viz`), only CLI values are used for the whole run.
+- If `--no-render-gaussians` is set, Splatt3R rendering and PNG export are disabled regardless of GUI state.
 
 ### Quick Test
 ```bash
