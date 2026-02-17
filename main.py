@@ -14,6 +14,7 @@ import torch
 import tqdm
 import yaml
 import sys
+from typing import Optional
 
 # Suppress known safe warnings from third-party libraries
 warnings.filterwarnings("ignore", message=".*weights_only.*", category=FutureWarning)
@@ -48,6 +49,28 @@ from splatt3r_slam.multiprocess_utils import new_queue, try_get_msg
 from splatt3r_slam.tracker import FrameTracker
 from splatt3r_slam.visualization import WindowMsg, run_visualization
 import torch.multiprocessing as mp
+
+
+def should_append_gaussians(
+    add_new_kf: bool,
+    frame_idx: int,
+    current_T_WC: lietorch.Sim3,
+    last_append_T_WC: Optional[lietorch.Sim3],
+    last_append_frame_idx: int,
+    min_translation: float,
+    min_frame_gap: int,
+) -> bool:
+    if add_new_kf:
+        return True
+    if last_append_T_WC is None:
+        return True
+    if (frame_idx - last_append_frame_idx) < min_frame_gap:
+        return False
+
+    t_cur = current_T_WC.matrix()[0, :3, 3]
+    t_last = last_append_T_WC.matrix()[0, :3, 3]
+    translation = torch.linalg.norm(t_cur - t_last).item()
+    return translation >= min_translation
 
 
 def relocalization(frame, keyframes, factor_graph, retrieval_database):
@@ -214,6 +237,27 @@ if __name__ == "__main__":
         default=4,
         help="Spatial stride for subsampling Gaussians per frame (default: 4, stride=1 means no subsampling)",
     )
+    parser.add_argument(
+        "--depth-max-percentile",
+        type=float,
+        default=0.98,
+        help="Filter out Gaussians deeper than this depth percentile (default: 0.98). "
+        "Set 1.0 to disable depth filtering.",
+    )
+    parser.add_argument(
+        "--max-scale",
+        type=float,
+        default=1.0,
+        help="Remove Gaussians whose max scale axis exceeds this value (default: 1.0). "
+        "Large scales indicate hallucinated splash artifacts.",
+    )
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=1.5,
+        help="Remove Gaussians at pixels with pointmap confidence below this (default: 1.5). "
+        "Set 0 to disable confidence filtering.",
+    )
 
     args = parser.parse_args()
 
@@ -291,6 +335,11 @@ if __name__ == "__main__":
     # Gaussian rendering setup
     render_gaussians = args.render_gaussians and not args.no_render_gaussians
     spatial_stride = args.spatial_stride
+    # Avoid repeatedly appending near-identical Gaussians from almost the same view.
+    gs_append_min_translation = 0.12  # meters
+    gs_append_min_frame_gap = 3  # frames
+    last_gs_append_T_WC = None
+    last_gs_append_frame_idx = -(10**9)
     render_dir = None
     if render_gaussians:
         render_dir = pathlib.Path(args.render_dir)
@@ -298,6 +347,10 @@ if __name__ == "__main__":
         print(f"[Gaussian Rendering] Enabled. Saving to {render_dir}")
     print(
         f"[Gaussians] max_gaussians={args.max_gaussians}, spatial_stride={spatial_stride}"
+    )
+    print(
+        f"[Gaussians] splash filter: depth_max_pct={args.depth_max_percentile}, "
+        f"max_scale={args.max_scale}, min_conf={args.min_confidence}"
     )
 
     # Enable gaussian splatting visualization whenever the viz window is active
@@ -360,7 +413,12 @@ if __name__ == "__main__":
             # --- Gaussian Splatting: accumulate world-space Gaussians ---
             if enable_gs_viz or render_gaussians:
                 gs_world = gaussians_to_world(
-                    frame, include_cross=False, spatial_stride=spatial_stride
+                    frame,
+                    include_cross=False,
+                    spatial_stride=spatial_stride,
+                    depth_max_percentile=args.depth_max_percentile,
+                    max_scale=args.max_scale,
+                    min_confidence=args.min_confidence,
                 )
                 if gs_world is not None:
                     means_w, cov_w, colors_w, opas_w = gs_world
@@ -373,6 +431,8 @@ if __name__ == "__main__":
                             kf_idx=len(keyframes) - 1,
                             opacity_threshold=0.3,
                         )
+                        last_gs_append_T_WC = frame.T_WC
+                        last_gs_append_frame_idx = i
                     if render_gaussians:
                         rendered = splatt3r_render(model, frame, frame, K=K)
                         if rendered is not None:
@@ -394,10 +454,25 @@ if __name__ == "__main__":
                 states.set_mode(Mode.RELOC)
             states.set_frame(frame)
 
+            should_append = should_append_gaussians(
+                add_new_kf=add_new_kf,
+                frame_idx=i,
+                current_T_WC=frame.T_WC,
+                last_append_T_WC=last_gs_append_T_WC,
+                last_append_frame_idx=last_gs_append_frame_idx,
+                min_translation=gs_append_min_translation,
+                min_frame_gap=gs_append_min_frame_gap,
+            )
+
             # --- Gaussian Splatting: accumulate world-space Gaussians every tracked frame ---
-            if (enable_gs_viz or render_gaussians) and not try_reloc:
+            if (enable_gs_viz or render_gaussians) and not try_reloc and should_append:
                 gs_world = gaussians_to_world(
-                    frame, include_cross=False, spatial_stride=spatial_stride
+                    frame,
+                    include_cross=False,
+                    spatial_stride=spatial_stride,
+                    depth_max_percentile=args.depth_max_percentile,
+                    max_scale=args.max_scale,
+                    min_confidence=args.min_confidence,
                 )
                 if gs_world is not None:
                     means_w, cov_w, colors_w, opas_w = gs_world
@@ -410,6 +485,8 @@ if __name__ == "__main__":
                             kf_idx=len(keyframes),
                             opacity_threshold=0.3,
                         )
+                        last_gs_append_T_WC = frame.T_WC
+                        last_gs_append_frame_idx = i
             if render_gaussians and not try_reloc:
                 keyframe = keyframes.last_keyframe()
                 if keyframe is not None:

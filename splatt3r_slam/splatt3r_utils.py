@@ -122,15 +122,19 @@ def _extract_gaussian_params(res):
 
     Returns a dict with cloned tensors so the decoder intermediates can be freed.
     Keys: means (B,H,W,3), scales (B,H,W,3), rotations (B,H,W,4),
-          sh (B,H,W,3,sh_degree), opacities (B,H,W,1)
+          sh (B,H,W,3,sh_degree), opacities (B,H,W,1),
+          conf (B,H,W) – pointmap confidence for quality filtering.
     """
-    return {
+    d = {
         "means": res["means"].clone(),
         "scales": res["scales"].clone(),
         "rotations": res["rotations"].clone(),
         "sh": res["sh"].clone(),
         "opacities": res["opacities"].clone(),
     }
+    if "conf" in res:
+        d["conf"] = res["conf"].clone()  # (B, H, W)
+    return d
 
 
 def _get_original_img_hwc(frame_img):
@@ -173,14 +177,36 @@ def _estimate_default_intrinsics(h, w, device="cuda"):
 
 
 @torch.inference_mode()
-def gaussians_to_world(frame, include_cross=True, spatial_stride=1):
+def gaussians_to_world(
+    frame,
+    include_cross=True,
+    spatial_stride=1,
+    depth_min=0.05,
+    depth_max_percentile=0.98,
+    max_scale=0.5,
+    min_confidence=1.5,
+):
     """Convert camera-local Gaussian predictions to world coordinates.
+
+    Filters out low-quality "splash" Gaussians caused by occluded / unseen
+    regions where the model hallucinates noisy predictions.  Three filters are
+    applied *before* the world-space transform:
+
+    1. **Depth filter** – keeps Gaussians with camera-space z in
+       [depth_min, percentile(z, depth_max_percentile)].
+    2. **Scale filter** – keeps Gaussians whose max scale axis < *max_scale*.
+    3. **Confidence filter** – keeps Gaussians whose per-pixel pointmap
+       confidence ≥ *min_confidence* (if conf is available).
 
     Args:
         frame:  Frame with gaussian_pred (and optionally gaussian_pred_cross) set.
         include_cross: Also convert cross-predictions and concatenate.
         spatial_stride: Subsample Gaussians spatially (stride in H and W dims).
                         stride=4 reduces per-frame Gaussians by 16×.
+        depth_min: Minimum camera-space depth to keep (metres).
+        depth_max_percentile: Percentile of camera-space depth used as upper bound.
+        max_scale: Maximum allowed Gaussian scale (any axis).  Larger → splash.
+        min_confidence: Minimum pointmap confidence.  Lower → hallucinated.
 
     Returns:
         (means_world, cov_triu, colors, opacities) ready for SharedGaussians.append().
@@ -218,6 +244,11 @@ def gaussians_to_world(frame, include_cross=True, spatial_stride=1):
         sh = pred["sh"][:, ::s, ::s, :, :]  # (B, H', W', 3, sh_degree)
         opas = pred["opacities"][:, ::s, ::s, :]  # (B, H', W', 1)
 
+        # Confidence map (if stored by _extract_gaussian_params)
+        conf = None
+        if "conf" in pred:
+            conf = pred["conf"][:, ::s, ::s]  # (B, H', W')
+
         # The downstream head outputs SH *residuals*; the original image
         # colour in SH space must be added to the DC component, matching
         # the logic in splatt3r_core/main.py:forward() (learn_residual).
@@ -232,6 +263,39 @@ def gaussians_to_world(frame, include_cross=True, spatial_stride=1):
         rots_flat = rotations.reshape(-1, 4)
         sh_flat = sh.reshape(-1, 3, sh.shape[-1])  # (G, 3, sh_degree)
         opas_flat = opas.reshape(-1)  # (G,)
+        conf_flat = conf.reshape(-1) if conf is not None else None  # (G,)
+
+        # ---- Quality filtering (camera space, before world transform) ----
+        #
+        # 1. Depth filter: keep only Gaussians in front of camera and within
+        #    a reasonable depth range.  The upper bound is adaptive: use the
+        #    *depth_max_percentile*-th percentile of positive depths.
+        z = means_flat[:, 2]  # camera-space depth
+        valid = z > depth_min
+        if valid.any() and depth_max_percentile < 1.0:
+            z_valid = z[valid]
+            z_upper = torch.quantile(z_valid, depth_max_percentile)
+            valid = valid & (z <= z_upper)
+
+        # 2. Scale filter: large scales indicate uncertain / hallucinatory
+        #    Gaussians (the model spreads them when it doesn't know).
+        scale_max = scales_flat.max(dim=-1).values  # (G,)
+        valid = valid & (scale_max < max_scale)
+
+        # 3. Confidence filter: low-confidence predictions are typically in
+        #    occluded or unseen regions → splash artifacts.
+        if conf_flat is not None and min_confidence > 0:
+            valid = valid & (conf_flat >= min_confidence)
+
+        # Apply mask
+        means_flat = means_flat[valid]
+        scales_flat = scales_flat[valid]
+        rots_flat = rots_flat[valid]
+        sh_flat = sh_flat[valid]
+        opas_flat = opas_flat[valid]
+
+        if means_flat.shape[0] == 0:
+            continue
 
         # Transform means to world: x_w = R @ x_c + t
         means_world = (R @ means_flat.T).T + t  # (G, 3)
@@ -252,6 +316,9 @@ def gaussians_to_world(frame, include_cross=True, spatial_stride=1):
         all_cov_triu.append(cov_tri)
         all_colors.append(colors_rgb)
         all_opas.append(opas_flat)
+
+    if len(all_means) == 0:
+        return None
 
     means_out = torch.cat(all_means, dim=0)
     cov_out = torch.cat(all_cov_triu, dim=0)
