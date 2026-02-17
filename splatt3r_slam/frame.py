@@ -1,6 +1,7 @@
 import dataclasses
 from enum import Enum
 from typing import Optional
+import numpy as np
 import lietorch
 import torch
 from splatt3r_slam.splatt3r_utils import resize_img
@@ -383,7 +384,75 @@ class SharedGaussians:
         self.colors    = torch.zeros(max_gaussians, 3, device=device, dtype=torch.float32).share_memory_()
         self.opacities = torch.zeros(max_gaussians,    device=device, dtype=torch.float32).share_memory_()
         self.kf_id     = torch.zeros(max_gaussians,    device=device, dtype=torch.int32).share_memory_()
+        self.quality   = torch.zeros(max_gaussians,    device=device, dtype=torch.float32).share_memory_()
         # fmt: on
+
+    def replace_in_voxels(self, new_means, new_quality, voxel_size=0.05):
+        """Remove old Gaussians in overlapping voxels when new quality is higher.
+
+        For each 3D voxel (cell of side *voxel_size*) that contains BOTH old
+        and new Gaussians, old Gaussians with quality below the new maximum
+        for that voxel are removed.  This prevents splash artifacts from
+        accumulating across views while preserving high-quality predictions
+        from earlier frames.
+
+        Args:
+            new_means:   (M, 3) world-space positions of Gaussians about to be appended.
+            new_quality: (M,) quality scores of new Gaussians (conf / scale).
+            voxel_size:  side length of the spatial voxel grid (metres).
+
+        Returns:
+            Number of old Gaussians removed.
+        """
+        with self.lock:
+            n = self.n_gaussians.value
+            if n == 0 or new_means.shape[0] == 0:
+                return 0
+
+            # Move to CPU / numpy for fast vectorised hash operations
+            old_pos = self.means[:n].detach().cpu().numpy()
+            new_pos = new_means.detach().cpu().numpy()
+            old_q = self.quality[:n].detach().cpu().numpy()
+            new_q = new_quality.detach().cpu().numpy()
+
+            P1, P2 = np.int64(73856093), np.int64(19349669)
+            inv_vs = 1.0 / voxel_size
+
+            def _hash(pos):
+                v = np.floor(pos * inv_vs).astype(np.int64)
+                return v[:, 0] * P1 + v[:, 1] * P2 + v[:, 2]
+
+            old_hash = _hash(old_pos)
+            new_hash = _hash(new_pos)
+
+            # Max quality per new voxel
+            unique_h, inv_idx = np.unique(new_hash, return_inverse=True)
+            max_q = np.full(len(unique_h), -np.inf, dtype=np.float32)
+            np.maximum.at(max_q, inv_idx, new_q)
+
+            # Binary-search old hashes in the sorted unique new hashes
+            search_idx = np.searchsorted(unique_h, old_hash)
+            search_idx = np.clip(search_idx, 0, max(len(unique_h) - 1, 0))
+
+            match = unique_h[search_idx] == old_hash
+            remove = match & (old_q < max_q[search_idx])
+
+            n_remove = int(remove.sum())
+            if n_remove == 0:
+                return 0
+
+            # Compact buffer (keep mask)
+            keep = torch.from_numpy(~remove).to(self.means.device)
+            new_n = n - n_remove
+
+            self.means[:new_n] = self.means[:n][keep].clone()
+            self.cov_triu[:new_n] = self.cov_triu[:n][keep].clone()
+            self.colors[:new_n] = self.colors[:n][keep].clone()
+            self.opacities[:new_n] = self.opacities[:n][keep].clone()
+            self.kf_id[:new_n] = self.kf_id[:n][keep].clone()
+            self.quality[:new_n] = self.quality[:n][keep].clone()
+            self.n_gaussians.value = new_n
+            return n_remove
 
     def append(
         self,
@@ -393,6 +462,7 @@ class SharedGaussians:
         opacities,
         kf_idx: int,
         opacity_threshold: float = 0.05,
+        quality=None,
     ):
         """Append a batch of world-space Gaussians, filtering low-opacity ones.
 
@@ -403,6 +473,7 @@ class SharedGaussians:
             opacities:  (G,)   opacity
             kf_idx:     keyframe index for provenance tracking
             opacity_threshold: discard Gaussians below this opacity
+            quality:    (G,) optional quality scores for voxel-replacement
         """
         # Filter low-opacity
         mask = opacities > opacity_threshold
@@ -410,6 +481,8 @@ class SharedGaussians:
         cov_triu = cov_triu[mask]
         colors = colors[mask]
         opacities = opacities[mask]
+        if quality is not None:
+            quality = quality[mask]
 
         n_new = means.shape[0]
         if n_new == 0:
@@ -430,6 +503,7 @@ class SharedGaussians:
                     self.max_gaussians - half :
                 ].clone()
                 self.kf_id[:half] = self.kf_id[self.max_gaussians - half :].clone()
+                self.quality[:half] = self.quality[self.max_gaussians - half :].clone()
                 n = half
                 space = self.max_gaussians - n
 
@@ -440,6 +514,10 @@ class SharedGaussians:
             self.colors[n : n + n_add] = colors[:n_add]
             self.opacities[n : n + n_add] = opacities[:n_add]
             self.kf_id[n : n + n_add] = kf_idx
+            if quality is not None:
+                self.quality[n : n + n_add] = quality[:n_add]
+            else:
+                self.quality[n : n + n_add] = 1.0
             self.n_gaussians.value = n + n_add
 
     def get_all(self):

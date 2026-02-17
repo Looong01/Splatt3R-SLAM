@@ -113,6 +113,10 @@ wget 'https://huggingface.co/brandonsmart/splatt3r_v1.0/resolve/main/epoch%3D19-
 | `--render-dir` | `logs/gaussian_renders` | Directory for per-frame rendered PNGs |
 | `--max-gaussians` | `4194304` | Max Gaussians in shared visualization buffer |
 | `--spatial-stride` | `4` | Per-frame Gaussian subsampling stride (`1` = no subsampling) |
+| `--depth-max-percentile` | `0.98` | Depth percentile cutoff for splash filtering (`1.0` = off) |
+| `--max-scale` | `1.0` | Remove Gaussians with any scale axis above this value |
+| `--min-confidence` | `1.5` | Remove Gaussians at low-confidence pixels (`0` = off) |
+| `--keep-ratio` | `0.6` | Keep top N% per frame by quality score (`1.0` = off) |
 
 Example with explicit rendering-related parameters:
 
@@ -122,7 +126,8 @@ python main.py \
   --config config/base.yaml \
   --spatial-stride 2 \
   --max-gaussians 6000000 \
-  --render-dir logs/gaussian_renders
+  --render-dir logs/gaussian_renders \
+  --max-scale 0.3 --min-confidence 2.0 --depth-max-percentile 0.95
 ```
 
 ## GUI Controls (Interactive Viz)
@@ -136,7 +141,12 @@ When GUI is enabled (default, without `--no-viz`), the left panel exposes runtim
 | `show all` | bool (on) | Show all point maps |
 | `follow cam` | bool (on) | View follows current tracking camera |
 | `spatial stride` | `1 .. 16` (default from CLI `--spatial-stride`) | Subsampling density control per frame |
-| `max gaussians (k)` | `64k .. CLI upper bound` (default from CLI `--max-gaussians`) | Cap total active Gaussians in shared buffer |
+| `max gaussians (k)` | `64k .. 8192k` (default from CLI `--max-gaussians`) | Cap total active Gaussians in shared buffer |
+| **Splash Filter** | | |
+| `depth max pct` | `0.5 .. 1.0` (default from CLI `--depth-max-percentile`) | Depth percentile cutoff — lower = more aggressive depth culling |
+| `max scale` | `0.01 .. 3.0` (default from CLI `--max-scale`) | Max Gaussian scale axis — lower = remove large splash blobs |
+| `min confidence` | `0.0 .. 10.0` (default from CLI `--min-confidence`) | Pointmap confidence gate — higher = keep only confident predictions |
+| `keep ratio` | `0.1 .. 1.0` (default from CLI `--keep-ratio`) | Quality-percentile filter — lower = more aggressive per-frame culling |
 | `GS rendering (Splatt3R)` | bool (on) | Toggle Gaussian splatting rendering overlay |
 | `GS resolution` | `0.1 .. 1.0` (default `0.5`) | Rendering resolution scale in viewport |
 | `surfelmap` / `trianglemap` | radio | Point-cloud shader (when GS rendering is off) |
@@ -148,12 +158,44 @@ When GUI is enabled (default, without `--no-viz`), the left panel exposes runtim
 
 ### CLI vs GUI Priority
 
-- `--spatial-stride` and `--max-gaussians` are **startup defaults** and initialize GUI sliders.
+- `--spatial-stride`, `--max-gaussians`, `--depth-max-percentile`, `--max-scale`, `--min-confidence`, `--keep-ratio` are **startup defaults** and initialize GUI sliders.
 - During GUI run, slider updates are applied live to subsequent frames.
 - For PNG export in `logs/gaussian_renders/`, current GUI values of `spatial_stride` and `max_gaussians` are used; other GUI sliders are viewport-only.
-- The `--max-gaussians` CLI value determines the **shared memory buffer size** allocated at startup, so the GUI slider cannot exceed this allocation.
+- The `--max-gaussians` CLI value determines the **shared memory buffer size** allocated at startup; the GUI slider upper bound is 8M (FIFO eviction keeps memory bounded).
 - In headless mode (`--no-viz`), only CLI values are used for the whole run.
 - If `--no-render-gaussians` is set, Splatt3R rendering and PNG export are disabled regardless of GUI state.
+
+### Splash Artifact Filtering
+
+When the model predicts Gaussians for **occluded / unseen** regions (e.g. the back
+of a monitor), it generates large, mis-positioned "splash" blobs.  A five-stage
+pipeline inside `gaussians_to_world()` removes these **before** adding to the
+shared buffer, plus a **voxel-based spatial replacement** policy ensures that
+old bad Gaussians are removed when a new better view arrives:
+
+1. **Depth filter** (`depth_max_percentile`): removes Gaussians deeper than the
+   *p*-th percentile of all positive depths.  Default `0.98`.
+2. **Scale filter** (`max_scale`): removes Gaussians whose max axis scale
+   exceeds this threshold.  Default `1.0`.
+3. **Confidence filter** (`min_confidence`): removes Gaussians at pixel
+   positions with pointmap confidence below this value.  Default `1.5`.
+4. **FOV cone filter** (internal, 50° half-angle): removes Gaussians predicted
+   at extreme angles from the camera's optical axis — typically hallucinations.
+5. **Quality percentile filter** (`keep_ratio`): computes a per-Gaussian
+   quality score = conf / (scale + ε) and keeps only the top *keep_ratio*
+   fraction.  Default `0.6` (keep top 60%).
+6. **Voxel-based spatial replacement** (automatic): before appending new
+   Gaussians, old Gaussians in the same 5 cm voxels are **replaced** if the
+   new Gaussians have a higher quality score.  This prevents splash from one
+   viewpoint from corrupting reconstructions built from a different viewpoint.
+
+If splash is still visible, try stricter values:
+
+```bash
+python main.py --max-scale 0.3 --min-confidence 2.0 --depth-max-percentile 0.95 --keep-ratio 0.5
+```
+
+All filter parameters are adjustable **live** via the GUI sliders during runtime.
 
 ### Quick Test
 ```bash

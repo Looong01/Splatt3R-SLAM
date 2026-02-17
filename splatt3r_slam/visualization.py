@@ -53,6 +53,11 @@ class WindowMsg:
     C_conf_threshold: float = 1.5
     spatial_stride: int = 4
     max_gaussians: int = 4 * 1024 * 1024
+    # Splash-artifact filter params (synced via GUI sliders)
+    depth_max_percentile: float = 0.98
+    max_scale: float = 1.0
+    min_confidence: float = 1.5
+    keep_ratio: float = 0.6
 
 
 class Window(WindowEvents):
@@ -96,7 +101,12 @@ class Window(WindowEvents):
 
         self.viewport = ViewportWindow("Scene", self.camera)
         self.state = WindowMsg(
-            spatial_stride=spatial_stride, max_gaussians=max_gaussians
+            spatial_stride=spatial_stride,
+            max_gaussians=max_gaussians,
+            depth_max_percentile=kwargs.get("depth_max_percentile", 0.98),
+            max_scale=kwargs.get("max_scale", 1.0),
+            min_confidence=kwargs.get("min_confidence", 1.5),
+            keep_ratio=kwargs.get("keep_ratio", 0.6),
         )
         self.keyframes = keyframes
         self.states = states
@@ -129,6 +139,10 @@ class Window(WindowEvents):
         self.spatial_stride = spatial_stride
         self.max_gaussians_limit = max_gaussians  # buffer allocation cap
         self.max_gaussians = max_gaussians  # current effective value
+        # Splash-filter defaults (may be overridden by kwargs from CLI)
+        self.depth_max_percentile = kwargs.get("depth_max_percentile", 0.98)
+        self.max_scale = kwargs.get("max_scale", 1.0)
+        self.min_confidence_gs = kwargs.get("min_confidence", 1.5)
 
         # --- Gaussian Splatting interactive rendering ---
         self.use_gs_rendering = _HAS_DIFF_GS  # ON by default when available
@@ -337,13 +351,33 @@ class Window(WindowEvents):
         _, new_state.spatial_stride = imgui.slider_int(
             "spatial stride", self.state.spatial_stride, 1, 16
         )
+        # Allow slider to go up to 2x the CLI allocation (buffer will FIFO-evict)
+        max_gs_slider_upper = max(self.max_gaussians_limit, 8 * 1024 * 1024) // 1024
         _, new_state.max_gaussians = imgui.slider_int(
             "max gaussians (k)",
             self.state.max_gaussians // 1024,
             64,
-            self.max_gaussians_limit // 1024,
+            max_gs_slider_upper,
         )
         new_state.max_gaussians *= 1024
+        imgui.spacing()
+
+        # --- Splash-artifact filter sliders ---
+        imgui.separator()
+        imgui.text("Splash Filter")
+        _, new_state.depth_max_percentile = imgui.slider_float(
+            "depth max pct", self.state.depth_max_percentile, 0.5, 1.0
+        )
+        _, new_state.max_scale = imgui.slider_float(
+            "max scale", self.state.max_scale, 0.01, 3.0
+        )
+        _, new_state.min_confidence = imgui.slider_float(
+            "min confidence", self.state.min_confidence, 0.0, 10.0
+        )
+        _, new_state.keep_ratio = imgui.slider_float(
+            "keep ratio", self.state.keep_ratio, 0.1, 1.0
+        )
+        imgui.separator()
         imgui.spacing()
         if _HAS_DIFF_GS:
             _, self.use_gs_rendering = imgui.checkbox(
@@ -657,6 +691,7 @@ def run_visualization(
     viz2main,
     spatial_stride=4,
     max_gaussians=4 * 1024 * 1024,
+    **extra_kwargs,
 ) -> None:
     set_global_config(cfg)
 
@@ -692,6 +727,7 @@ def run_visualization(
         ctx=window.ctx,
         wnd=window,
         timer=timer,
+        **extra_kwargs,
     )
     # Avoid the event assigning in the property setter for now
     # We want the even assigning to happen in WindowConfig.__init__

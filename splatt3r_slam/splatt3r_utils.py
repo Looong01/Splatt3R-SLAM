@@ -7,6 +7,7 @@ import PIL
 import numpy as np
 import torch
 import einops
+import math
 import sys
 import os
 
@@ -185,35 +186,38 @@ def gaussians_to_world(
     depth_max_percentile=0.98,
     max_scale=0.5,
     min_confidence=1.5,
+    keep_ratio=0.6,
+    max_fov_half_deg=50.0,
 ):
     """Convert camera-local Gaussian predictions to world coordinates.
 
-    Filters out low-quality "splash" Gaussians caused by occluded / unseen
-    regions where the model hallucinates noisy predictions.  Three filters are
-    applied *before* the world-space transform:
+    Applies a multi-stage quality filter to remove "splash" Gaussians —
+    hallucinated predictions for occluded / unseen regions:
 
-    1. **Depth filter** – keeps Gaussians with camera-space z in
-       [depth_min, percentile(z, depth_max_percentile)].
-    2. **Scale filter** – keeps Gaussians whose max scale axis < *max_scale*.
-    3. **Confidence filter** – keeps Gaussians whose per-pixel pointmap
-       confidence ≥ *min_confidence* (if conf is available).
+    1. **Depth filter** – camera-space z ∈ [depth_min, percentile(z, depth_max_percentile)].
+    2. **Scale filter** – max axis scale < *max_scale*.
+    3. **Confidence filter** – pointmap conf ≥ *min_confidence* (if available).
+    4. **FOV cone filter** – angle from optical axis < *max_fov_half_deg*.
+    5. **Quality percentile filter** – keep top *keep_ratio* fraction ranked by
+       quality score = conf / (max_scale + ε).  Adaptively removes the worst
+       predictions per frame regardless of absolute thresholds.
 
     Args:
-        frame:  Frame with gaussian_pred (and optionally gaussian_pred_cross) set.
+        frame:  Frame with gaussian_pred set.
         include_cross: Also convert cross-predictions and concatenate.
-        spatial_stride: Subsample Gaussians spatially (stride in H and W dims).
-                        stride=4 reduces per-frame Gaussians by 16×.
-        depth_min: Minimum camera-space depth to keep (metres).
-        depth_max_percentile: Percentile of camera-space depth used as upper bound.
-        max_scale: Maximum allowed Gaussian scale (any axis).  Larger → splash.
-        min_confidence: Minimum pointmap confidence.  Lower → hallucinated.
+        spatial_stride: Subsample Gaussians spatially (stride in H and W).
+        depth_min: Minimum camera-space depth (metres).
+        depth_max_percentile: Upper depth percentile cutoff.
+        max_scale: Maximum allowed Gaussian scale (any axis).
+        min_confidence: Minimum pointmap confidence.
+        keep_ratio: Fraction of Gaussians to keep after quality ranking (0–1).
+                    1.0 disables the percentile filter.
+        max_fov_half_deg: Max half-angle (degrees) from optical axis.
+                          180 disables the FOV filter.
 
     Returns:
-        (means_world, cov_triu, colors, opacities) ready for SharedGaussians.append().
-        means_world: (G, 3)
-        cov_triu:    (G, 6)  upper-triangle of world-space 3×3 covariance
-        colors:      (G, 3)  RGB in [0, 1]
-        opacities:   (G,)
+        ``None`` if no Gaussians survive, otherwise a 5-tuple:
+        (means_world (G,3), cov_triu (G,6), colors (G,3), opacities (G,), quality (G,))
     """
     if frame.gaussian_pred is None:
         return None
@@ -233,9 +237,11 @@ def gaussians_to_world(
     all_cov_triu = []
     all_colors = []
     all_opas = []
+    all_quality = []
 
     row, col = torch.triu_indices(3, 3)
     s = max(1, int(spatial_stride))
+    max_fov_rad = math.radians(max_fov_half_deg)
 
     for pred, img_tensor in zip(preds, imgs):
         means = pred["means"][:, ::s, ::s, :]  # (B, H', W', 3)
@@ -266,10 +272,8 @@ def gaussians_to_world(
         conf_flat = conf.reshape(-1) if conf is not None else None  # (G,)
 
         # ---- Quality filtering (camera space, before world transform) ----
-        #
-        # 1. Depth filter: keep only Gaussians in front of camera and within
-        #    a reasonable depth range.  The upper bound is adaptive: use the
-        #    *depth_max_percentile*-th percentile of positive depths.
+
+        # 1. Depth filter
         z = means_flat[:, 2]  # camera-space depth
         valid = z > depth_min
         if valid.any() and depth_max_percentile < 1.0:
@@ -277,15 +281,34 @@ def gaussians_to_world(
             z_upper = torch.quantile(z_valid, depth_max_percentile)
             valid = valid & (z <= z_upper)
 
-        # 2. Scale filter: large scales indicate uncertain / hallucinatory
-        #    Gaussians (the model spreads them when it doesn't know).
+        # 2. Scale filter
         scale_max = scales_flat.max(dim=-1).values  # (G,)
         valid = valid & (scale_max < max_scale)
 
-        # 3. Confidence filter: low-confidence predictions are typically in
-        #    occluded or unseen regions → splash artifacts.
+        # 3. Confidence filter (fixed threshold)
         if conf_flat is not None and min_confidence > 0:
             valid = valid & (conf_flat >= min_confidence)
+
+        # 4. FOV cone filter – discard Gaussians at extreme angles from
+        #    the camera's optical axis.  These are typically hallucinations.
+        if max_fov_half_deg < 180.0:
+            xy_dist = torch.sqrt(means_flat[:, 0] ** 2 + means_flat[:, 1] ** 2)
+            angle = torch.atan2(xy_dist, z.clamp(min=0.01))
+            valid = valid & (angle < max_fov_rad)
+
+        # 5. Quality-score percentile filter (adaptive per-frame).
+        #    quality = conf / (scale + ε): high-confidence small Gaussians
+        #    are preferred over large uncertain blobs.
+        if conf_flat is not None:
+            q_score = conf_flat / (scale_max + 0.01)
+        else:
+            q_score = 1.0 / (scale_max + 0.01)
+
+        if 0 < keep_ratio < 1.0:
+            q_valid = q_score[valid]
+            if q_valid.numel() > 10:
+                cutoff = torch.quantile(q_valid, 1.0 - keep_ratio)
+                valid = valid & (q_score >= cutoff)
 
         # Apply mask
         means_flat = means_flat[valid]
@@ -293,6 +316,7 @@ def gaussians_to_world(
         rots_flat = rots_flat[valid]
         sh_flat = sh_flat[valid]
         opas_flat = opas_flat[valid]
+        q_out = q_score[valid]
 
         if means_flat.shape[0] == 0:
             continue
@@ -306,8 +330,6 @@ def gaussians_to_world(
         cov_tri = cov_world[:, row, col]  # (G, 6)
 
         # Colour: SH zero-order → direct RGB via SH2RGB
-        # Full SH = network_residual + RGB2SH(img), so
-        # SH2RGB(sh0) = sh0 * C0 + 0.5  gives the final colour.
         sh0 = sh_flat[:, :, 0]  # (G, 3)
         C0 = 0.28209479177387814
         colors_rgb = (sh0 * C0 + 0.5).clamp(0, 1)  # (G, 3)
@@ -316,6 +338,7 @@ def gaussians_to_world(
         all_cov_triu.append(cov_tri)
         all_colors.append(colors_rgb)
         all_opas.append(opas_flat)
+        all_quality.append(q_out)
 
     if len(all_means) == 0:
         return None
@@ -324,8 +347,9 @@ def gaussians_to_world(
     cov_out = torch.cat(all_cov_triu, dim=0)
     colors_out = torch.cat(all_colors, dim=0)
     opas_out = torch.cat(all_opas, dim=0)
+    quality_out = torch.cat(all_quality, dim=0)
 
-    return means_out, cov_out, colors_out, opas_out
+    return means_out, cov_out, colors_out, opas_out, quality_out
 
 
 @torch.inference_mode()

@@ -258,6 +258,13 @@ if __name__ == "__main__":
         help="Remove Gaussians at pixels with pointmap confidence below this (default: 1.5). "
         "Set 0 to disable confidence filtering.",
     )
+    parser.add_argument(
+        "--keep-ratio",
+        type=float,
+        default=0.6,
+        help="Keep top N%% of Gaussians per frame ranked by quality score (default: 0.6). "
+        "1.0 disables the quality-percentile filter.",
+    )
 
     args = parser.parse_args()
 
@@ -294,7 +301,12 @@ if __name__ == "__main__":
             target=run_visualization,
             args=(config, states, keyframes, shared_gaussians, main2viz, viz2main),
             kwargs=dict(
-                spatial_stride=args.spatial_stride, max_gaussians=args.max_gaussians
+                spatial_stride=args.spatial_stride,
+                max_gaussians=args.max_gaussians,
+                depth_max_percentile=args.depth_max_percentile,
+                max_scale=args.max_scale,
+                min_confidence=args.min_confidence,
+                keep_ratio=args.keep_ratio,
             ),
         )
         viz.start()
@@ -329,7 +341,12 @@ if __name__ == "__main__":
 
     tracker = FrameTracker(model, keyframes, device)
     last_msg = WindowMsg(
-        spatial_stride=args.spatial_stride, max_gaussians=args.max_gaussians
+        spatial_stride=args.spatial_stride,
+        max_gaussians=args.max_gaussians,
+        depth_max_percentile=args.depth_max_percentile,
+        max_scale=args.max_scale,
+        min_confidence=args.min_confidence,
+        keep_ratio=args.keep_ratio,
     )
 
     # Gaussian rendering setup
@@ -350,7 +367,8 @@ if __name__ == "__main__":
     )
     print(
         f"[Gaussians] splash filter: depth_max_pct={args.depth_max_percentile}, "
-        f"max_scale={args.max_scale}, min_conf={args.min_confidence}"
+        f"max_scale={args.max_scale}, min_conf={args.min_confidence}, "
+        f"keep_ratio={args.keep_ratio}"
     )
 
     # Enable gaussian splatting visualization whenever the viz window is active
@@ -372,6 +390,11 @@ if __name__ == "__main__":
         # Update runtime params from GUI sliders
         spatial_stride = last_msg.spatial_stride
         shared_gaussians.max_gaussians = last_msg.max_gaussians
+        # Splash-filter params (live from GUI or CLI defaults in headless mode)
+        depth_max_pct = last_msg.depth_max_percentile
+        gs_max_scale = last_msg.max_scale
+        gs_min_conf = last_msg.min_confidence
+        gs_keep_ratio = last_msg.keep_ratio
 
         if last_msg.is_terminated:
             states.set_mode(Mode.TERMINATED)
@@ -416,13 +439,17 @@ if __name__ == "__main__":
                     frame,
                     include_cross=False,
                     spatial_stride=spatial_stride,
-                    depth_max_percentile=args.depth_max_percentile,
-                    max_scale=args.max_scale,
-                    min_confidence=args.min_confidence,
+                    depth_max_percentile=depth_max_pct,
+                    max_scale=gs_max_scale,
+                    min_confidence=gs_min_conf,
+                    keep_ratio=gs_keep_ratio,
                 )
                 if gs_world is not None:
-                    means_w, cov_w, colors_w, opas_w = gs_world
+                    means_w, cov_w, colors_w, opas_w, quality_w = gs_world
                     if enable_gs_viz:
+                        shared_gaussians.replace_in_voxels(
+                            means_w, quality_w, voxel_size=0.05
+                        )
                         shared_gaussians.append(
                             means_w,
                             cov_w,
@@ -430,6 +457,7 @@ if __name__ == "__main__":
                             opas_w,
                             kf_idx=len(keyframes) - 1,
                             opacity_threshold=0.3,
+                            quality=quality_w,
                         )
                         last_gs_append_T_WC = frame.T_WC
                         last_gs_append_frame_idx = i
@@ -470,13 +498,17 @@ if __name__ == "__main__":
                     frame,
                     include_cross=False,
                     spatial_stride=spatial_stride,
-                    depth_max_percentile=args.depth_max_percentile,
-                    max_scale=args.max_scale,
-                    min_confidence=args.min_confidence,
+                    depth_max_percentile=depth_max_pct,
+                    max_scale=gs_max_scale,
+                    min_confidence=gs_min_conf,
+                    keep_ratio=gs_keep_ratio,
                 )
                 if gs_world is not None:
-                    means_w, cov_w, colors_w, opas_w = gs_world
+                    means_w, cov_w, colors_w, opas_w, quality_w = gs_world
                     if enable_gs_viz:
+                        shared_gaussians.replace_in_voxels(
+                            means_w, quality_w, voxel_size=0.05
+                        )
                         shared_gaussians.append(
                             means_w,
                             cov_w,
@@ -484,6 +516,7 @@ if __name__ == "__main__":
                             opas_w,
                             kf_idx=len(keyframes),
                             opacity_threshold=0.3,
+                            quality=quality_w,
                         )
                         last_gs_append_T_WC = frame.T_WC
                         last_gs_append_frame_idx = i
