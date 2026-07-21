@@ -1,0 +1,424 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+// -*- c++ -*-
+
+#include <faiss/IndexScalarQuantizer.h>
+
+#include <algorithm>
+#include <cstdio>
+
+#include <omp.h>
+
+#include <faiss/impl/ResultHandler.h>
+#include <faiss/impl/expanded_scanners.h>
+
+#include <faiss/impl/FaissAssert.h>
+#include <faiss/impl/IDSelector.h>
+#include <faiss/impl/ScalarQuantizer.h>
+#include <faiss/utils/utils.h>
+
+namespace faiss {
+
+/*******************************************************************
+ * IndexScalarQuantizer implementation
+ ********************************************************************/
+
+IndexScalarQuantizer::IndexScalarQuantizer(
+        int d_in,
+        ScalarQuantizer::QuantizerType qtype,
+        MetricType metric)
+        : IndexFlatCodes(0, d_in, metric), sq(d_in, qtype) {
+    is_trained = qtype == ScalarQuantizer::QT_fp16 ||
+            qtype == ScalarQuantizer::QT_8bit_direct ||
+            qtype == ScalarQuantizer::QT_bf16 ||
+            qtype == ScalarQuantizer::QT_8bit_direct_signed;
+    code_size = sq.code_size;
+}
+
+IndexScalarQuantizer::IndexScalarQuantizer()
+        : IndexScalarQuantizer(0, ScalarQuantizer::QT_8bit) {}
+
+void IndexScalarQuantizer::train(idx_t n, const float* x) {
+    sq.train(n, x);
+    is_trained = true;
+}
+
+void IndexScalarQuantizer::search(
+        idx_t n,
+        const float* x,
+        idx_t k,
+        float* distances,
+        idx_t* labels,
+        const SearchParameters* params) const {
+    const IDSelector* sel = params ? params->sel : nullptr;
+
+    FAISS_THROW_IF_NOT(k > 0);
+    FAISS_THROW_IF_NOT(is_trained);
+    FAISS_THROW_IF_NOT(
+            metric_type == METRIC_L2 || metric_type == METRIC_INNER_PRODUCT);
+
+#pragma omp parallel
+    {
+        std::unique_ptr<InvertedListScanner> scanner(
+                sq.select_InvertedListScanner(metric_type, nullptr, true, sel));
+
+        scanner->list_no = 0; // directly the list number
+
+#pragma omp for
+        for (idx_t i = 0; i < n; i++) {
+            float* D = distances + k * i;
+            idx_t* I = labels + k * i;
+            // re-order heap
+            if (metric_type == METRIC_L2) {
+                maxheap_heapify(k, D, I);
+            } else {
+                minheap_heapify(k, D, I);
+            }
+            scanner->set_query(x + i * d);
+            scanner->scan_codes(ntotal, codes.data(), nullptr, D, I, k);
+
+            // re-order heap
+            if (metric_type == METRIC_L2) {
+                maxheap_reorder(k, D, I);
+            } else {
+                minheap_reorder(k, D, I);
+            }
+        }
+    }
+}
+
+FlatCodesDistanceComputer* IndexScalarQuantizer::get_FlatCodesDistanceComputer()
+        const {
+    ScalarQuantizer::SQDistanceComputer* dc =
+            sq.get_distance_computer(metric_type);
+    dc->code_size = sq.code_size;
+    dc->codes = codes.data();
+    return dc;
+}
+
+/* Codec interface */
+
+void IndexScalarQuantizer::sa_encode(idx_t n, const float* x, uint8_t* bytes)
+        const {
+    FAISS_THROW_IF_NOT(is_trained);
+    sq.compute_codes(x, bytes, n);
+}
+
+void IndexScalarQuantizer::sa_decode(idx_t n, const uint8_t* bytes, float* x)
+        const {
+    FAISS_THROW_IF_NOT(is_trained);
+    sq.decode(bytes, x, n);
+}
+
+/*******************************************************************
+ * IndexIVFScalarQuantizer implementation
+ ********************************************************************/
+
+IndexIVFScalarQuantizer::IndexIVFScalarQuantizer(
+        Index* quantizer_,
+        size_t d_,
+        size_t nlist_,
+        ScalarQuantizer::QuantizerType qtype,
+        MetricType metric,
+        bool by_residual_,
+        bool own_invlists_)
+        : IndexIVF(quantizer_, d_, nlist_, 0, metric, own_invlists_),
+          sq(d_, qtype) {
+    code_size = sq.code_size;
+    this->by_residual = by_residual_;
+    if (invlists) {
+        // was not known at construction time
+        invlists->code_size = code_size;
+    }
+    is_trained = false;
+    if (qtype == ScalarQuantizer::QT_0bit) {
+        by_residual = false;
+        is_trained = true; // no training needed
+    }
+    if (ScalarQuantizer::TurboQuantRefine::is_turboq_full(qtype)) {
+        by_residual = false;
+    }
+}
+
+IndexIVFScalarQuantizer::IndexIVFScalarQuantizer() : IndexIVF() {
+    by_residual = true;
+}
+
+void IndexIVFScalarQuantizer::train_encoder(
+        idx_t n,
+        const float* x,
+        const idx_t* /*assign*/) {
+    sq.train(n, x);
+}
+
+idx_t IndexIVFScalarQuantizer::train_encoder_num_vectors() const {
+    return 100000;
+}
+
+void IndexIVFScalarQuantizer::encode_vectors(
+        idx_t n,
+        const float* x,
+        const idx_t* list_nos,
+        uint8_t* codes,
+        bool include_listnos) const {
+    if (sq.code_size == 0) {
+        // QT_0bit: nothing to encode, but handle coarse codes if needed
+        if (include_listnos) {
+            size_t coarse_size = coarse_code_size();
+            for (idx_t i = 0; i < n; i++) {
+                int64_t list_no = list_nos[i];
+                if (list_no >= 0) {
+                    encode_listno(list_no, codes + i * coarse_size);
+                }
+            }
+        }
+        return;
+    }
+    std::unique_ptr<ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
+    size_t coarse_size = include_listnos ? coarse_code_size() : 0;
+    memset(codes, 0, (code_size + coarse_size) * n);
+
+#pragma omp parallel if (n > 1000)
+    {
+        std::vector<float> residual(d);
+
+#pragma omp for
+        for (idx_t i = 0; i < n; i++) {
+            int64_t list_no = list_nos[i];
+            if (list_no >= 0) {
+                const float* xi = x + i * d;
+                uint8_t* code = codes + i * (code_size + coarse_size);
+                if (by_residual) {
+                    quantizer->compute_residual(xi, residual.data(), list_no);
+                    xi = residual.data();
+                }
+                if (coarse_size) {
+                    encode_listno(list_no, code);
+                }
+                squant->encode_vector(xi, code + coarse_size);
+            }
+        }
+    }
+}
+
+void IndexIVFScalarQuantizer::decode_vectors(
+        idx_t n,
+        const uint8_t* codes,
+        const idx_t* list_nos,
+        float* x) const {
+    if (sq.code_size == 0 && list_nos) {
+        // QT_0bit: reconstruct centroids if list_nos provided
+        for (idx_t i = 0; i < n; i++) {
+            quantizer->reconstruct(list_nos[i], x + i * d);
+        }
+        return;
+    }
+    FAISS_THROW_IF_NOT(is_trained);
+    sq.decode(codes, x, n);
+    if (by_residual) {
+        FAISS_THROW_IF_NOT_MSG(
+                list_nos, "decode_vectors with by_residual requires list_nos");
+#pragma omp parallel for if (n > 1000)
+        for (idx_t i = 0; i < n; i++) {
+            std::vector<float> centroid(d);
+            quantizer->reconstruct(list_nos[i], centroid.data());
+            for (size_t j = 0; j < static_cast<size_t>(d); j++) {
+                x[i * d + j] += centroid[j];
+            }
+        }
+    }
+}
+
+void IndexIVFScalarQuantizer::sa_decode(idx_t n, const uint8_t* codes, float* x)
+        const {
+    if (sq.code_size == 0) {
+        size_t coarse_size = coarse_code_size();
+        for (idx_t i = 0; i < n; i++) {
+            const uint8_t* code = codes + i * coarse_size;
+            int64_t list_no = decode_listno(code);
+            quantizer->reconstruct(list_no, x + i * d);
+        }
+        return;
+    }
+    std::unique_ptr<ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
+    size_t coarse_size = coarse_code_size();
+
+#pragma omp parallel if (n > 1000)
+    {
+        std::vector<float> residual(d);
+
+#pragma omp for
+        for (idx_t i = 0; i < n; i++) {
+            const uint8_t* code = codes + i * (code_size + coarse_size);
+            int64_t list_no = decode_listno(code);
+            float* xi = x + i * d;
+            squant->decode_vector(code + coarse_size, xi);
+            if (by_residual) {
+                quantizer->reconstruct(list_no, residual.data());
+                for (size_t j = 0; j < static_cast<size_t>(d); j++) {
+                    xi[j] += residual[j];
+                }
+            }
+        }
+    }
+}
+
+void IndexIVFScalarQuantizer::add_core(
+        idx_t n,
+        const float* x,
+        const idx_t* xids,
+        const idx_t* coarse_idx,
+        void* inverted_list_context) {
+    FAISS_THROW_IF_NOT(is_trained);
+    if (sq.code_size == 0) {
+        // QT_0bit: just add IDs with empty codes
+        uint8_t dummy_code = 0;
+        DirectMapAdd dm_add(direct_map, n, xids);
+        for (idx_t i = 0; i < n; i++) {
+            int64_t list_no = coarse_idx[i];
+            if (list_no >= 0) {
+                int64_t id = xids ? xids[i] : ntotal + i;
+                size_t ofs = invlists->add_entry(list_no, id, &dummy_code);
+                dm_add.add(i, list_no, ofs);
+            } else {
+                dm_add.add(i, -1, 0);
+            }
+        }
+        ntotal += n;
+        return;
+    }
+
+    std::unique_ptr<ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
+
+    DirectMapAdd dm_add(direct_map, n, xids);
+
+#pragma omp parallel
+    {
+        std::vector<float> residual(d);
+        std::vector<uint8_t> one_code(code_size);
+        int nt = omp_get_num_threads();
+        int rank = omp_get_thread_num();
+
+        // each thread takes care of a subset of lists
+        for (idx_t i = 0; i < n; i++) {
+            int64_t list_no = coarse_idx[i];
+            if (list_no >= 0 && list_no % nt == rank) {
+                int64_t id = xids ? xids[i] : ntotal + i;
+
+                const float* xi = x + i * d;
+                if (by_residual) {
+                    quantizer->compute_residual(xi, residual.data(), list_no);
+                    xi = residual.data();
+                }
+
+                memset(one_code.data(), 0, code_size);
+                squant->encode_vector(xi, one_code.data());
+
+                size_t ofs = invlists->add_entry(
+                        list_no, id, one_code.data(), inverted_list_context);
+
+                dm_add.add(i, list_no, ofs);
+
+            } else if (rank == 0 && list_no == -1) {
+                dm_add.add(i, -1, 0);
+            }
+        }
+    }
+
+    ntotal += n;
+}
+
+InvertedListScanner* IndexIVFScalarQuantizer::get_InvertedListScanner(
+        bool store_pairs,
+        const IDSelector* sel,
+        const IVFSearchParameters* search_params) const {
+    if (!ScalarQuantizer::TurboQuantRefine::is_turboq_full(sq.qtype)) {
+        return sq.select_InvertedListScanner(
+                metric_type, quantizer, store_pairs, sel, by_residual);
+    }
+
+    // TurboQ full types: create a TQ-specific scanner that supports
+    // search params (qb, int_qjl) and pre-screening.
+    uint8_t tq_qb = 0;
+    bool tq_int_qjl = false;
+    if (auto* tp = dynamic_cast<const IVFSQTurboQSearchParameters*>(
+                search_params)) {
+        tq_qb = tp->qb;
+        tq_int_qjl = tp->int_qjl;
+    }
+    using TurboQDC = ScalarQuantizer::TurboQuantRefine::DistanceComputer;
+    auto* dc = static_cast<TurboQDC*>(sq.get_distance_computer(metric_type));
+    dc->configure(tq_qb, tq_int_qjl);
+
+    struct TQScanner : InvertedListScanner {
+        std::unique_ptr<TurboQDC> dc;
+
+        explicit TQScanner(
+                TurboQDC* dc_in,
+                bool store_pairs_in,
+                const IDSelector* sel_in,
+                bool keep_max_in)
+                : InvertedListScanner(store_pairs_in, sel_in), dc(dc_in) {
+            this->keep_max = keep_max_in;
+        }
+
+        void set_query(const float* query) override {
+            dc->set_query(query);
+        }
+
+        void set_list(idx_t list_no_in, float) override {
+            this->list_no = list_no_in;
+        }
+
+        float distance_to_code(const uint8_t* code) const final {
+            return dc->distance_to_code(code);
+        }
+
+        size_t scan_codes(
+                size_t list_size,
+                const uint8_t* codes,
+                const idx_t* ids,
+                ResultHandler& handler) const override {
+            dc->set_prescreen_threshold(&handler.threshold, !keep_max);
+            size_t nup = run_scan_codes(*this, list_size, codes, ids, handler);
+            dc->clear_prescreen_threshold();
+            return nup;
+        }
+    };
+
+    auto* scanner = new TQScanner(
+            dc, store_pairs, sel, is_similarity_metric(metric_type));
+    scanner->code_size = code_size;
+    return scanner;
+}
+
+void IndexIVFScalarQuantizer::reconstruct_from_offset(
+        int64_t list_no,
+        int64_t offset,
+        float* recons) const {
+    if (sq.code_size == 0) {
+        // QT_0bit: reconstruct from centroid
+        quantizer->reconstruct(list_no, recons);
+        return;
+    }
+    InvertedLists::ScopedCodes sc(invlists, list_no, offset);
+
+    if (by_residual) {
+        std::vector<float> centroid(d);
+        quantizer->reconstruct(list_no, centroid.data());
+
+        sq.decode(sc.get(), recons, 1);
+        for (int i = 0; i < d; ++i) {
+            recons[i] += centroid[i];
+        }
+    } else {
+        sq.decode(sc.get(), recons, 1);
+    }
+}
+
+} // namespace faiss

@@ -2,6 +2,10 @@ import json
 import os
 import sys
 
+# torch >= 2.6 defaults torch.load to weights_only=True, which rejects the
+# pickled objects inside the MASt3R/Splatt3R checkpoints (trusted sources).
+os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
+
 import einops
 import lightning as L
 import lpips

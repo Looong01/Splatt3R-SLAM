@@ -1,0 +1,8 @@
+# Byte-compiled files
+__pycache__/
+
+# C extensions
+*.so
+*.o
+*.egg-info/
+build/

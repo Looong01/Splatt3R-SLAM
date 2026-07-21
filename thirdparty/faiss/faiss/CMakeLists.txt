@@ -1,0 +1,810 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+# =============================================================================
+# SIMD FILE REGISTRY
+# Keep in sync with Buck's SIMD_FILES in xplat.bzl
+# Architecture-specific: only include files for the current build architecture
+# =============================================================================
+set(FAISS_SIMD_AVX2_SRC
+  impl/fast_scan/impl-avx2.cpp
+  impl/hnsw/avx2.cpp
+  impl/pq_code_distance/avx2.cpp
+  impl/scalar_quantizer/sq-avx2.cpp
+  impl/approx_topk/avx2.cpp
+  impl/binary_hamming/avx2.cpp
+  utils/simd_impl/distances_avx2.cpp
+  utils/hamming_distance/hamming_avx2.cpp
+  utils/simd_impl/partitioning_avx2.cpp
+  utils/distances_fused/simdlib_based.cpp
+  utils/simd_impl/rabitq_avx2.cpp
+  utils/simd_impl/super_kmeans_kernels_avx2.cpp
+)
+set(FAISS_SIMD_AVX512_SRC
+  impl/fast_scan/impl-avx512.cpp
+  impl/hnsw/avx512.cpp
+  impl/pq_code_distance/avx512.cpp
+  impl/scalar_quantizer/sq-avx512.cpp
+  impl/binary_hamming/avx512.cpp
+  utils/simd_impl/distances_avx512.cpp
+  utils/distances_fused/avx512.cpp
+  utils/hamming_distance/hamming_avx512.cpp
+  utils/simd_impl/rabitq_avx512.cpp
+  utils/simd_impl/super_kmeans_kernels_avx512.cpp
+)
+# AVX-512 sources that additionally require AVX512_VPOPCNTDQ
+# (Sapphire Rapids and later). Compiled into faiss_avx512_spr only,
+# and into the DD faiss target with an extra per-file -mavx512vpopcntdq
+# flag. Not compiled into faiss_avx512 — that target stops at the
+# baseline AVX-512F/CD/VL/DQ/BW feature set.
+set(FAISS_SIMD_AVX512_SPR_SRC
+  impl/scalar_quantizer/sq-avx512-spr.cpp
+  utils/simd_impl/rabitq_avx512_spr.cpp
+  utils/hamming_distance/hamming_avx512_spr.cpp
+)
+set(FAISS_SIMD_NEON_SRC
+  impl/fast_scan/impl-neon.cpp
+  impl/scalar_quantizer/sq-neon.cpp
+  impl/approx_topk/neon.cpp
+  impl/binary_hamming/neon.cpp
+  impl/pq_code_distance/neon.cpp
+  utils/simd_impl/distances_aarch64.cpp
+  utils/hamming_distance/hamming_neon.cpp
+  utils/simd_impl/partitioning_neon.cpp
+  utils/distances_fused/simdlib_based_neon.cpp
+  utils/simd_impl/rabitq_neon.cpp
+)
+set(FAISS_SIMD_SVE_SRC
+  impl/pq_code_distance/pq_code_distance-sve.cpp
+  utils/simd_impl/distances_arm_sve.cpp
+)
+set(FAISS_SIMD_RVV_SRC
+  impl/fast_scan/impl-riscv.cpp
+  impl/pq_code_distance/rvv.cpp
+  impl/scalar_quantizer/sq-rvv.cpp
+  impl/binary_hamming/rvv.cpp
+  utils/simd_impl/distances_rvv.cpp
+  utils/hamming_distance/hamming_rvv.cpp
+  utils/simd_impl/rabitq_rvv.cpp
+)
+# Select SIMD sources based on target architecture
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+  set(FAISS_SIMD_SRC
+    ${FAISS_SIMD_AVX2_SRC}
+    ${FAISS_SIMD_AVX512_SRC}
+    ${FAISS_SIMD_AVX512_SPR_SRC} ${FAISS_SIMD_AVX512_SPR_SRC})
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64|ARM64)")
+  set(FAISS_SIMD_SRC ${FAISS_SIMD_NEON_SRC} ${FAISS_SIMD_SVE_SRC})
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(riscv64|riscv)")
+  set(FAISS_SIMD_SRC ${FAISS_SIMD_RVV_SRC})
+else()
+  set(FAISS_SIMD_SRC "")
+endif()
+# =============================================================================
+
+set(FAISS_SRC
+  AutoTune.cpp
+  Clustering.cpp
+  SuperKMeans.cpp
+  IVFlib.cpp
+  Index.cpp
+  Index2Layer.cpp
+  IndexAdditiveQuantizer.cpp
+  IndexBinary.cpp
+  IndexBinaryFlat.cpp
+  IndexBinaryFromFloat.cpp
+  IndexBinaryHNSW.cpp
+  IndexBinaryHash.cpp
+  IndexBinaryIVF.cpp
+  IndexFlat.cpp
+  IndexFlatCodes.cpp
+  IndexHNSW.cpp
+  IndexIDMap.cpp
+  IndexIVF.cpp
+  IndexIVFAdditiveQuantizer.cpp
+  IndexIVFFlat.cpp
+  IndexIVFFlatPanorama.cpp
+  IndexIVFPQ.cpp
+  IndexIVFFastScan.cpp
+  IndexIVFAdditiveQuantizerFastScan.cpp
+  IndexIVFPQFastScan.cpp
+  IndexIVFPQR.cpp
+  IndexIVFRaBitQ.cpp
+  IndexIVFRaBitQFastScan.cpp
+  IndexIVFSpectralHash.cpp
+  IndexLSH.cpp
+  IndexNNDescent.cpp
+  IndexLattice.cpp
+  IndexNSG.cpp
+  IndexPQ.cpp
+  IndexFastScan.cpp
+  IndexAdditiveQuantizerFastScan.cpp
+  IndexIVFIndependentQuantizer.cpp
+  IndexPQFastScan.cpp
+  IndexPreTransform.cpp
+  IndexRaBitQ.cpp
+  IndexRaBitQFastScan.cpp
+  IndexRefine.cpp
+  IndexReplicas.cpp
+  IndexRowwiseMinMax.cpp
+  IndexScalarQuantizer.cpp
+  IndexShards.cpp
+  IndexShardsIVF.cpp
+  IndexNeuralNetCodec.cpp
+  MatrixStats.cpp
+  MetaIndexes.cpp
+  VectorTransform.cpp
+  clone_index.cpp
+  index_factory.cpp
+  impl/AdSampling.cpp
+  impl/AuxIndexStructures.cpp
+  impl/VisitedTable.cpp
+  impl/ClusteringInitialization.cpp
+  impl/ClusteringHelpers.cpp
+  impl/CodePacker.cpp
+  impl/CodePackerRaBitQ.cpp
+  impl/IDSelector.cpp
+  impl/FaissException.cpp
+  impl/HNSW.cpp
+  impl/hnsw/LockVector.cpp
+  impl/hnsw/MinimaxHeap.cpp
+  impl/NSG.cpp
+  impl/PolysemousTraining.cpp
+  impl/ProductQuantizer.cpp
+  impl/pq_code_distance/pq_code_distance-generic.cpp
+  impl/pq_code_distance/IVFPQ_QueryTables.cpp
+  impl/AdditiveQuantizer.cpp
+  impl/RaBitQuantizer.cpp
+  impl/RaBitQuantizerMultiBit.cpp
+  impl/RaBitQUtils.cpp
+  impl/ResidualQuantizer.cpp
+  impl/LocalSearchQuantizer.cpp
+  impl/ProductAdditiveQuantizer.cpp
+  impl/ScalarQuantizer.cpp
+  impl/scalar_quantizer/training.cpp
+  impl/index_read.cpp
+  impl/index_write.cpp
+  impl/io.cpp
+  impl/kmeans1d.cpp
+  impl/lattice_Zn.cpp
+  impl/mapped_io.cpp
+  impl/fast_scan/fast_scan.cpp
+  impl/residual_quantizer_encode_steps.cpp
+  impl/zerocopy_io.cpp
+  impl/NNDescent.cpp
+  impl/Panorama.cpp
+  impl/PanoramaStats.cpp
+  impl/PdxLayout.cpp
+  invlists/BlockInvertedLists.cpp
+  invlists/DirectMap.cpp
+  invlists/InvertedLists.cpp
+  invlists/InvertedListsIOHook.cpp
+  utils/Heap.cpp
+  utils/NeuralNet.cpp
+  utils/WorkerThread.cpp
+  utils/distances.cpp
+  utils/distances_simd.cpp
+  utils/extra_distances.cpp
+  utils/hamming.cpp
+  utils/partitioning.cpp
+  utils/quantize_lut.cpp
+  utils/random.cpp
+  utils/sorting.cpp
+  utils/utils.cpp
+  utils/simd_levels.cpp
+  utils/distances_fused/distances_fused.cpp
+  factory_tools.cpp
+  # build.cpp excluded due to build errors on Windows
+)
+
+if(FAISS_ENABLE_SVS)
+  list(APPEND FAISS_SRC
+    svs/IndexSVSFlat.cpp
+    svs/IndexSVSVamana.cpp
+    svs/IndexSVSVamanaLVQ.cpp
+    svs/IndexSVSVamanaLeanVec.cpp
+    svs/IndexSVSIVF.cpp
+    svs/IndexSVSIVFLVQ.cpp
+    svs/IndexSVSIVFLeanVec.cpp
+    impl/svs_io.cpp
+  )
+endif()
+
+set(FAISS_HEADERS
+  AutoTune.h
+  Clustering.h
+  SuperKMeans.h
+  IVFlib.h
+  Index.h
+  Index2Layer.h
+  IndexAdditiveQuantizer.h
+  IndexBinary.h
+  IndexBinaryFlat.h
+  IndexBinaryFromFloat.h
+  IndexBinaryHNSW.h
+  IndexBinaryHash.h
+  IndexBinaryIVF.h
+  IndexFlat.h
+  IndexFlatCodes.h
+  IndexHNSW.h
+  IndexIDMap.h
+  IndexIVF.h
+  IndexIVFAdditiveQuantizer.h
+  IndexIVFIndependentQuantizer.h
+  IndexIVFFlat.h
+  IndexIVFFlatPanorama.h
+  IndexIVFPQ.h
+  IndexIVFFastScan.h
+  IndexIVFAdditiveQuantizerFastScan.h
+  IndexIVFPQFastScan.h
+  IndexIVFPQR.h
+  IndexIVFRaBitQ.h
+  IndexIVFRaBitQFastScan.h
+  IndexIVFSpectralHash.h
+  IndexLSH.h
+  IndexNeuralNetCodec.h
+  IndexLattice.h
+  IndexNNDescent.h
+  IndexNSG.h
+  IndexPQ.h
+  IndexFastScan.h
+  IndexAdditiveQuantizerFastScan.h
+  IndexPQFastScan.h
+  IndexPreTransform.h
+  IndexRefine.h
+  IndexReplicas.h
+  IndexRaBitQ.h
+  IndexRaBitQFastScan.h
+  IndexRowwiseMinMax.h
+  IndexScalarQuantizer.h
+  IndexShards.h
+  IndexShardsIVF.h
+  MatrixStats.h
+  MetaIndexes.h
+  MetricType.h
+  VectorTransform.h
+  clone_index.h
+  index_factory.h
+  factory_tools.h
+  index_io.h
+  impl/AdSampling.h
+  impl/AdditiveQuantizer.h
+  impl/AuxIndexStructures.h
+  impl/InvertedListScannerStats.h
+  impl/VisitedTable.h
+  impl/ClusteringInitialization.h
+  impl/ClusteringHelpers.h
+  impl/CodePacker.h
+  impl/CodePackerRaBitQ.h
+  impl/IDSelector.h
+  impl/DistanceComputer.h
+  impl/FaissAssert.h
+  impl/FaissException.h
+  impl/HNSW.h
+  impl/hnsw/LockVector.h
+  impl/hnsw/MinimaxHeap.h
+  impl/LocalSearchQuantizer.h
+  impl/ProductAdditiveQuantizer.h
+  impl/fast_scan/LookupTableScaler.h
+  impl/fast_scan/FastScanDistancePostProcessing.h
+  impl/maybe_owned_vector.h
+  impl/NNDescent.h
+  impl/NSG.h
+  impl/Panorama.h
+  impl/PanoramaStats.h
+  impl/PdxLayout.h
+  impl/PolysemousTraining.h
+  impl/ProductQuantizer-inl.h
+  impl/ProductQuantizer.h
+  impl/Quantizer.h
+  impl/RaBitQuantizer.h
+  impl/RaBitQuantizerMultiBit.h
+  impl/RaBitQUtils.h
+  impl/ResidualQuantizer.h
+  impl/ResultHandler.h
+  impl/ScalarQuantizer.h
+  impl/expanded_scanners.h
+  impl/scalar_quantizer/codecs.h
+  impl/scalar_quantizer/distance_computers.h
+  impl/scalar_quantizer/quantizers.h
+  impl/scalar_quantizer/scanners.h
+  impl/scalar_quantizer/similarities.h
+  impl/scalar_quantizer/sq-dispatch.h
+  impl/scalar_quantizer/training.h
+  impl/ThreadedIndex-inl.h
+  impl/ThreadedIndex.h
+  impl/index_read_utils.h
+  impl/io.h
+  impl/io_macros.h
+  impl/mapped_io.h
+  impl/kmeans1d.h
+  impl/lattice_Zn.h
+  impl/platform_macros.h
+  impl/fast_scan/accumulate_loops.h
+  impl/fast_scan/accumulate_loops_512.h
+  impl/fast_scan/dispatching.h
+  impl/fast_scan/fast_scan.h
+  impl/fast_scan/decompose_qbs.h
+  impl/fast_scan/kernels_simd256.h
+  impl/fast_scan/kernels_simd512.h
+  impl/fast_scan/rabitq_dispatching.h
+  impl/fast_scan/rabitq_result_handler.h
+  impl/residual_quantizer_encode_steps.h
+  impl/simd_dispatch.h
+  impl/fast_scan/simd_result_handlers.h
+  impl/zerocopy_io.h
+  impl/pq_code_distance/pq_code_distance-inl.h
+  impl/pq_code_distance/pq_code_distance-avx2.h
+  impl/pq_code_distance/pq_code_distance-avx512.h
+  impl/pq_code_distance/pq_code_distance-generic.h
+  impl/pq_code_distance/IVFPQ_QueryTables.h
+  impl/pq_code_distance/IVFPQScanner_impl.h
+  impl/pq_code_distance/PQDistanceComputer_impl.h
+  invlists/BlockInvertedLists.h
+  invlists/DirectMap.h
+  invlists/InvertedLists.h
+  invlists/InvertedListsIOHook.h
+  invlists/OnDiskInvertedLists.h
+  utils/AlignedTable.h
+  utils/bf16.h
+  utils/Heap.h
+  utils/NeuralNet.h
+  utils/WorkerThread.h
+  utils/distances.h
+  utils/extra_distances.h
+  utils/fp16-fp16c.h
+  utils/fp16-inl.h
+  utils/fp16-arm.h
+  utils/fp16.h
+  utils/hamming-inl.h
+  utils/hamming.h
+  utils/ordered_key_value.h
+  utils/partitioning.h
+  utils/prefetch.h
+  utils/quantize_lut.h
+  utils/rabitq_simd.h
+  utils/random.h
+  utils/sorting.h
+  impl/simdlib/simdlib.h
+  impl/simdlib/simdlib_dispatch.h
+  impl/simdlib/simdlib_avx2.h
+  impl/simdlib/simdlib_avx512.h
+  impl/simdlib/simdlib_emulated.h
+  impl/simdlib/simdlib_neon.h
+  impl/simdlib/simdlib_ppc64.h
+  utils/utils.h
+  utils/simd_levels.h
+  utils/distances_fused/distances_fused.h
+  utils/distances_fused/simdlib_kernel-inl.h
+  impl/approx_topk/approx_topk.h
+  impl/approx_topk/generic.h
+  impl/approx_topk/rq_beam_search_tab.h
+  impl/approx_topk/rq_beam_search_tab-inl.h
+  impl/approx_topk/simdlib256-inl.h
+  utils/approx_topk_hamming/approx_topk_hamming.h
+  utils/transpose/transpose-avx2-inl.h
+  utils/transpose/transpose-avx512-inl.h
+  utils/hamming_distance/common.h
+  utils/hamming_distance/hamming_computer.h
+  utils/hamming_distance/hamming_computer-avx2.h
+  utils/hamming_distance/hamming_computer-avx512.h
+  utils/hamming_distance/hamming_computer-avx512_spr.h
+  utils/hamming_distance/hamming_computer-generic.h
+  utils/hamming_distance/hamming_computer-neon.h
+  utils/hamming_distance/hamming_computer-rvv.h
+  utils/simd_impl/distances_autovec-inl.h
+  utils/simd_impl/distances_simdlib256.h
+  utils/hamming_distance/hamming_impl.h
+  utils/simd_impl/exhaustive_L2sqr_blas_cmax.h
+  utils/simd_impl/super_kmeans_dispatch.h
+  utils/simd_impl/super_kmeans_kernels.h
+  utils/simd_impl/IVFFlatScanner-inl.h
+  utils/simd_impl/distances_sse-inl.h
+)
+
+if(FAISS_ENABLE_SVS)
+  list(APPEND FAISS_HEADERS
+    svs/IndexSVSFlat.h
+    svs/IndexSVSVamana.h
+    svs/IndexSVSVamanaLVQ.h
+    svs/IndexSVSVamanaLeanVec.h
+    svs/IndexSVSIVF.h
+    svs/IndexSVSIVFLVQ.h
+    svs/IndexSVSIVFLeanVec.h
+  )
+endif()
+
+if(NOT WIN32)
+  list(APPEND FAISS_SRC invlists/OnDiskInvertedLists.cpp)
+  list(APPEND FAISS_HEADERS invlists/OnDiskInvertedLists.h)
+endif()
+
+# Export FAISS_HEADERS variable to parent scope.
+set(FAISS_HEADERS ${FAISS_HEADERS} PARENT_SCOPE)
+
+# Detect BMI2 compiler support.
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-mbmi2" COMPILER_SUPPORTS_BMI2)
+if(COMPILER_SUPPORTS_BMI2)
+  set(FAISS_BMI2_FLAGS "-mbmi2")
+else()
+  set(FAISS_BMI2_FLAGS "")
+endif()
+
+add_library(faiss ${FAISS_SRC})
+
+add_library(faiss_avx2 ${FAISS_SRC})
+if(NOT FAISS_OPT_LEVEL STREQUAL "avx2" AND NOT FAISS_OPT_LEVEL STREQUAL "avx512" AND NOT FAISS_OPT_LEVEL STREQUAL "avx512_spr")
+  set_target_properties(faiss_avx2 PROPERTIES EXCLUDE_FROM_ALL TRUE)
+endif()
+if(NOT WIN32)
+  target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-mavx2 -mfma -mf16c -mpopcnt ${FAISS_BMI2_FLAGS}>)
+else()
+  # MSVC enables FMA with /arch:AVX2; no separate flags for F16C, POPCNT
+  # Ref. FMA (under /arch:AVX2): https://docs.microsoft.com/en-us/cpp/build/reference/arch-x64
+  # Ref. F16C (2nd paragraph): https://walbourn.github.io/directxmath-avx2/
+  # Ref. POPCNT: https://docs.microsoft.com/en-us/cpp/intrinsics/popcnt16-popcnt-popcnt64
+  target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX2>)
+  # we need bigobj for the swig wrapper
+  add_compile_options(/bigobj)
+endif()
+target_sources(faiss_avx2 PRIVATE ${FAISS_SIMD_AVX2_SRC})
+target_compile_definitions(faiss_avx2 PRIVATE COMPILE_SIMD_AVX2)
+
+add_library(faiss_avx512 ${FAISS_SRC})
+if(NOT FAISS_OPT_LEVEL STREQUAL "avx512")
+  set_target_properties(faiss_avx512 PROPERTIES EXCLUDE_FROM_ALL TRUE)
+endif()
+if(NOT WIN32)
+  # All modern CPUs support F, CD, VL, DQ, BW extensions.
+  # Ref: https://en.wikipedia.org/wiki/AVX512
+  target_compile_options(faiss_avx512 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-mavx2 -mfma -mf16c -mavx512f -mavx512cd -mavx512vl -mavx512dq -mavx512bw -mpopcnt ${FAISS_BMI2_FLAGS}>)
+else()
+  target_compile_options(faiss_avx512 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX512>)
+  # we need bigobj for the swig wrapper
+  add_compile_options(/bigobj)
+endif()
+target_sources(faiss_avx512 PRIVATE ${FAISS_SIMD_AVX2_SRC} ${FAISS_SIMD_AVX512_SRC})
+target_compile_definitions(faiss_avx512 PRIVATE COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512)
+
+add_library(faiss_avx512_spr ${FAISS_SRC})
+if(NOT FAISS_OPT_LEVEL STREQUAL "avx512_spr")
+  set_target_properties(faiss_avx512_spr PROPERTIES EXCLUDE_FROM_ALL TRUE)
+endif()
+if(NOT WIN32)
+  # Architecture mode to support AVX512 extensions available since Intel(R) Sapphire Rapids.
+  # Ref: https://networkbuilders.intel.com/solutionslibrary/intel-avx-512-fp16-instruction-set-for-intel-xeon-processor-based-products-technology-guide
+  target_compile_options(faiss_avx512_spr PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-mavx2 -mfma -mf16c -mavx512f -mavx512cd -mavx512vl -mavx512dq -mavx512bw -mavx512vnni -mavx512vpopcntdq -mpopcnt -mavx512fp16 -mavx512bf16 ${FAISS_BMI2_FLAGS}>)
+else()
+  target_compile_options(faiss_avx512_spr PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX512>)
+  # we need bigobj for the swig wrapper
+  add_compile_options(/bigobj)
+endif()
+target_sources(faiss_avx512_spr PRIVATE ${FAISS_SIMD_AVX2_SRC} ${FAISS_SIMD_AVX512_SRC} ${FAISS_SIMD_AVX512_SPR_SRC})
+target_compile_definitions(faiss_avx512_spr PRIVATE COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512 COMPILE_SIMD_AVX512_SPR)
+
+add_library(faiss_sve ${FAISS_SRC})
+if(NOT FAISS_OPT_LEVEL STREQUAL "sve")
+  set_target_properties(faiss_sve PROPERTIES EXCLUDE_FROM_ALL TRUE)
+endif()
+if(NOT WIN32)
+  if("${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_DEBUG} " MATCHES "(^| )-march=native")
+    # Do nothing, expect SVE to be enabled by -march=native
+  elseif("${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_DEBUG} " MATCHES "(^| )(-march=armv[0-9]+(\\.[1-9]+)?-[^+ ](\\+[^+$ ]+)*)")
+    # Add +sve
+    target_compile_options(faiss_sve PRIVATE $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:DEBUG>>:${CMAKE_MATCH_2}+sve>)
+  elseif(NOT "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_DEBUG} " MATCHES "(^| )-march=armv")
+    # No valid -march, so specify -march=armv8-a+sve as the default
+    target_compile_options(faiss_sve PRIVATE $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:DEBUG>>:-march=armv8-a+sve>)
+  endif()
+  if("${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_RELEASE} " MATCHES "(^| )-march=native")
+    # Do nothing, expect SVE to be enabled by -march=native
+  elseif("${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_RELEASE} " MATCHES "(^| )(-march=armv[0-9]+(\\.[1-9]+)?-[^+ ](\\+[^+$ ]+)*)")
+    # Add +sve
+    target_compile_options(faiss_sve PRIVATE $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:RELEASE>>:${CMAKE_MATCH_2}+sve>)
+  elseif(NOT "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_RELEASE} " MATCHES "(^| )-march=armv")
+    # No valid -march, so specify -march=armv8-a+sve as the default
+    target_compile_options(faiss_sve PRIVATE $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:RELEASE>>:-march=armv8-a+sve>)
+  endif()
+endif()
+target_sources(faiss_sve PRIVATE ${FAISS_SIMD_NEON_SRC} ${FAISS_SIMD_SVE_SRC})
+target_compile_definitions(faiss_sve PRIVATE COMPILE_SIMD_ARM_NEON COMPILE_SIMD_ARM_SVE)
+
+# =============================================================================
+# Dynamic Dispatch Mode
+# When FAISS_OPT_LEVEL=dd, the main faiss library is built with runtime SIMD
+# dispatch enabled. This adds FAISS_ENABLE_DD and architecture-specific SIMD
+# compile definitions to the main faiss target.
+# =============================================================================
+if(FAISS_OPT_LEVEL STREQUAL "dd")
+  # Add SIMD source files to main faiss target for DD builds
+  target_sources(faiss PRIVATE ${FAISS_SIMD_SRC})
+  target_compile_definitions(faiss PRIVATE FAISS_ENABLE_DD)
+  # Architecture-specific SIMD definitions for Dynamic Dispatch
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+    target_compile_definitions(faiss PRIVATE
+      COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512 COMPILE_SIMD_AVX512_SPR)
+    if(NOT WIN32)
+      # Baseline flags for common files (prevents auto-vectorization)
+      target_compile_options(faiss PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-mpopcnt -msse4 -mno-avx -mno-avx2>)
+      # Per-file SIMD flags (GCC/Clang)
+      set_source_files_properties(${FAISS_SIMD_AVX2_SRC}
+        TARGET_DIRECTORY faiss
+        PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-mf16c;-mpopcnt"
+      )
+      set_source_files_properties(${FAISS_SIMD_AVX512_SRC}
+        TARGET_DIRECTORY faiss
+        PROPERTIES COMPILE_OPTIONS
+          "-mavx512f;-mavx512cd;-mavx512vl;-mavx512dq;-mavx512bw;-mfma;-mf16c;-mpopcnt"
+      )
+      # SPR-only sources additionally require AVX512_VPOPCNTDQ.
+      # vpopcntq is the whole point of these files, so the extra flag
+      # is mandatory; without it the intrinsics fail to compile.
+      set_source_files_properties(${FAISS_SIMD_AVX512_SPR_SRC}
+        TARGET_DIRECTORY faiss
+        PROPERTIES COMPILE_OPTIONS
+          "-mavx2;-mfma;-mf16c;-mavx512f;-mavx512cd;-mavx512vl;-mavx512dq;-mavx512bw;-mavx512vpopcntdq;-mpopcnt;-mavx512vnni;-mavx512fp16;-mavx512bf16"
+      )
+    else()
+      # Per-file SIMD flags (MSVC)
+      add_compile_options(/bigobj)
+      set_source_files_properties(${FAISS_SIMD_AVX2_SRC}
+        TARGET_DIRECTORY faiss
+        PROPERTIES COMPILE_OPTIONS "/arch:AVX2"
+      )
+      set_source_files_properties(${FAISS_SIMD_AVX512_SRC}
+        TARGET_DIRECTORY faiss
+        PROPERTIES COMPILE_OPTIONS "/arch:AVX512"
+      )
+      # MSVC has no per-feature flag for VPOPCNTDQ; /arch:AVX512
+      # enables it as part of the AVX-512 feature set used by recent
+      # toolchains. (Newer MSVC supports __isa_available checks at
+      # runtime; the SPR specialization is gated by COMPILE_SIMD_AVX512_SPR
+      # at the source level, so this is safe.)
+      set_source_files_properties(${FAISS_SIMD_AVX512_SPR_SRC}
+        TARGET_DIRECTORY faiss
+        PROPERTIES COMPILE_OPTIONS "/arch:AVX512"
+      )
+    endif()
+  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64|ARM64)")
+    # ARM NEON is always available on aarch64, no special compiler flags needed
+    target_compile_definitions(faiss PRIVATE COMPILE_SIMD_ARM_NEON COMPILE_SIMD_ARM_SVE)
+    # Per-file SVE flags (NEON needs no flags on aarch64)
+    set_source_files_properties(${FAISS_SIMD_SVE_SRC}
+      TARGET_DIRECTORY faiss
+      PROPERTIES COMPILE_OPTIONS "-march=armv8.2-a+sve"
+    )
+  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(riscv64|riscv)")
+    target_compile_definitions(faiss PRIVATE COMPILE_SIMD_RISCV_RVV)
+    if(FAISS_SIMD_RVV_SRC)
+      set_source_files_properties(${FAISS_SIMD_RVV_SRC}
+        TARGET_DIRECTORY faiss
+        PROPERTIES COMPILE_OPTIONS "-march=rv64gcv_zvfhmin;-mabi=lp64d"
+      )
+    endif()
+  endif()
+endif()
+
+# NEON is mandatory on ARM64 — ensure COMPILE_SIMD_ARM_NEON is always defined
+# and NEON source files are always compiled into the main faiss target.
+# (On x86, AVX2/AVX512 are optional and only compiled per opt_level above.)
+# MSVC on Windows ARM64 is excluded: simdlib_neon.h takes the address of NEON
+# intrinsics as non-type template parameters, but MSVC implements many of them
+# as macros/compiler builtins, so &vmulq_u16 et al. are not usable. MSVC ARM64
+# falls back to simdlib_emulated.h, matching the pre-D95392150 behavior.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64|ARM64)" AND NOT MSVC)
+  target_compile_definitions(faiss PRIVATE COMPILE_SIMD_ARM_NEON)
+  target_sources(faiss PRIVATE ${FAISS_SIMD_NEON_SRC})
+endif()
+
+# RVV is the baseline SIMD on rv64 builds compiled with rv64gcv. Compile RVV
+# sources into the main faiss target, mirroring the ARM NEON story on aarch64.
+# Guard against DD mode: in dd builds, FAISS_SIMD_SRC already contains
+# FAISS_SIMD_RVV_SRC and is added via target_sources above, so we must not
+# add it a second time or we get duplicate symbol errors at link time.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(riscv64|riscv)" AND NOT FAISS_OPT_LEVEL STREQUAL "dd")
+  target_compile_definitions(faiss PRIVATE COMPILE_SIMD_RISCV_RVV)
+  target_sources(faiss PRIVATE ${FAISS_SIMD_RVV_SRC})
+  if(NOT WIN32 AND FAISS_SIMD_RVV_SRC)
+    set_source_files_properties(${FAISS_SIMD_RVV_SRC}
+      TARGET_DIRECTORY faiss
+      PROPERTIES COMPILE_OPTIONS "-march=rv64gcv_zvfhmin;-mabi=lp64d"
+    )
+  endif()
+endif()
+
+if(FAISS_ENABLE_SVS)
+  find_package(svs_runtime REQUIRED)
+
+  target_link_libraries(faiss PUBLIC svs::svs_runtime)
+  target_link_libraries(faiss_avx2 PUBLIC svs::svs_runtime)
+  target_link_libraries(faiss_avx512 PUBLIC svs::svs_runtime)
+  target_link_libraries(faiss_avx512_spr PUBLIC svs::svs_runtime)
+  target_link_libraries(faiss_sve PUBLIC svs::svs_runtime)
+
+  install(DIRECTORY ${svs_SOURCE_DIR}/lib/ DESTINATION ${CMAKE_INSTALL_LIBDIR} FILES_MATCHING PATTERN "libsvs_runtime.so*")
+endif()
+
+# Handle `#include <faiss/foo.h>`.
+target_include_directories(faiss PUBLIC
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
+# Handle `#include <faiss/foo.h>`.
+target_include_directories(faiss_avx2 PUBLIC
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
+# Handle `#include <faiss/foo.h>`.
+target_include_directories(faiss_avx512 PUBLIC
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
+# Handle `#include <faiss/foo.h>`.
+target_include_directories(faiss_avx512_spr PUBLIC
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
+# Handle `#include <faiss/foo.h>`.
+target_include_directories(faiss_sve PUBLIC
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
+
+set_target_properties(faiss faiss_avx2 faiss_avx512 faiss_avx512_spr faiss_sve PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+  WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+
+if(WIN32)
+  target_compile_definitions(faiss PRIVATE FAISS_MAIN_LIB)
+  target_compile_definitions(faiss_avx2 PRIVATE FAISS_MAIN_LIB)
+  target_compile_definitions(faiss_avx512 PRIVATE FAISS_MAIN_LIB)
+  target_compile_definitions(faiss_avx512_spr PRIVATE FAISS_MAIN_LIB)
+  target_compile_definitions(faiss_sve PRIVATE FAISS_MAIN_LIB)
+endif()
+
+if(FAISS_ENABLE_SVS)
+  target_compile_definitions(faiss PRIVATE FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=${FAISS_SVS_RUNTIME_VERSION})
+  target_compile_definitions(faiss_avx2 PRIVATE FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=${FAISS_SVS_RUNTIME_VERSION})
+  target_compile_definitions(faiss_avx512 PRIVATE FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=${FAISS_SVS_RUNTIME_VERSION})
+  target_compile_definitions(faiss_avx512_spr PRIVATE FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=${FAISS_SVS_RUNTIME_VERSION})
+  target_compile_definitions(faiss_sve PRIVATE FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=${FAISS_SVS_RUNTIME_VERSION})
+endif()
+
+if(WIN32)
+  set_target_properties(faiss PROPERTIES LINK_FLAGS "-Wl,--export-all-symbols")
+endif()
+
+string(FIND "${CMAKE_CXX_FLAGS}" "FINTEGER" finteger_idx)
+if (${finteger_idx} EQUAL -1)
+  target_compile_definitions(faiss PRIVATE FINTEGER=int)
+endif()
+target_compile_definitions(faiss_avx2 PRIVATE FINTEGER=int)
+target_compile_definitions(faiss_avx512 PRIVATE FINTEGER=int)
+target_compile_definitions(faiss_avx512_spr PRIVATE FINTEGER=int)
+target_compile_definitions(faiss_sve PRIVATE FINTEGER=int)
+
+if(FAISS_USE_LTO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
+
+  if (ipo_supported)
+    message(STATUS "LTO enabled")
+    set_property(TARGET faiss PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_property(TARGET faiss_avx2 PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_property(TARGET faiss_avx512 PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_property(TARGET faiss_avx512_spr PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+  else()
+    message(STATUS "LTO not supported: <${ipo_error}>")
+  endif()
+endif()
+
+find_package(OpenMP REQUIRED)
+target_link_libraries(faiss PRIVATE OpenMP::OpenMP_CXX)
+target_link_libraries(faiss_avx2 PRIVATE OpenMP::OpenMP_CXX)
+target_link_libraries(faiss_avx512 PRIVATE OpenMP::OpenMP_CXX)
+target_link_libraries(faiss_avx512_spr PRIVATE OpenMP::OpenMP_CXX)
+target_link_libraries(faiss_sve PRIVATE OpenMP::OpenMP_CXX)
+
+if(FAISS_ENABLE_MKL)
+  find_package(MKL)
+endif()
+if(MKL_FOUND)
+  target_link_libraries(faiss PRIVATE ${MKL_LIBRARIES})
+  target_link_libraries(faiss_avx2 PRIVATE ${MKL_LIBRARIES})
+  target_link_libraries(faiss_avx512 PRIVATE ${MKL_LIBRARIES})
+  target_link_libraries(faiss_avx512_spr PRIVATE ${MKL_LIBRARIES})
+  target_link_libraries(faiss_sve PRIVATE ${MKL_LIBRARIES})
+else()
+  if(BLAS_LIBRARIES AND LAPACK_LIBRARIES)
+    message(STATUS "Using user-provided BLAS libraries: ${BLAS_LIBRARIES}")
+    message(STATUS "Using user-provided LAPACK libraries: ${LAPACK_LIBRARIES}")
+  else()
+    # Prefer threaded OpenBLAS (OpenMP or pthreads) over the serial default.
+    # On RHEL/Fedora, the default libopenblas.so is the serial variant;
+    # libopenblaso is OpenMP-threaded and libopenblasp is pthreads-threaded.
+    find_library(BLAS_PREFER_THREADED NAMES openblaso openblasp)
+    if(BLAS_PREFER_THREADED)
+      message(STATUS "Using threaded OpenBLAS: ${BLAS_PREFER_THREADED}")
+      set(BLAS_LIBRARIES "${BLAS_PREFER_THREADED}")
+      # OpenBLAS bundles LAPACK routines, so no separate find_package(LAPACK)
+      # is needed. Calling it would trigger FindBLAS internally, which
+      # unconditionally resets BLAS_LIBRARIES to the serial libopenblas,
+      # causing auditwheel to bundle both serial and threaded variants.
+      set(LAPACK_LIBRARIES "${BLAS_PREFER_THREADED}")
+    else()
+      find_package(BLAS REQUIRED)
+      find_package(LAPACK REQUIRED)
+    endif()
+  endif()
+  target_link_libraries(faiss PRIVATE ${BLAS_LIBRARIES})
+  target_link_libraries(faiss_avx2 PRIVATE ${BLAS_LIBRARIES})
+  target_link_libraries(faiss_avx512 PRIVATE ${BLAS_LIBRARIES})
+  target_link_libraries(faiss_avx512_spr PRIVATE ${BLAS_LIBRARIES})
+  target_link_libraries(faiss_sve PRIVATE ${BLAS_LIBRARIES})
+
+  target_link_libraries(faiss PRIVATE ${LAPACK_LIBRARIES})
+  target_link_libraries(faiss_avx2 PRIVATE ${LAPACK_LIBRARIES})
+  target_link_libraries(faiss_avx512 PRIVATE ${LAPACK_LIBRARIES})
+  target_link_libraries(faiss_avx512_spr PRIVATE ${LAPACK_LIBRARIES})
+  target_link_libraries(faiss_sve PRIVATE ${LAPACK_LIBRARIES})
+endif()
+
+install(TARGETS faiss
+  EXPORT faiss-targets
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+if(FAISS_OPT_LEVEL STREQUAL "avx2")
+  install(TARGETS faiss_avx2
+    EXPORT faiss-targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  )
+endif()
+if(FAISS_OPT_LEVEL STREQUAL "avx512")
+  install(TARGETS faiss_avx2 faiss_avx512
+    EXPORT faiss-targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  )
+endif()
+if(FAISS_OPT_LEVEL STREQUAL "avx512_spr")
+  install(TARGETS faiss_avx2 faiss_avx512_spr
+    EXPORT faiss-targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  )
+endif()
+if(FAISS_OPT_LEVEL STREQUAL "sve")
+  install(TARGETS faiss_sve
+    EXPORT faiss-targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  )
+endif()
+# Note: FAISS_OPT_LEVEL=dd builds DD support into main faiss target,
+# so no separate faiss_dd install is needed
+
+foreach(header ${FAISS_HEADERS})
+  get_filename_component(dir ${header} DIRECTORY )
+  install(FILES ${header}
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/faiss/${dir}
+  )
+endforeach()
+
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+  "${PROJECT_BINARY_DIR}/cmake/faiss-config-version.cmake"
+  VERSION ${CMAKE_PROJECT_VERSION}
+  COMPATIBILITY AnyNewerVersion
+)
+
+configure_file(${PROJECT_SOURCE_DIR}/cmake/faiss-config.cmake.in
+  ${PROJECT_BINARY_DIR}/cmake/faiss-config.cmake
+  COPYONLY
+)
+install(FILES ${PROJECT_BINARY_DIR}/cmake/faiss-config.cmake
+  ${PROJECT_BINARY_DIR}/cmake/faiss-config-version.cmake
+  DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/faiss
+)
+
+install(EXPORT faiss-targets
+  DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/faiss
+)

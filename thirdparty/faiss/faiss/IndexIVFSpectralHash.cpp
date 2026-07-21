@@ -1,0 +1,262 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+// -*- c++ -*-
+
+#include <faiss/IndexIVFSpectralHash.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <memory>
+
+#include <faiss/IndexLSH.h>
+#include <faiss/IndexPreTransform.h>
+#include <faiss/VectorTransform.h>
+#include <faiss/impl/AuxIndexStructures.h>
+#include <faiss/impl/FaissAssert.h>
+#include <faiss/utils/hamming.h>
+
+#include <faiss/impl/simd_dispatch.h>
+
+// Scalar (NONE) fallback for dynamic dispatch
+#define THE_SIMD_LEVEL SIMDLevel::NONE
+// NOLINTNEXTLINE(facebook-hte-InlineHeader)
+// NOLINTNEXTLINE(facebook-hte-InlineHeader)
+#include <faiss/impl/binary_hamming/IndexIVFSpectralHash_impl.h>
+#include <faiss/utils/hamming_distance/hamming_computer-generic.h>
+#undef THE_SIMD_LEVEL
+
+namespace faiss {
+
+IndexIVFSpectralHash::IndexIVFSpectralHash(
+        Index* quantizer_in,
+        size_t d_in,
+        size_t nlist_in,
+        int nbit_in,
+        float period_in,
+        bool own_invlists_in)
+        : IndexIVF(
+                  quantizer_in,
+                  d_in,
+                  nlist_in,
+                  (nbit_in + 7) / 8,
+                  METRIC_L2,
+                  own_invlists_in),
+          nbit(nbit_in),
+          period(period_in) {
+    auto rr = std::make_unique<RandomRotationMatrix>(
+            static_cast<int>(d_in), nbit_in);
+    rr->init(1234);
+    vt = rr.release();
+    own_fields = true;
+    is_trained = false;
+    by_residual = false;
+}
+
+IndexIVFSpectralHash::IndexIVFSpectralHash() : IndexIVF() {
+    by_residual = false;
+}
+
+IndexIVFSpectralHash::~IndexIVFSpectralHash() {
+    if (own_fields) {
+        delete vt;
+    }
+}
+
+namespace {
+
+float median(size_t n, float* x) {
+    std::sort(x, x + n);
+    if (n % 2 == 1) {
+        return x[n / 2];
+    } else {
+        return (x[n / 2 - 1] + x[n / 2]) / 2;
+    }
+}
+
+} // namespace
+
+void IndexIVFSpectralHash::train_encoder(
+        idx_t n,
+        const float* x,
+        const idx_t* /*assign*/) {
+    if (!vt->is_trained) {
+        vt->train(n, x);
+    }
+    FAISS_THROW_IF_NOT(!by_residual);
+
+    if (threshold_type == Thresh_global) {
+        // nothing to do
+        return;
+    } else if (
+            threshold_type == Thresh_centroid ||
+            threshold_type == Thresh_centroid_half) {
+        // convert all centroids with vt
+        std::vector<float> centroids(nlist * d);
+        quantizer->reconstruct_n(0, nlist, centroids.data());
+        trained.resize(nlist * nbit);
+        vt->apply_noalloc(nlist, centroids.data(), trained.data());
+        if (threshold_type == Thresh_centroid_half) {
+            for (size_t i = 0; i < nlist * nbit; i++) {
+                trained[i] -= 0.25 * period;
+            }
+        }
+        return;
+    }
+    // otherwise train medians
+
+    // assign
+    std::unique_ptr<idx_t[]> idx(new idx_t[n]);
+    quantizer->assign(n, x, idx.get());
+
+    std::vector<size_t> sizes(nlist + 1);
+    for (idx_t i = 0; i < n; i++) {
+        FAISS_THROW_IF_NOT(idx[i] >= 0);
+        sizes[idx[i]]++;
+    }
+
+    size_t ofs = 0;
+    for (size_t j = 0; j < nlist; j++) {
+        size_t o0 = ofs;
+        ofs += sizes[j];
+        sizes[j] = o0;
+    }
+
+    // transform
+    std::unique_ptr<float[]> xt(vt->apply(n, x));
+
+    // transpose + reorder
+    std::unique_ptr<float[]> xo(new float[n * nbit]);
+
+    for (idx_t i = 0; i < n; i++) {
+        size_t idest = sizes[idx[i]]++;
+        for (size_t j = 0; j < static_cast<size_t>(nbit); j++) {
+            xo[idest + n * j] = xt[i * nbit + j];
+        }
+    }
+
+    trained.resize(n * nbit);
+    // compute medians
+#pragma omp for
+    for (idx_t i = 0; i < static_cast<idx_t>(nlist); i++) {
+        size_t i0 = i == 0 ? 0 : sizes[i - 1];
+        size_t i1 = sizes[i];
+        for (int j = 0; j < nbit; j++) {
+            float* xoi = xo.get() + i0 + n * j;
+            if (i0 == i1) { // nothing to train
+                trained[i * nbit + j] = 0.0;
+            } else if (i1 == i0 + 1) {
+                trained[i * nbit + j] = xoi[0];
+            } else {
+                trained[i * nbit + j] = median(i1 - i0, xoi);
+            }
+        }
+    }
+}
+
+namespace {
+
+void binarize_with_freq(
+        size_t nbit,
+        float freq,
+        const float* x,
+        const float* c,
+        uint8_t* codes) {
+    memset(codes, 0, (nbit + 7) / 8);
+    for (size_t i = 0; i < nbit; i++) {
+        float xf = (x[i] - c[i]);
+        int64_t xi = int64_t(std::floor(xf * freq));
+        int64_t bit = xi & 1;
+        codes[i >> 3] |= bit << (i & 7);
+    }
+}
+
+} // namespace
+
+void IndexIVFSpectralHash::encode_vectors(
+        idx_t n,
+        const float* x_in,
+        const idx_t* list_nos,
+        uint8_t* codes,
+        bool include_listnos) const {
+    FAISS_THROW_IF_NOT(is_trained);
+    FAISS_THROW_IF_NOT(!by_residual);
+    float freq = 2.0 / period;
+    size_t coarse_size = include_listnos ? coarse_code_size() : 0;
+
+    // transform with vt
+    std::unique_ptr<float[]> x(vt->apply(n, x_in));
+
+    std::vector<float> zero(nbit);
+
+#pragma omp for
+    for (idx_t i = 0; i < n; i++) {
+        int64_t list_no = list_nos[i];
+        uint8_t* code = codes + i * (code_size + coarse_size);
+
+        if (list_no >= 0) {
+            if (coarse_size) {
+                encode_listno(list_no, code);
+            }
+            const float* c;
+
+            if (threshold_type == Thresh_global) {
+                c = zero.data();
+            } else {
+                c = trained.data() + list_no * nbit;
+            }
+            binarize_with_freq(
+                    nbit, freq, x.get() + i * nbit, c, code + coarse_size);
+        } else {
+            memset(code, 0, code_size + coarse_size);
+        }
+    }
+}
+
+InvertedListScanner* IndexIVFSpectralHash::get_InvertedListScanner(
+        bool store_pairs,
+        const IDSelector* sel,
+        const IVFSearchParameters*) const {
+    FAISS_THROW_IF_NOT(!sel);
+    return with_simd_level([&]<SIMDLevel SL>() {
+        return make_spectral_hash_scanner_fixSL<SL>(
+                code_size, this, store_pairs);
+    });
+}
+
+void IndexIVFSpectralHash::replace_vt(VectorTransform* vt_in, bool own) {
+    FAISS_THROW_IF_NOT(vt_in->d_out == nbit);
+    FAISS_THROW_IF_NOT(vt_in->d_in == d);
+    if (own_fields) {
+        delete vt;
+    }
+    vt = vt_in;
+    threshold_type = Thresh_global;
+    is_trained = quantizer->is_trained &&
+            quantizer->ntotal == static_cast<idx_t>(nlist) && vt->is_trained;
+    own_fields = own;
+}
+
+/*
+    Check that the encoder is a single vector transform followed by a LSH
+    that just does thresholding.
+    If this is not the case, the linear transform + thresholds of the IndexLSH
+    should be merged into the VectorTransform (which is feasible).
+*/
+
+void IndexIVFSpectralHash::replace_vt(IndexPreTransform* encoder, bool own) {
+    FAISS_THROW_IF_NOT(encoder->chain.size() == 1);
+    auto sub_index = dynamic_cast<IndexLSH*>(encoder->index);
+    FAISS_THROW_IF_NOT_MSG(sub_index, "final index should be LSH");
+    FAISS_THROW_IF_NOT(sub_index->nbits == nbit);
+    FAISS_THROW_IF_NOT(!sub_index->rotate_data);
+    FAISS_THROW_IF_NOT(!sub_index->train_thresholds);
+    replace_vt(encoder->chain[0], own);
+}
+
+} // namespace faiss

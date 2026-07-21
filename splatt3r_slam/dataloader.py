@@ -69,7 +69,7 @@ class TUMDataset(MonocularDataset):
         super().__init__()
         self.dataset_path = pathlib.Path(dataset_path)
         rgb_list = self.dataset_path / "rgb.txt"
-        tstamp_rgb = np.loadtxt(rgb_list, delimiter=" ", dtype=np.unicode_, skiprows=0)
+        tstamp_rgb = np.loadtxt(rgb_list, delimiter=" ", dtype=np.str_, skiprows=0)
         self.rgb_files = [self.dataset_path / f for f in tstamp_rgb[:, 1]]
         self.timestamps = tstamp_rgb[:, 0]
 
@@ -97,7 +97,7 @@ class EurocDataset(MonocularDataset):
         self.use_calibration = True
         self.dataset_path = pathlib.Path(dataset_path)
         rgb_list = self.dataset_path / "mav0/cam0/data.csv"
-        tstamp_rgb = np.loadtxt(rgb_list, delimiter=",", dtype=np.unicode_, skiprows=0)
+        tstamp_rgb = np.loadtxt(rgb_list, delimiter=",", dtype=np.str_, skiprows=0)
         self.rgb_files = [
             self.dataset_path / "mav0/cam0/data" / f for f in tstamp_rgb[:, 1]
         ]
@@ -121,7 +121,7 @@ class ETH3DDataset(MonocularDataset):
         super().__init__()
         self.dataset_path = pathlib.Path(dataset_path)
         rgb_list = self.dataset_path / "rgb.txt"
-        tstamp_rgb = np.loadtxt(rgb_list, delimiter=" ", dtype=np.unicode_, skiprows=0)
+        tstamp_rgb = np.loadtxt(rgb_list, delimiter=" ", dtype=np.str_, skiprows=0)
         self.rgb_files = [self.dataset_path / f for f in tstamp_rgb[:, 1]]
         self.timestamps = tstamp_rgb[:, 0]
         calibration = np.loadtxt(

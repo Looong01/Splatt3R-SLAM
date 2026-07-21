@@ -14,7 +14,14 @@ import torch
 import tqdm
 import yaml
 import sys
+import os
 from typing import Optional
+
+# torch >= 2.6 defaults torch.load to weights_only=True, which rejects the
+# pickled objects (omegaconf DictConfig, argparse Namespace, faiss indices)
+# inside the MASt3R/Splatt3R checkpoints. These checkpoints come from trusted
+# sources, so restore the old default globally.
+os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
 
 # Suppress known safe warnings from third-party libraries
 warnings.filterwarnings("ignore", message=".*weights_only.*", category=FutureWarning)

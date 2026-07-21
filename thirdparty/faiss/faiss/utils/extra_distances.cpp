@@ -1,0 +1,160 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+// -*- c++ -*-
+
+#include <faiss/utils/distances_dispatch.h>
+#include <faiss/utils/extra_distances.h>
+
+#include <omp.h>
+#include <algorithm>
+
+#include <faiss/impl/AuxIndexStructures.h>
+#include <faiss/impl/DistanceComputer.h>
+#include <faiss/impl/IDSelector.h>
+#include <faiss/utils/utils.h>
+
+namespace faiss {
+
+/***************************************************************************
+ * Distance functions (other than L2 and IP)
+ ***************************************************************************/
+
+namespace {
+
+template <class VD>
+struct ExtraDistanceComputer : FlatCodesDistanceComputer {
+    VD vd;
+    idx_t nb;
+    const float* q;
+    const float* b;
+
+    float symmetric_dis(idx_t i, idx_t j) final {
+        return vd(b + j * vd.d, b + i * vd.d);
+    }
+
+    float distance_to_code(const uint8_t* code) final {
+        return vd(q, (float*)code);
+    }
+
+    ExtraDistanceComputer(
+            const VD& vd_in,
+            const float* xb,
+            size_t nb_in,
+            const float* q_in = nullptr)
+            : FlatCodesDistanceComputer((uint8_t*)xb, vd_in.d * sizeof(float)),
+              vd(vd_in),
+              nb(nb_in),
+              q(q_in),
+              b(xb) {}
+
+    void set_query(const float* x) override {
+        q = x;
+    }
+};
+
+} // anonymous namespace
+
+void pairwise_extra_distances(
+        int64_t d,
+        int64_t nq,
+        const float* xq,
+        int64_t nb,
+        const float* xb,
+        MetricType mt,
+        float metric_arg,
+        float* dis,
+        int64_t ldq,
+        int64_t ldb,
+        int64_t ldd) {
+    if (nq == 0 || nb == 0) {
+        return;
+    }
+    if (ldq == -1) {
+        ldq = d;
+    }
+    if (ldb == -1) {
+        ldb = d;
+    }
+    if (ldd == -1) {
+        ldd = nb;
+    }
+
+    with_VectorDistance(d, mt, metric_arg, [&](auto vd) {
+#pragma omp parallel for if (nq > 10)
+        for (int64_t i = 0; i < nq; i++) {
+            const float* xqi = xq + i * ldq;
+            const float* xbj = xb;
+            float* disi = dis + ldd * i;
+
+            for (int64_t j = 0; j < nb; j++) {
+                disi[j] = vd(xqi, xbj);
+                xbj += ldb;
+            }
+        }
+    });
+}
+
+void knn_extra_metrics(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        MetricType mt,
+        float metric_arg,
+        size_t k,
+        float* distances,
+        int64_t* indexes,
+        const IDSelector* sel) {
+    with_VectorDistance(d, mt, metric_arg, [&](auto vd) {
+        using C = typename decltype(vd)::C;
+        size_t check_period = InterruptCallback::get_period_hint(ny * d);
+        check_period *= omp_get_max_threads();
+
+        for (size_t i0 = 0; i0 < nx; i0 += check_period) {
+            size_t i1 = std::min(i0 + check_period, nx);
+
+#pragma omp parallel for
+            for (int64_t i = i0; i < static_cast<int64_t>(i1); i++) {
+                const float* x_i = x + i * d;
+                const float* y_j = y;
+                size_t j;
+                float* simi = distances + k * i;
+                int64_t* idxi = indexes + k * i;
+
+                heap_heapify<C>(k, simi, idxi);
+                for (j = 0; j < ny; j++) {
+                    if (!sel || sel->is_member(j)) {
+                        float disij = vd(x_i, y_j);
+
+                        if (C::cmp(simi[0], disij)) {
+                            heap_replace_top<C>(k, simi, idxi, disij, j);
+                        }
+                    }
+                    y_j += d;
+                }
+                heap_reorder<C>(k, simi, idxi);
+            }
+            InterruptCallback::check();
+        }
+    });
+}
+
+FlatCodesDistanceComputer* get_extra_distance_computer(
+        size_t d,
+        MetricType mt,
+        float metric_arg,
+        size_t nb,
+        const float* xb) {
+    return with_VectorDistance(
+            d, mt, metric_arg, [&](auto vd) -> FlatCodesDistanceComputer* {
+                return new ExtraDistanceComputer<decltype(vd)>(vd, xb, nb);
+            });
+}
+
+} // namespace faiss

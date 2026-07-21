@@ -1,0 +1,196 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+#include <faiss/IndexLSH.h>
+
+#include <cstdio>
+#include <cstring>
+
+#include <algorithm>
+#include <memory>
+
+#include <faiss/impl/FaissAssert.h>
+#include <faiss/utils/hamming.h>
+
+namespace faiss {
+
+/***************************************************************
+ * IndexLSH
+ ***************************************************************/
+
+IndexLSH::IndexLSH(
+        idx_t d_in,
+        int nbits_in,
+        bool rotate_data_in,
+        bool train_thresholds_in)
+        : IndexFlatCodes((nbits_in + 7) / 8, d_in),
+          nbits(nbits_in),
+          rotate_data(rotate_data_in),
+          train_thresholds(train_thresholds_in),
+          rrot(static_cast<int>(d_in), nbits_in) {
+    is_trained = !train_thresholds_in;
+
+    if (rotate_data_in) {
+        rrot.init(5);
+    } else {
+        FAISS_THROW_IF_NOT(d_in >= nbits_in);
+    }
+}
+
+IndexLSH::IndexLSH() : nbits(0), rotate_data(false), train_thresholds(false) {}
+
+const float* IndexLSH::apply_preprocess(idx_t n, const float* x) const {
+    float* xt = nullptr;
+    if (rotate_data) {
+        // also applies bias if exists
+        xt = rrot.apply(n, x);
+    } else if (d != nbits) {
+        FAISS_THROW_IF_NOT_FMT(
+                nbits < d,
+                "nbits (%d) must be less than d (%d)",
+                nbits,
+                (int)d);
+        xt = new float[nbits * n];
+        float* xp = xt;
+        for (idx_t i = 0; i < n; i++) {
+            const float* xl = x + i * d;
+            for (int j = 0; j < nbits; j++) {
+                *xp++ = xl[j];
+            }
+        }
+    }
+
+    if (train_thresholds) {
+        if (xt == nullptr) {
+            xt = new float[nbits * n];
+            memcpy(xt, x, sizeof(*x) * n * nbits);
+        }
+
+        float* xp = xt;
+        for (idx_t i = 0; i < n; i++) {
+            for (int j = 0; j < nbits; j++) {
+                *xp++ -= thresholds[j];
+            }
+        }
+    }
+
+    return xt ? xt : x;
+}
+
+void IndexLSH::train(idx_t n, const float* x) {
+    if (train_thresholds) {
+        thresholds.resize(nbits);
+        train_thresholds = false;
+        const float* xt = apply_preprocess(n, x);
+        std::unique_ptr<const float[]> del(xt == x ? nullptr : xt);
+        train_thresholds = true;
+
+        std::unique_ptr<float[]> transposed_x(new float[n * nbits]);
+
+        for (idx_t i = 0; i < n; i++) {
+            for (idx_t j = 0; j < nbits; j++) {
+                transposed_x[j * n + i] = xt[i * nbits + j];
+            }
+        }
+
+        for (idx_t i = 0; i < nbits; i++) {
+            float* xi = transposed_x.get() + i * n;
+            // Use nth_element (O(n)) instead of sort (O(n log n))
+            std::nth_element(xi, xi + n / 2, xi + n);
+            float median = xi[n / 2];
+            if (n % 2 == 0) {
+                std::nth_element(xi, xi + n / 2 - 1, xi + n);
+                median = (median + xi[n / 2 - 1]) / 2;
+            }
+            thresholds[i] = median;
+        }
+    }
+    is_trained = true;
+}
+
+void IndexLSH::search(
+        idx_t n,
+        const float* x,
+        idx_t k,
+        float* distances,
+        idx_t* labels,
+        const SearchParameters* params) const {
+    FAISS_THROW_IF_NOT_MSG(
+            !params, "search params not supported for this index");
+    FAISS_THROW_IF_NOT(k > 0);
+    FAISS_THROW_IF_NOT(is_trained);
+    const float* xt = apply_preprocess(n, x);
+    std::unique_ptr<const float[]> del(xt == x ? nullptr : xt);
+
+    std::unique_ptr<uint8_t[]> qcodes(new uint8_t[n * code_size]);
+
+    fvecs2bitvecs(xt, qcodes.get(), nbits, n);
+
+    std::unique_ptr<int[]> idistances(new int[n * k]);
+
+    int_maxheap_array_t res = {size_t(n), size_t(k), labels, idistances.get()};
+
+    hammings_knn_hc(&res, qcodes.get(), codes.data(), ntotal, code_size, true);
+
+    // convert distances to floats
+    for (int i = 0; i < k * n; i++) {
+        distances[i] = idistances[i];
+    }
+}
+
+void IndexLSH::transfer_thresholds(LinearTransform* vt) {
+    if (!train_thresholds) {
+        return;
+    }
+    FAISS_THROW_IF_NOT(nbits == vt->d_out);
+    if (!vt->have_bias) {
+        vt->b.resize(nbits, 0);
+        vt->have_bias = true;
+    }
+    FAISS_THROW_IF_NOT(!vt->b.empty());
+    for (int i = 0; i < nbits; i++) {
+        vt->b[i] -= thresholds[i];
+    }
+    train_thresholds = false;
+    thresholds.clear();
+}
+
+void IndexLSH::sa_encode(idx_t n, const float* x, uint8_t* bytes) const {
+    FAISS_THROW_IF_NOT(is_trained);
+    const float* xt = apply_preprocess(n, x);
+    std::unique_ptr<const float[]> del(xt == x ? nullptr : xt);
+    fvecs2bitvecs(xt, bytes, nbits, n);
+}
+
+void IndexLSH::sa_decode(idx_t n, const uint8_t* bytes, float* x) const {
+    float* xt = x;
+    std::unique_ptr<float[]> del;
+    if (rotate_data || nbits != d) {
+        xt = new float[n * nbits];
+        del.reset(xt);
+    }
+    bitvecs2fvecs(bytes, xt, nbits, n);
+
+    if (train_thresholds) {
+        float* xp = xt;
+        for (idx_t i = 0; i < n; i++) {
+            for (int j = 0; j < nbits; j++) {
+                *xp++ += thresholds[j];
+            }
+        }
+    }
+
+    if (rotate_data) {
+        rrot.reverse_transform(n, xt, x);
+    } else if (nbits != d) {
+        for (idx_t i = 0; i < n; i++) {
+            memcpy(x + i * d, xt + i * nbits, nbits * sizeof(xt[0]));
+        }
+    }
+}
+
+} // namespace faiss

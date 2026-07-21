@@ -41,17 +41,19 @@ Splatt3R-SLAM integrates [Splatt3R](https://splatt3r.active.vision) (Zero-shot G
 
 ### Prerequisites
 - Ubuntu 20.04+ (or WSL2 on Windows)
-- NVIDIA GPU with CUDA 11.8+
+- NVIDIA GPU (compute capability >= 7.5; developed on RTX A6000, sm_86)
+- CUDA 13.x toolkit (`nvcc --version`; developed with 13.3)
 - Conda/Miniconda
 - Git
 
+> **Note:** All third-party code (faiss, lietorch, asmk, in3d, pyimgui, eigen, glm,
+> diff-gaussian-rasterization) is **vendored** under `thirdparty/` with the CUDA 13
+> adaptations described below already applied. No git submodules are used anymore.
+
 ### Step 1: Clone Repository
 ```bash
-git clone https://github.com/Looong01/Splatt3R-SLAM.git --recursive
+git clone https://github.com/Looong01/Splatt3R-SLAM.git
 cd Splatt3R-SLAM/
-
-# If you cloned without --recursive:
-# git submodule update --init --recursive
 ```
 
 ### Step 2: Create Environment
@@ -60,22 +62,91 @@ conda create -n splatt3r-slam python=3.11 -y
 conda activate splatt3r-slam
 ```
 
-### Step 3: Install PyTorch
-Check your CUDA version with `nvcc --version`, then install matching PyTorch:
+### Step 3: Install PyTorch (CUDA 13.2 build)
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu132
+```
+Developed with `torch 2.13.0+cu132` / `torchvision 0.28.0+cu132`.
+
+For the original CUDA 12.4 configuration instead:
 ```bash
 pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 ```
 
-### Step 4: Install Dependencies (IN THIS ORDER!)
+### Step 4: Install Build Tools
+cmake, ninja and swig are needed to compile faiss and the torch CUDA extensions;
+MKL provides the BLAS backend for faiss (all via pip, no system packages required):
+```bash
+pip install cmake ninja swig mkl-devel
+```
+
+### Step 5: Install Python Dependencies (IN THIS ORDER!)
 
 ```bash
 pip install -r requirements.txt
 pip install -e thirdparty/in3d
 pip install --no-build-isolation thirdparty/asmk
+```
+
+### Step 6: Build and Install faiss (GPU)
+faiss is built from the vendored source in `thirdparty/faiss` (v1.14.3) with GPU
+support — prebuilt PyPI packages (`faiss-cpu`, `faiss-gpu-cu12`) must NOT be
+installed, they would shadow this build and pin `numpy<2`:
+
+```bash
+cd thirdparty/faiss
+cmake -B build . \
+    -DFAISS_ENABLE_GPU=ON \
+    -DFAISS_ENABLE_PYTHON=ON \
+    -DFAISS_ENABLE_CUVS=OFF \
+    -DBUILD_TESTING=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_ARCHITECTURES=86 \
+    -DCUDAToolkit_ROOT=/usr/local/cuda \
+    -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python \
+    -DSWIG_EXECUTABLE=$CONDA_PREFIX/bin/swig \
+    -DBLA_VENDOR=Intel10_64_dyn \
+    -DMKL_LIBRARIES=$CONDA_PREFIX/lib/libmkl_rt.so.3 \
+    -DBLAS_LIBRARIES=$CONDA_PREFIX/lib/libmkl_rt.so.3 \
+    -DLAPACK_LIBRARIES=$CONDA_PREFIX/lib/libmkl_rt.so.3
+make -C build -j$(nproc) faiss swigfaiss
+pip install --no-build-isolation --no-deps ./build/faiss/python
+cd ../..
+```
+Adjust `CMAKE_CUDA_ARCHITECTURES` for your GPU (86 = RTX A6000/30xx, 89 = RTX 40xx,
+90 = H100). `MKL_LIBRARIES` must point at the real library file — pip's mkl-devel
+ships only `libmkl_rt.so.3`, not the `.so` symlink.
+
+### Step 7: Build the torch CUDA Extensions
+```bash
+export CUDA_HOME=/usr/local/cuda   # CUDA 13.x toolkit
+export MAX_JOBS=$(nproc)           # parallel compilation
+
 pip install --no-build-isolation thirdparty/lietorch
 pip install --no-build-isolation thirdparty/diff-gaussian-rasterization-modified
 pip install --no-build-isolation -e .
 ```
+
+### CUDA 13.x / torch 2.13 Adaptations (already applied in this repo)
+If you build from this repository you do not need to change anything — the
+following fixes are part of the vendored code:
+
+- `setup.py`: dropped `compute_60/61/70` gencode flags (removed in CUDA 13;
+  minimum is `sm_75`)
+- `splatt3r_slam/backend/src/gn_kernels.cu`: `torch::linalg::linalg_norm` →
+  `at::linalg_norm` (the `torch::linalg` C++ namespace was removed in torch 2.13)
+- `splatt3r_slam/backend/src/matching_kernels.cu`: `D11.type()` →
+  `D11.scalar_type()` in the dispatch macro
+- `splatt3r_slam/dataloader.py`: `np.unicode_` → `np.str_` (removed in NumPy 2.0)
+- `main.py`, `splatt3r_core/main.py`: set `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`
+  because torch >= 2.6 defaults `torch.load` to `weights_only=True`, which rejects
+  the pickled objects (omegaconf `DictConfig`, `argparse.Namespace`, faiss
+  indices) inside the MASt3R/Splatt3R checkpoints
+- `thirdparty/asmk/pyproject.toml`: dropped the `faiss-cpu` dependency (faiss is
+  provided by the vendored GPU build)
+- `requirements.txt`: unpinned `numpy`, replaced `faiss-gpu-cu12` with the
+  vendored source build, made `torchcodec` optional
+- submodule `.git` metadata removed; everything is plain source in one repo
 
 ### Checkpoint
 Download MASt3R backbone weights (required):
@@ -244,7 +315,10 @@ Splatt3R-SLAM/
 ├── main.py         # Main entry point (Splatt3R-SLAM)
 ├── thirdparty/
 │   ├── in3d/                # OpenGL camera/visualization library
-│   ├── diff-gaussian-rasterization-modified/  # CUDA Gaussian rasterizer (submodule)
+│   ├── faiss/               # FAISS v1.14.3 source (built with GPU support)
+│   ├── lietorch/            # Lie groups for PyTorch (CUDA extension)
+│   ├── asmk/                # ASMK image retrieval
+│   ├── diff-gaussian-rasterization-modified/  # CUDA Gaussian rasterizer
 │   └── eigen/               # Eigen headers
 ├── splatt3r_core/           # Core Splatt3R implementation
 │   ├── main.py              # MAST3RGaussians Lightning module
@@ -344,9 +418,9 @@ bash ./scripts/eval_eth3d.sh
 ## Troubleshooting
 
 ### "No module named 'lietorch'"
-lietorch must be installed **before** the main package:
+lietorch must be installed from the vendored source **before** the main package:
 ```bash
-pip install git+https://github.com/princeton-vl/lietorch.git
+pip install --no-build-isolation thirdparty/lietorch
 pip install --no-build-isolation -e .
 ```
 
@@ -388,7 +462,7 @@ This disables multiprocessing which causes shared memory issues ([details](https
 ### Quick Fix Commands
 ```bash
 # Reinstall lietorch
-pip uninstall lietorch -y && pip install git+https://github.com/princeton-vl/lietorch.git
+pip uninstall lietorch -y && pip install --no-build-isolation thirdparty/lietorch
 
 # Reinstall main package
 pip uninstall Splatt3R-SLAM -y && pip install --no-build-isolation -e .

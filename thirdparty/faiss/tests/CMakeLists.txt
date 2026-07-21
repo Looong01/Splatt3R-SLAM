@@ -1,0 +1,159 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set(FAISS_TEST_SRC
+  test_binary_flat.cpp
+  test_dealloc_invlists.cpp
+  test_ivfpq_codec.cpp
+  test_ivfpq_indexing.cpp
+  test_lowlevel_ivf.cpp
+  test_ivf_index.cpp
+  test_omp_threads.cpp
+  test_pairs_decoding.cpp
+  test_params_override.cpp
+  test_pq_encoding.cpp
+  test_sliding_ivf.cpp
+  test_threaded_index.cpp
+  test_transfer_invlists.cpp
+  test_cppcontrib_sa_decode.cpp
+  test_cppcontrib_uintreader.cpp
+  test_simdlib.cpp
+  test_approx_topk.cpp
+  test_RCQ_cropping.cpp
+  test_heap.cpp
+  test_pq_code_distance.cpp
+  test_hnsw.cpp
+  test_NSG_compressed_graph.cpp
+  test_partitioning.cpp
+  test_fastscan_perf.cpp
+  test_pqfs_unaligned.cpp
+  test_common_ivf_empty_index.cpp
+  test_ivf_early_termination.cpp
+  test_callback.cpp
+  test_utils.cpp
+  test_hamming.cpp
+  test_zerocopy.cpp
+  test_scalar_quantizer.cpp
+  test_factory_tools.cpp
+  test_custom_result_handler.cpp
+  test_fastscan_filter.cpp
+  test_single_query_collect_handler.cpp
+  # These tests work in both static and DD modes (uniform SIMDConfig API)
+  test_distances_simd.cpp
+  test_simd_levels.cpp
+  test_fast_scan_distance_to_code.cpp
+  test_super_kmeans_foundations.cpp
+)
+
+# Tests that use POSIX APIs or have platform-specific issues on Windows
+if(NOT WIN32)
+  list(APPEND FAISS_TEST_SRC
+    test_merge.cpp
+    test_ondisk_ivf.cpp
+    test_disable_pq_sdc_tables.cpp
+    test_mmap.cpp
+  )
+endif()
+
+if(FAISS_ENABLE_SVS)
+  list(APPEND FAISS_TEST_SRC test_svs.cpp)
+endif()
+
+# DD-only tests: x86-specific tests containing raw AVX2/AVX512 intrinsics
+if(FAISS_OPT_LEVEL STREQUAL "dd")
+  list(APPEND FAISS_TEST_SRC
+    test_simd_perf.cpp
+  )
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+    list(APPEND FAISS_TEST_SRC
+      test_simd_levels_x86_avx2.cpp
+      test_simd_levels_x86_avx512.cpp
+    )
+    # Set SIMD compile flags per file
+    # test_simd_levels_x86_avx2.cpp and test_simd_levels_x86_avx512.cpp
+    # contain raw intrinsics and need their respective SIMD flags.
+    if(NOT WIN32)
+      set_source_files_properties(test_simd_levels_x86_avx2.cpp
+        PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-mf16c;-mpopcnt"
+      )
+      set_source_files_properties(test_simd_levels_x86_avx512.cpp
+        PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-mf16c;-mpopcnt;-mavx512f;-mavx512cd;-mavx512vl;-mavx512dq;-mavx512bw"
+      )
+    else()
+      # MSVC
+      set_source_files_properties(test_simd_levels_x86_avx2.cpp
+        PROPERTIES COMPILE_OPTIONS "/arch:AVX2"
+      )
+      set_source_files_properties(test_simd_levels_x86_avx512.cpp
+        PROPERTIES COMPILE_OPTIONS "/arch:AVX512"
+      )
+    endif()
+  endif()
+endif()
+
+add_executable(faiss_test ${FAISS_TEST_SRC})
+
+if(FAISS_ENABLE_SVS)
+  target_compile_definitions(faiss_test PRIVATE FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=${FAISS_SVS_RUNTIME_VERSION})
+endif()
+
+include(../cmake/link_to_faiss_lib.cmake)
+
+link_to_faiss_lib(faiss_test)
+
+if (FAISS_ENABLE_PYTHON)
+  add_dependencies(faiss_test faiss_example_external_module)
+endif()
+
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG 58d77fa8070e8cec2dc1ed015d66b454c8d78850 # release-1.12.1
+  OVERRIDE_FIND_PACKAGE)
+set(BUILD_GMOCK CACHE BOOL OFF)
+set(INSTALL_GTEST CACHE BOOL OFF)
+FetchContent_MakeAvailable(googletest)
+
+if(NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config.cmake
+   AND NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/GTestConfig.cmake)
+  file(
+    WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config.cmake
+    [=[
+include(CMakeFindDependencyMacro)
+find_dependency(googletest)
+if(NOT TARGET GTest::GTest)
+  add_library(GTest::GTest INTERFACE IMPORTED)
+  target_link_libraries(GTest::GTest INTERFACE GTest::gtest)
+endif()
+if(NOT TARGET GTest::Main)
+  add_library(GTest::Main INTERFACE IMPORTED)
+  target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)
+endif()
+]=])
+endif()
+
+find_package(OpenMP REQUIRED)
+find_package(GTest CONFIG REQUIRED)
+
+target_link_libraries(faiss_test PRIVATE
+  OpenMP::OpenMP_CXX
+  GTest::gtest_main
+  $<$<BOOL:${FAISS_ENABLE_ROCM}>:hip::host>
+)
+
+# Defines `gtest_discover_tests()`.
+include(GoogleTest)
+if(CMAKE_CROSSCOMPILING)
+  # Skip test discovery when cross-compiling: the binary cannot run on the
+  # host, so gtest_discover_tests() would fail.  The build itself verifies
+  # that the binary compiles and links correctly.
+elseif(WIN32)
+  # On Windows, defer test discovery to ctest time (PRE_TEST) instead of
+  # build time (POST_BUILD) because faiss.dll is not in PATH during build.
+  gtest_discover_tests(faiss_test DISCOVERY_MODE PRE_TEST)
+else()
+  gtest_discover_tests(faiss_test)
+endif()
