@@ -21,6 +21,56 @@
 
 cmake_minimum_required(VERSION 3.24.0 FATAL_ERROR)
 
+# =============================================================================
+# Splatt3R-SLAM vendored defaults
+# Plain `cmake -B build .` produces the GPU-enabled python bindings used by
+# Splatt3R-SLAM. Any of these can still be overridden with -D... on the
+# command line (e.g. -DCMAKE_CUDA_ARCHITECTURES=89 to force RTX 40xx).
+# =============================================================================
+set(FAISS_ENABLE_GPU ON CACHE BOOL "Enable GPU indices.")
+set(FAISS_ENABLE_PYTHON ON CACHE BOOL "Enable Python bindings.")
+set(FAISS_ENABLE_CUVS OFF CACHE BOOL "Disable NVIDIA cuVS.")
+set(BUILD_TESTING OFF CACHE BOOL "Disable tests.")
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+# Compile for the GPU actually present in this machine (CMake >= 3.24).
+if(NOT CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES native CACHE STRING "CUDA architectures")
+endif()
+if(NOT CUDAToolkit_ROOT AND EXISTS "/usr/local/cuda")
+  set(CUDAToolkit_ROOT "/usr/local/cuda" CACHE PATH "CUDA toolkit root")
+endif()
+# Prefer the active conda environment for the python interpreter and swig
+# (installed there via `pip install swig`).
+if(DEFINED ENV{CONDA_PREFIX})
+  if(NOT Python_EXECUTABLE AND EXISTS "$ENV{CONDA_PREFIX}/bin/python")
+    set(Python_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python" CACHE FILEPATH "Python interpreter")
+  endif()
+  if(NOT SWIG_EXECUTABLE AND EXISTS "$ENV{CONDA_PREFIX}/bin/swig")
+    set(SWIG_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/swig" CACHE FILEPATH "SWIG executable")
+  endif()
+endif()
+# BLAS/LAPACK: auto-detect MKL (e.g. from `pip install mkl-devel`, which only
+# ships the versioned libmkl_rt.so.X without a .so symlink). If MKL is absent,
+# leave everything unset: faiss then falls back to threaded OpenBLAS / system
+# BLAS on its own, which is also the better choice on AMD CPUs.
+if(NOT MKL_LIBRARIES)
+  find_library(_FAISS_MKL_RT
+    NAMES mkl_rt libmkl_rt.so libmkl_rt.so.3 libmkl_rt.so.2 libmkl_rt.so.1
+    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{MKLROOT}/lib" "$ENV{MKLROOT}/lib/intel64")
+  if(_FAISS_MKL_RT)
+    set(BLA_VENDOR Intel10_64_dyn CACHE STRING "BLAS vendor")
+    set(MKL_LIBRARIES "${_FAISS_MKL_RT}" CACHE FILEPATH "MKL libraries")
+    set(BLAS_LIBRARIES "${_FAISS_MKL_RT}" CACHE FILEPATH "BLAS libraries")
+    set(LAPACK_LIBRARIES "${_FAISS_MKL_RT}" CACHE FILEPATH "LAPACK libraries")
+    message(STATUS "Splatt3R-SLAM: using MKL for BLAS/LAPACK: ${_FAISS_MKL_RT}")
+  else()
+    message(STATUS "Splatt3R-SLAM: MKL not found, falling back to system BLAS/OpenBLAS")
+  endif()
+endif()
+# =============================================================================
+
 set(FAISS_LANGUAGES CXX)
 
 if(FAISS_ENABLE_GPU)

@@ -91,31 +91,25 @@ pip install --no-build-isolation thirdparty/asmk
 ### Step 6: Build and Install faiss (GPU)
 faiss is built from the vendored source in `thirdparty/faiss` (v1.14.3) with GPU
 support — prebuilt PyPI packages (`faiss-cpu`, `faiss-gpu-cu12`) must NOT be
-installed, they would shadow this build and pin `numpy<2`:
+installed, they would shadow this build and pin `numpy<2`.
+All required CMake options are pre-seeded in `thirdparty/faiss/CMakeLists.txt`
+(GPU on, Release, CUDA arch auto-detected from the local GPU via
+`CMAKE_CUDA_ARCHITECTURES=native`, BLAS auto-detected), so a plain configure
+works:
 
 ```bash
 cd thirdparty/faiss
-cmake -B build . \
-    -DFAISS_ENABLE_GPU=ON \
-    -DFAISS_ENABLE_PYTHON=ON \
-    -DFAISS_ENABLE_CUVS=OFF \
-    -DBUILD_TESTING=OFF \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CUDA_ARCHITECTURES=86 \
-    -DCUDAToolkit_ROOT=/usr/local/cuda \
-    -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python \
-    -DSWIG_EXECUTABLE=$CONDA_PREFIX/bin/swig \
-    -DBLA_VENDOR=Intel10_64_dyn \
-    -DMKL_LIBRARIES=$CONDA_PREFIX/lib/libmkl_rt.so.3 \
-    -DBLAS_LIBRARIES=$CONDA_PREFIX/lib/libmkl_rt.so.3 \
-    -DLAPACK_LIBRARIES=$CONDA_PREFIX/lib/libmkl_rt.so.3
+cmake -B build .
 make -C build -j$(nproc) faiss swigfaiss
 pip install --no-build-isolation --no-deps ./build/faiss/python
 cd ../..
 ```
-Adjust `CMAKE_CUDA_ARCHITECTURES` for your GPU (86 = RTX A6000/30xx, 89 = RTX 40xx,
-90 = H100). `MKL_LIBRARIES` must point at the real library file — pip's mkl-devel
-ships only `libmkl_rt.so.3`, not the `.so` symlink.
+The defaults prefer the active conda env (`CONDA_PREFIX`) for python/swig, and
+auto-detect MKL (e.g. from `pip install mkl-devel`). If MKL is not found, faiss
+automatically falls back to threaded OpenBLAS / system BLAS — install OpenBLAS
+instead on AMD CPUs for better performance (MKL runs on AMD but slower). To
+force a specific GPU architecture, e.g. for cross-compiling:
+`cmake -B build . -DCMAKE_CUDA_ARCHITECTURES=89`.
 
 ### Step 7: Build the torch CUDA Extensions
 ```bash
@@ -146,6 +140,9 @@ following fixes are part of the vendored code:
   provided by the vendored GPU build)
 - `requirements.txt`: unpinned `numpy`, replaced `faiss-gpu-cu12` with the
   vendored source build, made `torchcodec` optional
+- `thirdparty/faiss/CMakeLists.txt`: pre-seeded defaults (GPU on, Release,
+  CUDA arch auto-detected via `native`, MKL auto-detected with OpenBLAS
+  fallback, conda python/swig) so a plain `cmake -B build .` works
 - submodule `.git` metadata removed; everything is plain source in one repo
 
 ### Checkpoint
