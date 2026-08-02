@@ -26,7 +26,6 @@ else:
         f"{backend_dir}/backend/src/gn.cpp",
     ]
     extra_compile_args = {
-        "cores": ["j8"],
         "cxx": ["-O3"],
     }
 
@@ -35,6 +34,9 @@ else:
 
         sources.append(f"{backend_dir}/backend/src/gn_kernels.cu")
         sources.append(f"{backend_dir}/backend/src/matching_kernels.cu")
+        # CUDA 13 dropped sm_<75 (Maxwell/Pascal/Volta); this list covers
+        # Turing through Hopper on CUDA 13.x toolchains. Developed with
+        # nvcc 13.3 on dual RTX A6000 (sm_86).
         extra_compile_args["nvcc"] = [
             "-O3",
             "-gencode=arch=compute_75,code=sm_75",

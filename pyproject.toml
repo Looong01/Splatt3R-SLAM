@@ -4,7 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Splatt3R-SLAM"
-version = "0.1.0"
+version = "0.2.0"
+# 0.2.0: adds the online map-refinement pipeline (splatt3r_slam/refiner.py,
+# main.py --refiner/--refiner-gpu/--refiner-duty/--refiner-dedup-voxel),
+# the fine-tuned Gaussian-head checkpoints (--head), per-frame pose
+# persistence (<seq>_frames.txt) and per-keyframe Gaussian dumps
+# (--dump-keyframe-gaussians). No new third-party dependencies over 0.1.0.
 # Lower bounds reflect the versions this project is actually developed and
 # tested against (captured from the working `splatt3r-slam` conda env on
 # 2026-07-27), not aspirational minimums. They are `>=` rather than `==`

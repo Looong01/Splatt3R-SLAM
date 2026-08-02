@@ -24,6 +24,8 @@ Splatt3R-SLAM integrates [Splatt3R](https://splatt3r.active.vision) (Zero-shot G
 - **Zero-shot Reconstruction**: No scene-specific training required
 - **Real-time Performance**: Maintains real-time SLAM capabilities
 - **Dense 3D Reconstruction**: Produces detailed 3D reconstructions with Gaussian splats
+- **Online Map Refinement**: Optional background process photometrically refines the Gaussian map while SLAM runs (`--refiner`) — the map follows loop closures for free and finishes measurably sharper, with ATE unchanged
+- **Fine-tuned Gaussian Heads**: Per-dataset-family head-only checkpoints that measurably beat the released weights (`--head`)
 - **Per-frame PNG Export**: Saves Gaussian-rendered images for every frame by default
 
 ### Differences from MASt3R-SLAM
@@ -185,23 +187,63 @@ wget 'https://huggingface.co/brandonsmart/splatt3r_v1.0/resolve/main/epoch%3D19-
 | `--no-viz` | off | Disable interactive GUI window |
 | `--calib` | `""` | Optional calibration YAML path |
 | `--checkpoint` | `None` | Splatt3R checkpoint (auto-downloads if not set) |
+| `--head` | `None` | Fine-tuned Gaussian-head state_dict (e.g. `checkpoints/head_only_long/<family>/`) to load on top of `--checkpoint`; the encoder stays untouched |
+| `--lora` | `None` | Path to a trained LoRA adapter dir to hot-swap onto the base checkpoint. NOTE: encoder LoRA measured 49% worse than base; kept only for reproduction — prefer `--head` |
 | `--render-gaussians` | on | Deprecated compatibility flag (rendering is enabled by default) |
 | `--no-render-gaussians` | off | Disable Splatt3R rendering and PNG export |
 | `--render-dir` | `logs/gaussian_renders` | Directory for per-frame rendered PNGs |
-| `--lora` | `None` | Path to a trained LoRA adapter dir to hot-swap onto the base checkpoint (see `scripts/train_lora_per_scene.py`) |
 | `--max-gaussians` | `16777216` | Target Gaussian **render budget** across all keyframes; the baker coarsens its stride to stay under it |
 | `--spatial-stride` | `1` | Per-frame Gaussian subsampling stride (`1` = no subsampling). See the warning below |
 | `--depth-max-percentile` | `0.98` | Upper depth percentile kept when baking Gaussians |
 | `--max-scale` | `1.0` | Clamp on predicted Gaussian scale (guards the rasterizer) |
 | `--min-confidence` | `1.5` | Minimum pointmap confidence for a Gaussian to be kept |
+| `--map-keyframe-stride` | `1` | Bake only every Nth keyframe into the exported Gaussian map |
+| `--no-loop-closure` | off | Ablation only: disable retrieval-database loop-closure edges (never an operating mode — ATE degrades sharply) |
+| `--dump-keyframe-gaussians` | off | Also write `<seq>_kfgauss.pt`: per-keyframe camera-space Gaussians + current pose, the input format of the offline refinement scripts |
+| `--dump-retrieval-features` | `None` | Dump each keyframe's raw encoder feature to `DIR/<seq>/`, for retrieval whitening/codebook experiments |
+| `--frame-timing` | `None` | Write per-frame wall-clock timing (tracking / backend-wait / total ms) to CSV |
+| `--refiner` | off | Run the online map-refinement process (see **Online map refinement** below); requires `use_calib` |
+| `--refiner-duty` | `0.25` | Refiner duty cycle when sharing one GPU: sleeps between steps to hold this share of its unthrottled rate |
+| `--refiner-gpu` | `-1` (same card) | GPU index the refiner computes on, e.g. `--refiner-gpu 1` with both cards visible — measured as the deployable configuration (tracker latency unaffected) |
+| `--refiner-max-gaussians` | `4000000` | Refined-map size that triggers a de-clustering (dedup) pass |
+| `--refiner-dedup-voxel` | `0.0` (off) | Voxel edge in metres for the dedup pass; `0.01` measured |
 
 > **`--spatial-stride` stability note.** The default — and the only
-> recommended value — is `1` (full per-pixel density). The vendored CUDA
-> rasterizer has been observed to hit `illegal memory access` once enough
-> Gaussians accumulate, and this happens with `stride=2` as well, just
-> less reliably; higher strides (4, 8) thin the map further and may dodge
-> the crash, but nothing above `1` is guaranteed stable. The GUI slider
-> changes it live.
+> recommended value — is `1` (full per-pixel density). Older revisions of
+> the vendored CUDA rasterizer were observed to hit `illegal memory access`
+> once enough Gaussians accumulated; the rasterizer now carries an explicit
+> per-call device guard (`thirdparty/diff-gaussian-rasterization-modified/
+> rasterize_points.cu`), which fixed a whole class of mixed-device crashes
+> (inputs on a non-zero GPU combined with buffers allocated on device 0).
+> Rebuild the extension per Step 7 if you see this crash on current code.
+> The GUI slider changes the stride live.
+
+### Online map refinement
+
+`--refiner` starts a third worker process (alongside tracking and the pose
+graph backend) that photometrically optimizes the Gaussian map while SLAM
+runs. Gaussians stay in their owning keyframe's camera frame and are
+composed through that keyframe's *current* pose on every render, so a
+loop-closure correction re-deforms the map for free; supervision frames are
+carried by their anchor keyframes for the same reason. On termination it
+writes `<seq>_refined.ply` (standard 3DGS form) alongside the other
+artifacts.
+
+```bash
+# Single GPU: duty-cycled so tracking keeps priority
+python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
+    --config config/eval_calib.yaml --refiner
+
+# Two GPUs (recommended): refiner on the second card, unthrottled
+CUDA_VISIBLE_DEVICES=0,1 python main.py \
+    --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
+    --config config/eval_calib.yaml --refiner --refiner-gpu 1 --refiner-duty 1.0
+```
+
+Measured on TUM freiburg1_desk (held-out novel views, n=100): map psnr
+10.66 → **12.81** (two-GPU) with ATE bit-identical and tracker latency
+within +1%. The refiner needs a fixed calibration (`use_calib: True`) and
+is off by default.
 
 Example with explicit rendering-related parameters:
 
@@ -328,6 +370,9 @@ produces: everything lands directly under `logs/` (or `logs/<--save-as>/` when
 | Trajectory | `logs/<seq_name>.txt` | Camera trajectory (TUM format) |
 | Reconstruction | `logs/<seq_name>.ply` | 3D point cloud (positions + colours only) |
 | **Gaussian map** | `logs/<seq_name>_gaussians.ply` | **The Gaussian splatting map** in standard 3DGS `.ply` form (means, covariance as quaternion+scale, SH DC, opacity) -- openable in any 3DGS viewer and re-renderable from new viewpoints. Written automatically together with the trajectory/reconstruction saves at the end of a run |
+| Refined map | `logs/<seq_name>_refined.ply` | The online-refined Gaussian map (only with `--refiner`; 3DGS form) |
+| Frame trajectory | `logs/<seq_name>_frames.txt` | Estimated poses for EVERY tracked frame, anchor-resolved against final keyframe poses (TUM format) |
+| Keyframe Gaussians | `logs/<seq_name>_kfgauss.pt` | Per-keyframe camera-space Gaussians + poses (only with `--dump-keyframe-gaussians`; input to the offline refinement scripts) |
 | Keyframes | `logs/keyframes/<seq_name>/` | Saved keyframe images |
 | GS Renders | `logs/gaussian_renders/` | Per-frame Gaussian-rendered PNGs (`--render-dir`) |
 
@@ -365,6 +410,8 @@ Splatt3R-SLAM/
 │   ├── tracker.py           # Frame tracking
 │   ├── global_opt.py        # Global optimization / bundle adjustment
 │   ├── frame.py             # Frame + SharedKeyframes (per-keyframe camera-space Gaussians)
+│   ├── refiner.py           # Online map-refinement process + LocalGaussianMap + SupervisionFrames
+│   ├── gaussian_ply_codec.py# 3DGS .ply encode/decode
 │   ├── visualization.py     # Interactive GS rendering + OpenGL
 │   └── ...                  # Other SLAM components
 ├── config/                  # YAML configuration files
