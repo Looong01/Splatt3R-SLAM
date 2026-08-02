@@ -1,0 +1,8 @@
+inherit: "config/eval_calib.yaml"
+
+# Real-time deployable mode for the GPU-contention experiment (g): identical
+# to eval_calib (known intrinsics, subsample 2) but multithreaded -- the main
+# process never waits for the backend, which is the operating condition a live
+# refiner would run under. ATE from this config is nondeterministic run to
+# run; the deterministic eval numbers stay with eval_calib.
+single_thread: False

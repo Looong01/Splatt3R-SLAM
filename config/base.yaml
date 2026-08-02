@@ -4,6 +4,9 @@ dataset:
   subsample: 1
   img_downsample: 1
   center_principle_point: True
+  normalize_exposure: True  # correct per-frame auto-exposure/white-balance drift
+                             # before it gets baked into Gaussian colour; see
+                             # the splatt3r-color-consistency skill
 
 matching:
   max_iter: 10

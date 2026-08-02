@@ -141,3 +141,4 @@ screen.yaml
 *.pt
 *.ini
 notebooks/*
+snapshot_*.dump

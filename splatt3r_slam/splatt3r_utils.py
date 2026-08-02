@@ -28,7 +28,7 @@ from utils.geometry import build_covariance
 from utils.sh_utils import RGB2SH
 
 
-def load_splatt3r(path=None, device="cuda"):
+def load_splatt3r(path=None, device="cuda", lora_path=None, head_path=None):
     """
     Load Splatt3R model (with Gaussian splatting capabilities).
 
@@ -36,10 +36,39 @@ def load_splatt3r(path=None, device="cuda"):
         path: Path to checkpoint. If None, checks checkpoints/ dir first,
               then downloads from HuggingFace.
         device: Device to load model on.
+        head_path: Optional path to a fine-tuned Gaussian-head state_dict
+              (`head_best.pt`, as saved by scripts/exp_head_only.py). This is
+              the route that was measured to actually beat the released
+              checkpoint (+1.00 dB psnr / -0.0173 lpips on a fixed 150-sample
+              draw); see the splatt3r-finetuning-experiments skill. Only
+              `gaussian_dpt` tensors are replaced -- the encoder and decoder
+              are the released weights, untouched, which is why the retrieval
+              database and every other consumer of encoder features stays
+              valid without a refit.
+        lora_path: Optional path to a trained LoRA adapter directory (e.g.
+              checkpoints/lora/<scene>/, as saved by peft's
+              save_pretrained() -- see splatt3r_core/lora.py and the
+              splatt3r-lora-finetuning skill). If given, the adapter is
+              loaded and kept LIVE/unmerged (peft.PeftModel wrapping
+              model.encoder) rather than baked into the base weights --
+              this is the "separately loaded, hot-swappable" design:
+              swapping scenes means loading a different few-MB adapter
+              directory, not a new multi-GB checkpoint file, and the base
+              weights on disk are never duplicated per scene. The small
+              per-forward-pass LoRA overhead this trades away is
+              negligible next to a SLAM frame's other costs.
 
     Returns:
-        Splatt3R model (MAST3RGaussians)
+        Splatt3R model (MAST3RGaussians), with model.encoder possibly
+        wrapped as a peft.PeftModel if lora_path was given.
+
+    head_path and lora_path are mutually exclusive. The encoder-LoRA route was
+    measured to be 49% WORSE than the released checkpoint and is retained only
+    to reproduce that negative result; head_path is the one that works.
     """
+    if head_path is not None and lora_path is not None:
+        raise ValueError("head_path and lora_path are mutually exclusive")
+
     if path is None:
         # Check local checkpoints directory first
         local_path = os.path.join(
@@ -63,6 +92,36 @@ def load_splatt3r(path=None, device="cuda"):
     print(f"Loading Splatt3R model from {weights_path}")
     model = MAST3RGaussians.load_from_checkpoint(weights_path, device)
     model.eval()
+
+    if head_path is not None:
+        print(f"Loading fine-tuned Gaussian head from {head_path}")
+        state = torch.load(head_path, map_location=device)
+        missing, unexpected = model.encoder.load_state_dict(state, strict=False)
+        # strict=False is required (the file holds only the head), so verify
+        # explicitly rather than trusting a silent no-op: every tensor in the
+        # file must land, and nothing outside the head may be reported missing.
+        if unexpected:
+            raise RuntimeError(
+                f"{head_path} has {len(unexpected)} tensors the encoder does "
+                f"not accept, e.g. {unexpected[:3]}")
+        head_missing = [k for k in missing if "gaussian_dpt" in k]
+        if head_missing:
+            raise RuntimeError(
+                f"{len(head_missing)} Gaussian-head tensors failed to load "
+                f"from {head_path}, e.g. {head_missing[:3]}")
+        print(f"  replaced {len(state)} head tensors "
+              f"(encoder/decoder left at released weights)")
+        model.eval()
+
+    if lora_path is not None:
+        # Lazy import: peft is only a runtime dependency when --lora is
+        # actually used, not for normal (no-LoRA) SLAM runs.
+        from peft import PeftModel
+
+        print(f"Loading LoRA adapter from {lora_path} (kept live, not merged)")
+        model.encoder = PeftModel.from_pretrained(model.encoder, lora_path)
+        model.encoder.eval()
+
     return model
 
 
@@ -177,20 +236,32 @@ def _estimate_default_intrinsics(h, w, device="cuda"):
 
 
 @torch.inference_mode()
-def gaussians_to_world(
-    frame,
-    include_cross=True,
+def prepare_gaussians_local(
+    local: dict,
+    img_tensor: torch.Tensor,
+    h: int,
+    w: int,
     spatial_stride=1,
     depth_min=0.05,
     depth_max_percentile=0.98,
     max_scale=0.5,
     min_confidence=1.5,
+    min_opacity=0.3,
+    inflate_scales_for_stride=True,
 ):
-    """Convert camera-local Gaussian predictions to world coordinates.
+    """Transform ONE keyframe's camera-space Gaussians to world space.
+
+    Unlike the old ``gaussians_to_world`` (removed), this never caches or
+    stores its output anywhere. It is meant to be called fresh, every time
+    a keyframe needs to be drawn, using that keyframe's *current* T_WC
+    (``SharedKeyframes.T_WC[idx]``, kept live by the pose-graph backend).
+    That means a loop-closure / bundle-adjustment correction is reflected
+    the very next time the keyframe is baked -- there is no permanently
+    mis-placed copy left behind in world space (see the splatt3r-gaussian-map
+    skill for the failure mode this replaces).
 
     Filters out low-quality "splash" Gaussians caused by occluded / unseen
-    regions where the model hallucinates noisy predictions.  Three filters are
-    applied *before* the world-space transform:
+    regions where the model hallucinates noisy predictions:
 
     1. **Depth filter** – keeps Gaussians with camera-space z in
        [depth_min, percentile(z, depth_max_percentile)].
@@ -199,133 +270,201 @@ def gaussians_to_world(
        confidence ≥ *min_confidence* (if conf is available).
 
     Args:
-        frame:  Frame with gaussian_pred (and optionally gaussian_pred_cross) set.
-        include_cross: Also convert cross-predictions and concatenate.
-        spatial_stride: Subsample Gaussians spatially (stride in H and W dims).
-                        stride=4 reduces per-frame Gaussians by 16×.
-        depth_min: Minimum camera-space depth to keep (metres).
-        depth_max_percentile: Percentile of camera-space depth used as upper bound.
-        max_scale: Maximum allowed Gaussian scale (any axis).  Larger → splash.
-        min_confidence: Minimum pointmap confidence.  Lower → hallucinated.
+        local: dict from SharedKeyframes.get_gaussians_local(idx) — flat
+            (h*w, C) camera-space means/scales/rotations/sh/opacities/conf.
+        img_tensor: this keyframe's normalised (C, H, W) or (1, C, H, W)
+            image tensor (SharedKeyframes.img[idx]), used to recover the
+            SH DC colour residual. Must match the (h, w) grid `local` was
+            predicted at.
+        h, w: spatial resolution of the Gaussian prediction grid.
+        spatial_stride: subsample stride in H and W. stride=4 reduces the
+            Gaussian count by 16x.
+        depth_min: minimum camera-space depth to keep (metres).
+        depth_max_percentile: percentile of camera-space depth used as
+            the upper bound.
+        max_scale: maximum allowed Gaussian scale (any axis). Larger -> splash.
+        min_confidence: minimum pointmap confidence. Lower -> hallucinated.
+        min_opacity: minimum opacity (after the SH/opacity decode) to keep.
+            Lower -> translucent noise.
+        inflate_scales_for_stride: if True (default), multiply scales by
+            `spatial_stride` so subsampled splats still visually touch in the
+            viewport. This is a viz-only compensation -- exporters writing a
+            persisted .ply must pass False, or splats come out up to
+            `spatial_stride` times too large.
 
     Returns:
-        (means_world, cov_triu, colors, opacities) ready for SharedGaussians.append().
+        (means_world, cov_triu, colors, opacities), or None if nothing
+        survives filtering.
         means_world: (G, 3)
-        cov_triu:    (G, 6)  upper-triangle of world-space 3×3 covariance
+        cov_triu:    (G, 6)  upper-triangle of world-space 3x3 covariance
         colors:      (G, 3)  RGB in [0, 1]
         opacities:   (G,)
     """
-    if frame.gaussian_pred is None:
-        return None
-
-    device = frame.gaussian_pred["means"].device
-    T_WC_mat = _sim3_to_4x4(frame.T_WC)  # (1, 4, 4)
-    R = T_WC_mat[0, :3, :3]  # (3, 3)
-    t = T_WC_mat[0, :3, 3]  # (3,)
-
-    preds = [frame.gaussian_pred]
-    imgs = [frame.img]
-    if include_cross and frame.gaussian_pred_cross is not None:
-        preds.append(frame.gaussian_pred_cross)
-        imgs.append(frame.img)  # same source image for SH residual
-
-    all_means = []
-    all_cov_triu = []
-    all_colors = []
-    all_opas = []
-
-    row, col = torch.triu_indices(3, 3)
+    device = local["means"].device
     s = max(1, int(spatial_stride))
 
-    for pred, img_tensor in zip(preds, imgs):
-        means = pred["means"][:, ::s, ::s, :]  # (B, H', W', 3)
-        scales = pred["scales"][:, ::s, ::s, :]  # (B, H', W', 3)
-        rotations = pred["rotations"][:, ::s, ::s, :]  # (B, H', W', 4)
-        sh = pred["sh"][:, ::s, ::s, :, :]  # (B, H', W', 3, sh_degree)
-        opas = pred["opacities"][:, ::s, ::s, :]  # (B, H', W', 1)
+    sh_dim = local["sh"].shape[-1]
+    means = local["means"].view(h, w, 3)[::s, ::s].reshape(-1, 3)
+    scales = local["scales"].view(h, w, 3)[::s, ::s].reshape(-1, 3)
+    rotations = local["rotations"].view(h, w, 4)[::s, ::s].reshape(-1, 4)
+    sh = local["sh"].view(h, w, 3, sh_dim)[::s, ::s].reshape(-1, 3, sh_dim)
+    opas = local["opacities"].view(h, w)[::s, ::s].reshape(-1)
+    conf = local.get("conf")
+    conf = conf.view(h, w)[::s, ::s].reshape(-1) if conf is not None else None
 
-        # Confidence map (if stored by _extract_gaussian_params)
-        conf = None
-        if "conf" in pred:
-            conf = pred["conf"][:, ::s, ::s]  # (B, H', W')
+    # The downstream head outputs SH *residuals*; the original image
+    # colour in SH space must be added to the DC component, matching the
+    # logic in splatt3r_core/main.py:forward() (learn_residual).
+    img_hwc = _get_original_img_hwc(img_tensor.to(device))  # (1, H, W, 3)
+    img_hwc = img_hwc[:, ::s, ::s, :].reshape(-1, 3)
+    sh = sh.clone()
+    sh[..., 0] = sh[..., 0] + RGB2SH(img_hwc)
 
-        # The downstream head outputs SH *residuals*; the original image
-        # colour in SH space must be added to the DC component, matching
-        # the logic in splatt3r_core/main.py:forward() (learn_residual).
-        img_hwc = _get_original_img_hwc(img_tensor.to(means.device))  # (B, H, W, 3)
-        img_hwc = img_hwc[:, ::s, ::s, :]  # subsample to match
-        sh = sh.clone()
-        sh[..., 0] = sh[..., 0] + RGB2SH(img_hwc)
+    # ---- Quality filtering (camera space, before world transform) ----
+    z = means[:, 2]  # camera-space depth
+    valid = z > depth_min
+    if valid.any() and depth_max_percentile < 1.0:
+        z_valid = z[valid]
+        z_upper = torch.quantile(z_valid, depth_max_percentile)
+        valid = valid & (z <= z_upper)
 
-        # Flatten spatial dims
-        means_flat = means.reshape(-1, 3)  # (G, 3)
-        scales_flat = scales.reshape(-1, 3)
-        rots_flat = rotations.reshape(-1, 4)
-        sh_flat = sh.reshape(-1, 3, sh.shape[-1])  # (G, 3, sh_degree)
-        opas_flat = opas.reshape(-1)  # (G,)
-        conf_flat = conf.reshape(-1) if conf is not None else None  # (G,)
+    scale_max = scales.max(dim=-1).values
+    valid = valid & (scale_max < max_scale)
 
-        # ---- Quality filtering (camera space, before world transform) ----
-        #
-        # 1. Depth filter: keep only Gaussians in front of camera and within
-        #    a reasonable depth range.  The upper bound is adaptive: use the
-        #    *depth_max_percentile*-th percentile of positive depths.
-        z = means_flat[:, 2]  # camera-space depth
-        valid = z > depth_min
-        if valid.any() and depth_max_percentile < 1.0:
-            z_valid = z[valid]
-            z_upper = torch.quantile(z_valid, depth_max_percentile)
-            valid = valid & (z <= z_upper)
+    if conf is not None and min_confidence > 0:
+        valid = valid & (conf >= min_confidence)
 
-        # 2. Scale filter: large scales indicate uncertain / hallucinatory
-        #    Gaussians (the model spreads them when it doesn't know).
-        scale_max = scales_flat.max(dim=-1).values  # (G,)
-        valid = valid & (scale_max < max_scale)
+    if min_opacity > 0:
+        valid = valid & (opas > min_opacity)
 
-        # 3. Confidence filter: low-confidence predictions are typically in
-        #    occluded or unseen regions → splash artifacts.
-        if conf_flat is not None and min_confidence > 0:
-            valid = valid & (conf_flat >= min_confidence)
+    means = means[valid]
+    scales = scales[valid]
+    rotations = rotations[valid]
+    sh = sh[valid]
+    opas = opas[valid]
 
-        # Apply mask
-        means_flat = means_flat[valid]
-        scales_flat = scales_flat[valid]
-        rots_flat = rots_flat[valid]
-        sh_flat = sh_flat[valid]
-        opas_flat = opas_flat[valid]
-
-        if means_flat.shape[0] == 0:
-            continue
-
-        # Transform means to world: x_w = R @ x_c + t
-        means_world = (R @ means_flat.T).T + t  # (G, 3)
-
-        # Build covariance in camera space, then rotate to world
-        cov_cam = build_covariance(scales_flat, rots_flat)  # (G, 3, 3)
-        cov_world = R @ cov_cam @ R.T  # (G, 3, 3)
-        cov_tri = cov_world[:, row, col]  # (G, 6)
-
-        # Colour: SH zero-order → direct RGB via SH2RGB
-        # Full SH = network_residual + RGB2SH(img), so
-        # SH2RGB(sh0) = sh0 * C0 + 0.5  gives the final colour.
-        sh0 = sh_flat[:, :, 0]  # (G, 3)
-        C0 = 0.28209479177387814
-        colors_rgb = (sh0 * C0 + 0.5).clamp(0, 1)  # (G, 3)
-
-        all_means.append(means_world)
-        all_cov_triu.append(cov_tri)
-        all_colors.append(colors_rgb)
-        all_opas.append(opas_flat)
-
-    if len(all_means) == 0:
+    if means.shape[0] == 0:
         return None
 
-    means_out = torch.cat(all_means, dim=0)
-    cov_out = torch.cat(all_cov_triu, dim=0)
-    colors_out = torch.cat(all_colors, dim=0)
-    opas_out = torch.cat(all_opas, dim=0)
+    # Compensate for spatial subsampling: dropping every s-th pixel
+    # increases the spacing between *retained* Gaussians by ~s in each
+    # image-plane direction, but their footprint (~scale) doesn't grow to
+    # match -- neighbouring splats stop overlapping and the surface reads
+    # as a stippled/halftone dot pattern rather than continuous coverage
+    # (worst at gs_resolution_scale=1.0, where nothing softens it).
+    # Inflate scale linearly with stride so splats keep touching. This is
+    # applied *after* the max_scale splash-artifact filter above, which
+    # is meant to catch the network's own hallucinated large predictions
+    # and should stay keyed to the raw per-pixel scale, not this display
+    # compensation.
+    #
+    # Clamp the *inflated* result back to max_scale. The network's own
+    # predicted scale already grows with depth/uncertainty (a pixel
+    # covers more physical area at range, and the network is also
+    # genuinely less confident about far geometry from two-view
+    # matching) -- far-field points already start closer to max_scale
+    # than near-field ones. Multiplying everything by a flat s
+    # compounds that, so distant surfaces get disproportionately blurry
+    # relative to near ones. Clamping means the gap-closing compensation
+    # can't push a splat past the same ceiling we already use to decide
+    # "this is as big as a legitimate splat should ever get" -- near-
+    # field (small, well below the ceiling) still gets the full s-times
+    # inflation it needs; far-field (already close to the ceiling)
+    # stops growing once it hits it.
+    #
+    # inflate_scales_for_stride=False turns this off for callers that are
+    # persisting the Gaussians rather than drawing them (evaluate.py's
+    # save_gaussian_map): the inflation is a function of the *display*
+    # subsampling factor, not of the scene, so baking it into an exported
+    # .ply would hand an external viewer splats that are up to s times too
+    # large.
+    if s > 1 and inflate_scales_for_stride:
+        scales = torch.clamp(scales * s, max=max_scale)
 
-    return means_out, cov_out, colors_out, opas_out
+    # Colour: SH zero-order -> direct RGB via SH2RGB. Full SH =
+    # network_residual + RGB2SH(img), so SH2RGB(sh0) = sh0 * C0 + 0.5.
+    sh0 = sh[:, :, 0]
+    colors_rgb = (sh0 * 0.28209479177387814 + 0.5).clamp(0, 1)
+
+    # build_covariance()'s quaternion->matrix conversion divides by
+    # (||q||^2 + eps) rather than normalising, so a near-zero-norm quaternion
+    # (which the network does occasionally emit at low-signal pixels) becomes a
+    # huge non-orthonormal "rotation" -- historically the trigger for the CUDA
+    # rasterizer's asynchronous "illegal memory access". Normalise here so the
+    # conversion is a true rotation regardless of the raw magnitude.
+    rotations = rotations / rotations.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
+    return means, scales, rotations, colors_rgb, opas
+
+
+def bake_gaussians_world(
+    local: dict,
+    img_tensor: torch.Tensor,
+    h: int,
+    w: int,
+    T_WC,
+    spatial_stride=1,
+    depth_min=0.05,
+    depth_max_percentile=0.98,
+    max_scale=0.5,
+    min_confidence=1.5,
+    min_opacity=0.3,
+    inflate_scales_for_stride=True,
+):
+    """Place ONE keyframe's Gaussians in world space using its CURRENT pose.
+
+    Camera-space preparation (subsampling, quality filtering, SH residual +
+    image colour, quaternion normalisation) lives in
+    ``prepare_gaussians_local``; this only applies the rigid placement. The
+    split exists so the online refiner (``splatt3r_slam/refiner.py``)
+    initialises from byte-identical camera-space Gaussians -- two
+    preprocessing paths that drift apart is a failure mode this project has
+    already paid for more than once.
+
+    Nothing is cached. Called fresh every time a keyframe is drawn, with that
+    keyframe's live ``SharedKeyframes.T_WC[idx]``, so a loop-closure
+    correction is reflected on the next bake and no mis-placed copy is left
+    behind (see the splatt3r-gaussian-map skill).
+
+    Returns (means_world (G,3), cov_triu (G,6), colors (G,3), opacities (G,))
+    or None if nothing survives filtering.
+    """
+    prepared = prepare_gaussians_local(
+        local, img_tensor, h, w,
+        spatial_stride=spatial_stride,
+        depth_min=depth_min,
+        depth_max_percentile=depth_max_percentile,
+        max_scale=max_scale,
+        min_confidence=min_confidence,
+        min_opacity=min_opacity,
+        inflate_scales_for_stride=inflate_scales_for_stride,
+    )
+    if prepared is None:
+        return None
+    means, scales, rotations, colors_rgb, opas = prepared
+
+    T_WC_mat = _sim3_to_4x4(T_WC)  # (1, 4, 4); Sim3 scale folded into sR
+    R = T_WC_mat[0, :3, :3]
+    t = T_WC_mat[0, :3, 3]
+    row, col = torch.triu_indices(3, 3)
+
+    means_world = (R @ means.T).T + t
+    cov_world = R @ build_covariance(scales, rotations) @ R.T
+    cov_tri = cov_world[:, row, col]
+
+    # Defensive final filter: never hand the rasterizer a non-finite input
+    # (NaN means/sh straight from the network).
+    finite = torch.isfinite(means_world).all(dim=-1) & torch.isfinite(cov_tri).all(dim=-1)
+    if not bool(finite.all()):
+        means_world = means_world[finite]
+        cov_tri = cov_tri[finite]
+        colors_rgb = colors_rgb[finite]
+        opas = opas[finite]
+
+    if means_world.shape[0] == 0:
+        return None
+
+    return means_world, cov_tri, colors_rgb, opas
 
 
 @torch.inference_mode()
@@ -362,11 +501,23 @@ def splatt3r_render(model, frame, ref_frame, K=None, target_T_WC=None):
     # ------------------------------------------------------------------
     # 1. Build covariance matrices  Σ = R S S^T R^T
     # ------------------------------------------------------------------
+    # Normalize the quaternions first, exactly as bake_gaussians_world()
+    # does further down. build_covariance()'s quaternion_to_matrix() only
+    # guards against an exact divide-by-zero (eps=1e-8), not against a
+    # near-zero-norm quaternion, which yields a huge non-orthonormal
+    # "rotation" and hence a degenerate covariance -- the documented
+    # trigger for the CUDA rasterizer's illegal-memory-access crash. This
+    # path fed raw predictions straight in, so the defence existed on only
+    # one of the two paths that reach the same rasterizer.
+    def _unit_quat(q):
+        return q / q.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
     cov1 = build_covariance(
-        frame.gaussian_pred["scales"], frame.gaussian_pred["rotations"]
+        frame.gaussian_pred["scales"], _unit_quat(frame.gaussian_pred["rotations"])
     )
     cov2 = build_covariance(
-        frame.gaussian_pred_cross["scales"], frame.gaussian_pred_cross["rotations"]
+        frame.gaussian_pred_cross["scales"],
+        _unit_quat(frame.gaussian_pred_cross["rotations"]),
     )
 
     # ------------------------------------------------------------------

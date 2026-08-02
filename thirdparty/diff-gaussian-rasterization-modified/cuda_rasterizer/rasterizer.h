@@ -81,6 +81,10 @@ namespace CudaRasterizer
 			float* dL_dsh,
 			float* dL_dscale,
 			float* dL_drot,
+			// Camera-pose gradients (Splatt3R-SLAM addition); may be null.
+			float* dL_dviewmatrix,
+			float* dL_dprojmatrix,
+			float* dL_dcampos,
 			bool debug);
 	};
 };

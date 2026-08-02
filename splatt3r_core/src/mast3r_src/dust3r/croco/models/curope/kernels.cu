@@ -98,7 +98,17 @@ void rope_2d_cuda( torch::Tensor tokens, const torch::Tensor pos, const float ba
     const int N_BLOCKS = B * N; // each block takes care of H*D values
     const int SHARED_MEM = sizeof(float) * (D + D/4);
 
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(tokens.type(), "rope_2d_cuda", ([&] {
+    // FLOATING_TYPES_AND_HALF alone left bf16 unsupported (Lightning's
+    // precision="bf16-mixed" hit NotImplementedError here -- see the
+    // splatt3r-lora-finetuning skill). ATen has no single
+    // "..._AND_HALF_AND_BFLOAT16" macro; FLOATING_TYPES_AND2 with both
+    // extra scalar types is the correct way to add both. Safe here: the
+    // kernel already does all its math (cos/sin, multiply-accumulate) in
+    // float regardless of the input dtype (see rope_2d_cuda_kernel above),
+    // only reading/writing tokens at the input precision, so adding
+    // BFloat16 doesn't change numerical behavior for the existing
+    // Half/Float paths.
+    AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16, tokens.scalar_type(), "rope_2d_cuda", ([&] {
         rope_2d_cuda_kernel<scalar_t> <<<N_BLOCKS, THREADS_PER_BLOCK, SHARED_MEM>>> (
             //tokens.data_ptr<scalar_t>(), 
             tokens.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),

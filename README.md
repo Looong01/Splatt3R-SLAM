@@ -119,6 +119,12 @@ export MAX_JOBS=$(nproc)           # parallel compilation
 pip install --no-build-isolation thirdparty/lietorch
 pip install --no-build-isolation thirdparty/diff-gaussian-rasterization-modified
 pip install --no-build-isolation -e .
+
+# Optional but recommended: CUDA RoPE2D kernel for MASt3R (otherwise a slower
+# PyTorch fallback is used and a warning is printed at startup)
+cd splatt3r_core/src/mast3r_src/dust3r/croco/models/curope
+python setup.py build_ext --inplace
+cd ../../../../../../..
 ```
 
 ### CUDA 13.x / torch 2.13 Adaptations (already applied in this repo)
@@ -131,6 +137,9 @@ following fixes are part of the vendored code:
   `at::linalg_norm` (the `torch::linalg` C++ namespace was removed in torch 2.13)
 - `splatt3r_slam/backend/src/matching_kernels.cu`: `D11.type()` →
   `D11.scalar_type()` in the dispatch macro
+- `splatt3r_core/src/mast3r_src/dust3r/croco/models/curope/kernels.cu`:
+  `tokens.type()` → `tokens.scalar_type()` (same torch 2.13 change; required to
+  build the optional CUDA RoPE2D kernel)
 - `splatt3r_slam/dataloader.py`: `np.unicode_` → `np.str_` (removed in NumPy 2.0)
 - `main.py`, `splatt3r_core/main.py`: set `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`
   because torch >= 2.6 defaults `torch.load` to `weights_only=True`, which rejects
@@ -179,8 +188,20 @@ wget 'https://huggingface.co/brandonsmart/splatt3r_v1.0/resolve/main/epoch%3D19-
 | `--render-gaussians` | on | Deprecated compatibility flag (rendering is enabled by default) |
 | `--no-render-gaussians` | off | Disable Splatt3R rendering and PNG export |
 | `--render-dir` | `logs/gaussian_renders` | Directory for per-frame rendered PNGs |
-| `--max-gaussians` | `4194304` | Max Gaussians in shared visualization buffer |
-| `--spatial-stride` | `4` | Per-frame Gaussian subsampling stride (`1` = no subsampling) |
+| `--lora` | `None` | Path to a trained LoRA adapter dir to hot-swap onto the base checkpoint (see `scripts/train_lora_per_scene.py`) |
+| `--max-gaussians` | `16777216` | Target Gaussian **render budget** across all keyframes; the baker coarsens its stride to stay under it |
+| `--spatial-stride` | `1` | Per-frame Gaussian subsampling stride (`1` = no subsampling). See the warning below |
+| `--depth-max-percentile` | `0.98` | Upper depth percentile kept when baking Gaussians |
+| `--max-scale` | `1.0` | Clamp on predicted Gaussian scale (guards the rasterizer) |
+| `--min-confidence` | `1.5` | Minimum pointmap confidence for a Gaussian to be kept |
+
+> **`--spatial-stride` stability note.** The default — and the only
+> recommended value — is `1` (full per-pixel density). The vendored CUDA
+> rasterizer has been observed to hit `illegal memory access` once enough
+> Gaussians accumulate, and this happens with `stride=2` as well, just
+> less reliably; higher strides (4, 8) thin the map further and may dodge
+> the crash, but nothing above `1` is guaranteed stable. The GUI slider
+> changes it live.
 
 Example with explicit rendering-related parameters:
 
@@ -188,8 +209,8 @@ Example with explicit rendering-related parameters:
 python main.py \
   --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
   --config config/base.yaml \
-  --spatial-stride 2 \
-  --max-gaussians 6000000 \
+  --spatial-stride 1 \
+  --max-gaussians 16777216 \
   --render-dir logs/gaussian_renders
 ```
 
@@ -204,9 +225,9 @@ When GUI is enabled (default, without `--no-viz`), the left panel exposes runtim
 | `show all` | bool (on) | Show all point maps |
 | `follow cam` | bool (on) | View follows current tracking camera |
 | `spatial stride` | `1 .. 16` (default from CLI `--spatial-stride`) | Subsampling density control per frame |
-| `max gaussians (k)` | `64k .. CLI upper bound` (default from CLI `--max-gaussians`) | Cap total active Gaussians in shared buffer |
+| `max gaussians (k)` | `64k .. CLI upper bound` (default from CLI `--max-gaussians`) | Live cap on the total Gaussian render budget |
 | `GS rendering (Splatt3R)` | bool (on) | Toggle Gaussian splatting rendering overlay |
-| `GS resolution` | `0.1 .. 1.0` (default `0.5`) | Rendering resolution scale in viewport |
+| `GS resolution` | `0.1 .. 1.0` (default `1.0`) | Rendering resolution scale in viewport |
 | `surfelmap` / `trianglemap` | radio | Point-cloud shader (when GS rendering is off) |
 | `show_keyframe_edges` / `show_keyframe` / `show_axis` | bool | Overlay debugging visuals |
 | `show_normal` / `culling` | bool | Normal display & face culling (point-cloud mode) |
@@ -219,7 +240,7 @@ When GUI is enabled (default, without `--no-viz`), the left panel exposes runtim
 - `--spatial-stride` and `--max-gaussians` are **startup defaults** and initialize GUI sliders.
 - During GUI run, slider updates are applied live to subsequent frames.
 - For PNG export in `logs/gaussian_renders/`, current GUI values of `spatial_stride` and `max_gaussians` are used; other GUI sliders are viewport-only.
-- The `--max-gaussians` CLI value determines the **shared memory buffer size** allocated at startup, so the GUI slider cannot exceed this allocation.
+- `--max-gaussians` is a **render budget**, not a preallocated buffer: Gaussians are re-baked from each keyframe every frame (there is no persistent `SharedGaussians` store -- that design was removed), and the baker raises its stride to stay under the budget. The CLI value sets the GUI slider's upper bound.
 - In headless mode (`--no-viz`), only CLI values are used for the whole run.
 - If `--no-render-gaussians` is set, Splatt3R rendering and PNG export are disabled regardless of GUI state.
 
@@ -296,12 +317,28 @@ python main.py \
 
 ## Output
 
+Paths below are what `splatt3r_slam/evaluate.py: prepare_savedir()` actually
+produces: everything lands directly under `logs/` (or `logs/<--save-as>/` when
+`--save-as` is given), and files are named after the **sequence**, i.e.
+`<seq_name>` = the dataset directory's own name, e.g.
+`rgbd_dataset_freiburg1_desk`.
+
 | Output | Location | Description |
 |--------|----------|-------------|
-| Trajectory | `logs/<dataset>/trajectory.txt` | Camera trajectory (TUM format) |
-| Reconstruction | `logs/<dataset>/reconstruction.ply` | 3D point cloud |
-| Keyframes | `logs/keyframes/` | Saved keyframe images |
-| GS Renders | `logs/gaussian_renders/` | Per-frame Gaussian-rendered PNGs |
+| Trajectory | `logs/<seq_name>.txt` | Camera trajectory (TUM format) |
+| Reconstruction | `logs/<seq_name>.ply` | 3D point cloud (positions + colours only) |
+| **Gaussian map** | `logs/<seq_name>_gaussians.ply` | **The Gaussian splatting map** in standard 3DGS `.ply` form (means, covariance as quaternion+scale, SH DC, opacity) -- openable in any 3DGS viewer and re-renderable from new viewpoints. Written automatically together with the trajectory/reconstruction saves at the end of a run |
+| Keyframes | `logs/keyframes/<seq_name>/` | Saved keyframe images |
+| GS Renders | `logs/gaussian_renders/` | Per-frame Gaussian-rendered PNGs (`--render-dir`) |
+
+> With `--save-as NAME`, these become `logs/NAME/<seq_name>.txt`,
+> `logs/NAME/<seq_name>.ply`, `logs/NAME/<seq_name>_gaussians.ply`,
+> `logs/NAME/keyframes/<seq_name>/`.
+>
+> The Gaussian map honours `--spatial-stride`, `--depth-max-percentile`,
+> `--max-scale` and `--min-confidence`, but **not** the stride-proportional
+> scale inflation the live viewport applies -- that is a display-only
+> compensation and would write oversized splats into a persisted file.
 
 ---
 
@@ -327,7 +364,7 @@ Splatt3R-SLAM/
 │   ├── splatt3r_utils.py    # Model loading, inference, Gaussian conversion
 │   ├── tracker.py           # Frame tracking
 │   ├── global_opt.py        # Global optimization / bundle adjustment
-│   ├── frame.py             # Frame + SharedGaussians buffer
+│   ├── frame.py             # Frame + SharedKeyframes (per-keyframe camera-space Gaussians)
 │   ├── visualization.py     # Interactive GS rendering + OpenGL
 │   └── ...                  # Other SLAM components
 ├── config/                  # YAML configuration files
@@ -372,11 +409,15 @@ bash ./scripts/download_7_scenes.sh
 ```
 
 ### EuRoC Dataset
+Downloads from the ETH Research Collection (three large archives, ~23 GB total;
+only the required per-sequence zips are kept afterwards):
 ```bash
 bash ./scripts/download_euroc.sh
 ```
 
 ### ETH3D SLAM Dataset
+Downloads all training sequences from https://www.eth3d.net/slam_datasets
+(resumable, already-downloaded sequences are skipped):
 ```bash
 bash ./scripts/download_eth3d.sh
 ```
@@ -473,7 +514,11 @@ pip install lightning lpips omegaconf huggingface_hub gitpython
 
 ## Reproducibility
 There might be minor differences between the released version and results in the paper after developing this multi-processing version.
-We run all experiments on an RTX 4090; performance may differ with a different GPU.
+
+The upstream MASt3R-SLAM numbers this project builds on were produced on an
+RTX 4090. **This** fork is developed and run on dual RTX A6000 (sm_86), which
+is also what the Prerequisites section above and the LoRA training scripts
+assume -- performance and memory headroom will differ on other GPUs.
 
 ---
 

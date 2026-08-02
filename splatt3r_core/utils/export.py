@@ -85,6 +85,17 @@ def save_as_ply(pred1, pred2, save_path):
         scale = torch.sqrt(S)
         scale = scale.detach().cpu().numpy()
 
+        # KNOWN BUG (intentionally left unfixed to stay aligned with upstream
+        # Splatt3R): for a symmetric PSD covariance, SVD gives U == V, so
+        # U @ V^T below is really U @ U^T = I -- it carries no rotation at
+        # all. The rotation of a symmetric PSD matrix is simply U alone.
+        # Note it is U @ V^T that is wrong here, not U @ Vh (torch.linalg.svd
+        # already returns V, not Vh). For the correct implementation see
+        # splatt3r_slam/gaussian_ply_codec.py::svd_rotations_scales (used by
+        # evaluate.py::save_gaussian_map), verified by a
+        # covariance->PLY->decode->covariance round-trip to ~8e-16 (vs 1.7e-1
+        # with U @ V^T). This only affects the debug/demo export path
+        # (SaveBatchData callback and demo), not SLAM map export.
         # The rotation matrix is U*Vt
         rotation_matrix = torch.bmm(U, V.transpose(-2, -1))
         rotation_matrix_np = rotation_matrix.detach().cpu().numpy()

@@ -58,74 +58,142 @@ def render_cuda(
     gaussian_opacities,
     scale_invariant: bool = True,
     use_sh: bool = True,
+    return_extras: bool = False,
 ):
     assert use_sh or gaussian_sh_coefficients.shape[-1] == 1
 
-    # Make sure everything is in a range where numerical issues don't appear.
-    if scale_invariant:
-        scale = 1 / near
-        extrinsics = extrinsics.clone()
-        extrinsics[..., :3, 3] = extrinsics[..., :3, 3] * scale[:, None]
-        gaussian_covariances = gaussian_covariances * (scale[:, None, None, None] ** 2)
-        gaussian_means = gaussian_means * scale[:, None, None]
-        near = near * scale
-        far = far * scale
+    # The compiled CUDA rasterizer extension (thirdparty/diff-gaussian-
+    # rasterization-modified) is hardcoded to torch::kFloat32 throughout --
+    # rasterize_points.cu calls .data<float>()/.data_ptr<float>() on every
+    # tensor argument, with no AT_DISPATCH/templating for other dtypes
+    # (unlike the RoPE kernel in croco/models/curope, which was patched to
+    # support Half/BFloat16). Under precision="bf16-mixed"/"16-mixed"
+    # training these tensors would otherwise arrive here as bf16/fp16
+    # (produced by autocast-covered ops upstream in the Gaussian head),
+    # which hits a dtype-mismatch error inside the extension.
+    #
+    # `.float()` alone is NOT enough: an explicit cast to float32 does not
+    # survive the next autocast-covered op. `full_projection = view_matrix
+    # @ projection_matrix` below is a matmul, and PyTorch's autocast
+    # intercepts matmul calls and casts them to bf16 *regardless of the
+    # input tensors' actual dtype* while an autocast region is active
+    # (Lightning's precision="bf16-mixed" wraps the whole training/
+    # validation step in one) -- confirmed by hitting exactly this in
+    # practice: `.float()`-only got "expected scalar type Float but found
+    # BFloat16" right at the rasterizer call, from `projmatrix` silently
+    # turning back into BFloat16 after the matmul despite both of its
+    # inputs having been cast to float32 immediately before. Disabling
+    # autocast for this whole block is what actually pins it: no op inside
+    # gets reduced-precision treatment, matmul included, independent of
+    # the ambient training precision. Autograd still casts gradients back
+    # to the original (bf16) dtype automatically on the way out, so this
+    # doesn't block the mixed-precision memory savings upstream in the
+    # backbone -- it only keeps this one call's own math in fp32, which is
+    # all the extension can accept anyway.
+    with torch.autocast(device_type="cuda", enabled=False):
+        extrinsics = extrinsics.float()
+        intrinsics = intrinsics.float()
+        near = near.float()
+        far = far.float()
+        background_color = background_color.float()
+        gaussian_means = gaussian_means.float()
+        gaussian_covariances = gaussian_covariances.float()
+        gaussian_sh_coefficients = gaussian_sh_coefficients.float()
+        gaussian_opacities = gaussian_opacities.float()
 
-    _, _, _, n = gaussian_sh_coefficients.shape
-    degree = isqrt(n) - 1
-    shs = rearrange(gaussian_sh_coefficients, "b g xyz n -> b g n xyz").contiguous()
+        # Make sure everything is in a range where numerical issues don't appear.
+        if scale_invariant:
+            scale = 1 / near
+            extrinsics = extrinsics.clone()
+            extrinsics[..., :3, 3] = extrinsics[..., :3, 3] * scale[:, None]
+            gaussian_covariances = gaussian_covariances * (scale[:, None, None, None] ** 2)
+            gaussian_means = gaussian_means * scale[:, None, None]
+            near = near * scale
+            far = far * scale
 
-    b, _, _ = extrinsics.shape
-    h, w = image_shape
+        _, _, _, n = gaussian_sh_coefficients.shape
+        degree = isqrt(n) - 1
+        shs = rearrange(gaussian_sh_coefficients, "b g xyz n -> b g n xyz").contiguous()
 
-    fov_x, fov_y = get_fov(intrinsics).unbind(dim=-1)
-    tan_fov_x = (0.5 * fov_x).tan()
-    tan_fov_y = (0.5 * fov_y).tan()
+        b, _, _ = extrinsics.shape
+        h, w = image_shape
 
-    projection_matrix = get_projection_matrix(near, far, fov_x, fov_y)
-    projection_matrix = rearrange(projection_matrix, "b i j -> b j i")
-    view_matrix = rearrange(extrinsics.inverse(), "b i j -> b j i")
-    full_projection = view_matrix @ projection_matrix
+        fov_x, fov_y = get_fov(intrinsics).unbind(dim=-1)
+        tan_fov_x = (0.5 * fov_x).tan()
+        tan_fov_y = (0.5 * fov_y).tan()
 
-    all_images = []
-    all_radii = []
-    for i in range(b):
-        # Set up a tensor for the gradients of the screen-space means.
-        mean_gradients = torch.zeros_like(gaussian_means[i], requires_grad=True)
-        try:
-            mean_gradients.retain_grad()
-        except Exception:
-            pass
+        projection_matrix = get_projection_matrix(near, far, fov_x, fov_y)
+        projection_matrix = rearrange(projection_matrix, "b i j -> b j i")
+        view_matrix = rearrange(extrinsics.inverse(), "b i j -> b j i")
+        full_projection = view_matrix @ projection_matrix
 
-        settings = GaussianRasterizationSettings(
-            image_height=h,
-            image_width=w,
-            tanfovx=tan_fov_x[i].item(),
-            tanfovy=tan_fov_y[i].item(),
-            bg=background_color[i],
-            scale_modifier=1.0,
-            viewmatrix=view_matrix[i],
-            projmatrix=full_projection[i],
-            sh_degree=degree,
-            campos=extrinsics[i, :3, 3],
-            prefiltered=False,  # This matches the original usage.
-            debug=False,
-        )
-        rasterizer = GaussianRasterizer(settings)
+        all_images = []
+        all_radii = []
+        all_mean_grads = []
+        for i in range(b):
+            # Set up a tensor for the gradients of the screen-space means.
+            mean_gradients = torch.zeros_like(gaussian_means[i], requires_grad=True)
+            try:
+                mean_gradients.retain_grad()
+            except Exception:
+                pass
 
-        row, col = torch.triu_indices(3, 3)
+            settings = GaussianRasterizationSettings(
+                image_height=h,
+                image_width=w,
+                tanfovx=tan_fov_x[i].item(),
+                tanfovy=tan_fov_y[i].item(),
+                bg=background_color[i],
+                scale_modifier=1.0,
+                viewmatrix=view_matrix[i],
+                projmatrix=full_projection[i],
+                sh_degree=degree,
+                campos=extrinsics[i, :3, 3],
+                prefiltered=False,  # This matches the original usage.
+                # TEMPORARY DIAGNOSTIC (see the splatt3r-lora-finetuning
+                # skill): flip back to False once the real crash site is
+                # found. Even with CUDA_LAUNCH_BLOCKING=1, the recurring
+                # illegal-memory-access crash keeps surfacing at whatever
+                # innocuous line happens to run next (an .item() call, a
+                # zeros_like -- neither should be capable of causing this
+                # on their own), which means the actual bad write is
+                # inside the extension's own CUDA kernels and doesn't
+                # trip an invalid-address fault until some later,
+                # unrelated allocation touches the same corrupted memory.
+                # debug=True makes CHECK_CUDA (thirdparty/diff-gaussian-
+                # rasterization-modified/cuda_rasterizer/auxiliary.h:188)
+                # synchronize and check for an error after every internal
+                # kernel launch, printing the exact __FILE__/__LINE__
+                # inside the extension's own .cu source where it actually
+                # happened, instead of deferring. This is what should
+                # finally answer "which kernel, and why" instead of
+                # continuing to guess from Python-side symptoms.
+                debug=True,
+            )
+            rasterizer = GaussianRasterizer(settings)
 
-        image, radii = rasterizer(
-            means3D=gaussian_means[i],
-            means2D=mean_gradients,
-            shs=shs[i] if use_sh else None,
-            colors_precomp=None if use_sh else shs[i, :, 0, :],
-            opacities=gaussian_opacities[i, ..., None],
-            cov3D_precomp=gaussian_covariances[i, :, row, col],
-        )
-        all_images.append(image)
-        all_radii.append(radii)
-    return torch.stack(all_images)
+            row, col = torch.triu_indices(3, 3)
+
+            image, radii = rasterizer(
+                means3D=gaussian_means[i],
+                means2D=mean_gradients,
+                shs=shs[i] if use_sh else None,
+                colors_precomp=None if use_sh else shs[i, :, 0, :],
+                opacities=gaussian_opacities[i, ..., None],
+                cov3D_precomp=gaussian_covariances[i, :, row, col],
+            )
+            all_images.append(image)
+            all_radii.append(radii)
+            all_mean_grads.append(mean_gradients)
+        if return_extras:
+            # INRIA's adaptive density control keys off the screen-space
+            # position gradient and the projected radius, both of which are
+            # produced here and were otherwise discarded. Returned only on
+            # request so the training path's signature and behaviour are
+            # untouched -- scripts/refine_gaussian_map.py is the only caller
+            # that needs them.
+            return torch.stack(all_images), torch.stack(all_radii), all_mean_grads
+        return torch.stack(all_images)
 
 
 def render_cuda_orthographic(

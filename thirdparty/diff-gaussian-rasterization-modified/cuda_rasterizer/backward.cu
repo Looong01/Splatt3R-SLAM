@@ -15,9 +15,60 @@
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
 
+// ---------------------------------------------------------------------------
+// Camera-pose gradients (Splatt3R-SLAM addition).
+//
+// Upstream returns gradients for the Gaussians only; the view/projection
+// matrices are constants inside the extension, which is why online systems
+// that refine camera poses photometrically (MonoGS et al.) all run modified
+// rasterizers. What is added here is dL/d(viewmatrix), dL/d(projmatrix) and
+// dL/d(campos) -- raw matrix gradients rather than a 6-DoF Lie increment, so
+// the pose parameterization stays in Python where autograd resolves it and no
+// convention is frozen into CUDA.
+//
+// Every intermediate needed already existed in these kernels and was being
+// discarded; the only new machinery is the reduction, since ~35 scalars are
+// accumulated over millions of Gaussians. A bare atomicAdd per thread would
+// serialize on those few addresses, so: warp shuffle -> shared memory ->
+// one global atomic per block per entry.
+//
+// NOTE on kernel structure: both kernels below used to `return` early for
+// out-of-range or non-visible Gaussians. A block-wide reduction cannot be
+// reached by only some threads (__syncthreads and full-mask shuffles require
+// all of them), so the early returns became an `active` predicate guarding the
+// per-Gaussian body while every thread still falls through to the reduction.
+// ---------------------------------------------------------------------------
+template <int N>
+__device__ inline void blockReduceAddArray(const float* val, float* out)
+{
+	__shared__ float s[N];
+	if (threadIdx.x < N)
+		s[threadIdx.x] = 0.0f;
+	__syncthreads();
+
+#pragma unroll
+	for (int k = 0; k < N; ++k)
+	{
+		float v = val[k];
+		for (int off = 16; off > 0; off >>= 1)
+			v += __shfl_down_sync(0xffffffffu, v, off);
+		if ((threadIdx.x & 31) == 0)
+			atomicAdd(&s[k], v);
+	}
+	__syncthreads();
+
+	if (threadIdx.x < N)
+		atomicAdd(out + threadIdx.x, s[threadIdx.x]);
+}
+
 // Backward pass for conversion of spherical harmonics to RGB for
 // each Gaussian.
-__device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, const bool* clamped, const glm::vec3* dL_dcolor, glm::vec3* dL_dmeans, glm::vec3* dL_dshs)
+// dL_dcampos_out: the SH view direction is (mean - campos), so the campos
+// gradient is exactly the negation of the mean gradient this produces. Under
+// the Gaussian-inverse-transform workaround this term was silently WRONG for
+// sh_degree >= 1 (the map moved but campos did not); here it is correct by
+// construction.
+__device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, const bool* clamped, const glm::vec3* dL_dcolor, glm::vec3* dL_dmeans, glm::vec3* dL_dshs, glm::vec3* dL_dcampos_out)
 {
 	// Compute intermediate values, as it is done during forward
 	glm::vec3 pos = means[idx];
@@ -86,7 +137,7 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 				float dRGBdsh11 = SH_C3[2] * x * (4.f * yy - zz - xx);
 				float dRGBdsh12 = SH_C3[3] * y * (2.f * yy - 3.f * zz - 3.f * xx);
 				float dRGBdsh13 = SH_C3[4] * z * (4.f * yy - zz - xx);
-				float dRGBdsh14 = SH_C3[5] * y * (zz - xx);
+				float dRGBdsh14 = SH_C3[5] * z * (zz - xx);
 				float dRGBdsh15 = SH_C3[6] * z * (zz - 3.f * xx);
 				dL_dsh[9] = dRGBdsh9 * dL_dRGB;
 				dL_dsh[10] = dRGBdsh10 * dL_dRGB;
@@ -102,7 +153,7 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 					SH_C3[2] * sh[11] * -2.f * zx +
 					SH_C3[3] * sh[12] * -3.f * 2.f * zy +
 					SH_C3[4] * sh[13] * (-3.f * zz + 4.f * yy - xx) +
-					SH_C3[5] * sh[14] * 2.f * zy +
+					SH_C3[5] * sh[14] * (3.f * zz - xx) +
 					SH_C3[6] * sh[15] * 3.f * (zz - xx));
 
 				dRGBdx += (
@@ -111,15 +162,14 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 					SH_C3[2] * sh[11] * (-3.f * xx + 4.f * yy - zz) +
 					SH_C3[3] * sh[12] * -3.f * 2.f * xy +
 					SH_C3[4] * sh[13] * -2.f * zx +
-					SH_C3[5] * sh[14] * -2.f * xy +
+					SH_C3[5] * sh[14] * -2.f * zx +
 					SH_C3[6] * sh[15] * -3.f * 2.f * zx);
 
 				dRGBdy += (
 					SH_C3[1] * sh[10] * zx +
 					SH_C3[2] * sh[11] * 4.f * 2.f * xy +
 					SH_C3[3] * sh[12] * 3.f * (2.f * yy - zz - xx) +
-					SH_C3[4] * sh[13] * 4.f * 2.f * zy +
-					SH_C3[5] * sh[14] * (zz - xx));
+					SH_C3[4] * sh[13] * 4.f * 2.f * zy);
 			}
 		}
 	}
@@ -132,10 +182,14 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 	// Account for normalization of direction
 	float3 dL_dmean = dnormvdv(float3{ dir_orig.x, dir_orig.y, dir_orig.z }, float3{ dL_ddir.x, dL_ddir.y, dL_ddir.z });
 
-	// Gradients of loss w.r.t. Gaussian means, but only the portion 
+	// Gradients of loss w.r.t. Gaussian means, but only the portion
 	// that is caused because the mean affects the view-dependent color.
 	// Additional mean gradient is accumulated in below methods.
 	dL_dmeans[idx] += glm::vec3(dL_dmean.x, dL_dmean.y, dL_dmean.z);
+
+	// dir_orig = pos - campos, so d/d(campos) = -d/d(pos) along this path.
+	if (dL_dcampos_out)
+		*dL_dcampos_out = glm::vec3(-dL_dmean.x, -dL_dmean.y, -dL_dmean.z);
 }
 
 // Backward version of INVERSE 2D covariance matrix computation
@@ -150,11 +204,22 @@ __global__ void computeCov2DCUDA(int P,
 	const float* view_matrix,
 	const float* dL_dconics,
 	float3* dL_dmeans,
-	float* dL_dcov)
+	float* dL_dcov,
+	float* dL_dviewmatrix)
 {
 	auto idx = cg::this_grid().thread_rank();
-	if (idx >= P || !(radii[idx] > 0))
-		return;
+	// Per-thread accumulator for this block's share of dL/d(viewmatrix).
+	// Laid out exactly like the incoming buffer: entry [4*c + r] is row r,
+	// column c of the world->camera transform (see transformPoint4x3 in
+	// auxiliary.h), and [12 + r] is its translation.
+	float dL_dview_local[16];
+#pragma unroll
+	for (int k = 0; k < 16; ++k)
+		dL_dview_local[k] = 0.0f;
+
+	const bool active = (idx < P) && (radii[idx] > 0);
+	if (active)
+	{
 
 	// Reading location of 3D covariance for this Gaussian
 	const float* cov3D = cov3Ds + 6 * idx;
@@ -267,10 +332,43 @@ __global__ void computeCov2DCUDA(int P,
 	// t = transformPoint4x3(mean, view_matrix);
 	float3 dL_dmean = transformVec4x3Transpose({ dL_dtx, dL_dty, dL_dtz }, view_matrix);
 
-	// Gradients of loss w.r.t. Gaussian means, but only the portion 
+	// Gradients of loss w.r.t. Gaussian means, but only the portion
 	// that is caused because the mean affects the covariance matrix.
 	// Additional mean gradient is accumulated in BACKWARD::preprocess.
 	dL_dmeans[idx] = dL_dmean;
+
+	// ---- dL/d(viewmatrix), from the two paths that consume it here ----
+	// Path 1, the camera-frame point: t[r] = sum_c M[4c+r]*mean[c] + M[12+r].
+	const float dL_dt[3] = { dL_dtx, dL_dty, dL_dtz };
+	const float m_arr[3] = { mean.x, mean.y, mean.z };
+#pragma unroll
+	for (int r = 0; r < 3; ++r)
+	{
+#pragma unroll
+		for (int c = 0; c < 3; ++c)
+			dL_dview_local[4 * c + r] += dL_dt[r] * m_arr[c];
+		dL_dview_local[12 + r] += dL_dt[r];
+	}
+
+	// Path 2, the covariance Jacobian: T[c][r] = sum_k W[k][r] * J[c][k] with
+	// W[k][r] = M[4r+k], so dL/dM[4r+k] += sum_c dL_dT[c][r] * J[c][k].
+	// J is sparse -- only J[0][0], J[0][2], J[1][1], J[1][2] are nonzero --
+	// which collapses the k loop to the three terms below.
+	const float dL_dT[2][3] = { { dL_dT00, dL_dT01, dL_dT02 },
+	                            { dL_dT10, dL_dT11, dL_dT12 } };
+#pragma unroll
+	for (int r = 0; r < 3; ++r)
+	{
+		dL_dview_local[4 * r + 0] += dL_dT[0][r] * J[0][0];
+		dL_dview_local[4 * r + 1] += dL_dT[1][r] * J[1][1];
+		dL_dview_local[4 * r + 2] += dL_dT[0][r] * J[0][2] + dL_dT[1][r] * J[1][2];
+	}
+
+	}  // if (active)
+
+	// Every thread participates: the reduction is block-wide.
+	if (dL_dviewmatrix)
+		blockReduceAddArray<16>(dL_dview_local, dL_dviewmatrix);
 }
 
 // Backward pass for the conversion of scale and rotation to a 
@@ -361,11 +459,22 @@ __global__ void preprocessCUDA(
 	float* dL_dcov3D,
 	float* dL_dsh,
 	glm::vec3* dL_dscale,
-	glm::vec4* dL_drot)
+	glm::vec4* dL_drot,
+	float* dL_dprojmatrix,
+	glm::vec3* dL_dcampos)
 {
 	auto idx = cg::this_grid().thread_rank();
-	if (idx >= P || !(radii[idx] > 0))
-		return;
+	// Same layout as the incoming projmatrix buffer; entries 2, 6, 10, 14
+	// (the m_hom.z row) stay zero because depth is used only for sorting.
+	float dL_dproj_local[16];
+#pragma unroll
+	for (int k = 0; k < 16; ++k)
+		dL_dproj_local[k] = 0.0f;
+	glm::vec3 dL_dcampos_local(0.0f);
+
+	const bool active = (idx < P) && (radii[idx] > 0);
+	if (active)
+	{
 
 	float3 m = means[idx];
 
@@ -386,13 +495,43 @@ __global__ void preprocessCUDA(
 	// of cov2D and following SH conversion also affects it.
 	dL_dmeans[idx] += dL_dmean;
 
+	// ---- dL/d(projmatrix) ----
+	// m_hom[k] = sum_c proj[4c+k]*m[c] + proj[12+k], and only x, y and w reach
+	// the loss (z is depth, used for sorting only). p_proj = (x,y) * m_w with
+	// m_w = 1/(w + eps), which gives the three seeds below; mul1/mul2 are
+	// m_hom.x*m_w^2 and m_hom.y*m_w^2, already computed above for dL_dmean.
+	{
+		const float dL_dm_hom_x = dL_dmean2D[idx].x * m_w;
+		const float dL_dm_hom_y = dL_dmean2D[idx].y * m_w;
+		const float dL_dm_hom_w = -(mul1 * dL_dmean2D[idx].x + mul2 * dL_dmean2D[idx].y);
+		const float m_arr[4] = { m.x, m.y, m.z, 1.0f };
+#pragma unroll
+		for (int c = 0; c < 4; ++c)
+		{
+			dL_dproj_local[4 * c + 0] += dL_dm_hom_x * m_arr[c];
+			dL_dproj_local[4 * c + 1] += dL_dm_hom_y * m_arr[c];
+			dL_dproj_local[4 * c + 3] += dL_dm_hom_w * m_arr[c];
+		}
+	}
+
 	// Compute gradient updates due to computing colors from SHs
 	if (shs)
-		computeColorFromSH(idx, D, M, (glm::vec3*)means, *campos, shs, clamped, (glm::vec3*)dL_dcolor, (glm::vec3*)dL_dmeans, (glm::vec3*)dL_dsh);
+		computeColorFromSH(idx, D, M, (glm::vec3*)means, *campos, shs, clamped, (glm::vec3*)dL_dcolor, (glm::vec3*)dL_dmeans, (glm::vec3*)dL_dsh, &dL_dcampos_local);
 
 	// Compute gradient updates due to computing covariance from scale/rotation
 	if (scales)
 		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
+
+	}  // if (active)
+
+	// Block-wide reductions -- every thread must reach these.
+	if (dL_dprojmatrix)
+		blockReduceAddArray<16>(dL_dproj_local, dL_dprojmatrix);
+	if (dL_dcampos)
+	{
+		const float c_local[3] = { dL_dcampos_local.x, dL_dcampos_local.y, dL_dcampos_local.z };
+		blockReduceAddArray<3>(c_local, (float*)dL_dcampos);
+	}
 }
 
 // Backward version of the rendering procedure.
@@ -578,12 +717,15 @@ void BACKWARD::preprocess(
 	float* dL_dcov3D,
 	float* dL_dsh,
 	glm::vec3* dL_dscale,
-	glm::vec4* dL_drot)
+	glm::vec4* dL_drot,
+	float* dL_dviewmatrix,
+	float* dL_dprojmatrix,
+	glm::vec3* dL_dcampos)
 {
-	// Propagate gradients for the path of 2D conic matrix computation. 
-	// Somewhat long, thus it is its own kernel rather than being part of 
+	// Propagate gradients for the path of 2D conic matrix computation.
+	// Somewhat long, thus it is its own kernel rather than being part of
 	// "preprocess". When done, loss gradient w.r.t. 3D means has been
-	// modified and gradient w.r.t. 3D covariance matrix has been computed.	
+	// modified and gradient w.r.t. 3D covariance matrix has been computed.
 	computeCov2DCUDA << <(P + 255) / 256, 256 >> > (
 		P,
 		means3D,
@@ -596,7 +738,8 @@ void BACKWARD::preprocess(
 		viewmatrix,
 		dL_dconic,
 		(float3*)dL_dmean3D,
-		dL_dcov3D);
+		dL_dcov3D,
+		dL_dviewmatrix);
 
 	// Propagate gradients for remaining steps: finish 3D mean gradients,
 	// propagate color gradients to SH (if desireD), propagate 3D covariance
@@ -618,7 +761,9 @@ void BACKWARD::preprocess(
 		dL_dcov3D,
 		dL_dsh,
 		dL_dscale,
-		dL_drot);
+		dL_drot,
+		dL_dprojmatrix,
+		dL_dcampos);
 }
 
 void BACKWARD::render(

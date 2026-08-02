@@ -1,4 +1,10 @@
 #!/bin/bash
+# Download ETH3D SLAM benchmark training sequences (monocular).
+# Source: https://www.eth3d.net/slam_datasets
+# Each <seq>_mono.zip contains <seq>/{rgb.txt, calibration.txt, groundtruth.txt, rgb/*.png}
+# which is exactly what splatt3r_slam's ETH3DDataset expects.
+set -u
+
 dest="datasets/eth3d/train"
 mkdir -p "$dest"
 
@@ -67,9 +73,23 @@ sequences=(
 )
 
 for seq in "${sequences[@]}"; do
-    file_name=$(basename "$url")
-    echo "Downloading https://www.eth3d.net/data/slam/datasets/${seq}_mono.zip..."
-    wget "https://www.eth3d.net/data/slam/datasets/${seq}_mono.zip" -O "$dest/${seq}_mono.zip"
-    echo "Unzipping $seq..."
-    unzip "${dest}/${seq}_mono.zip" -d "$dest"
+    if [ -f "$dest/$seq/rgb.txt" ]; then
+        echo "[SKIP] $seq already extracted"
+        continue
+    fi
+    url="https://www.eth3d.net/data/slam/datasets/${seq}_mono.zip"
+    echo "Downloading $seq ..."
+    if ! wget -c "$url" -O "$dest/${seq}_mono.zip"; then
+        echo "[FAIL] download failed: $seq (skipping)"
+        rm -f "$dest/${seq}_mono.zip"
+        continue
+    fi
+    echo "Unzipping $seq ..."
+    if unzip -o "$dest/${seq}_mono.zip" -d "$dest"; then
+        rm -f "$dest/${seq}_mono.zip"
+    else
+        echo "[FAIL] unzip failed: $seq (zip kept at $dest/${seq}_mono.zip)"
+    fi
 done
+
+echo "Done. Extracted sequences are in $dest"

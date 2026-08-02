@@ -10,12 +10,12 @@ import time
 import warnings
 import cv2
 import lietorch
+import numpy as np
 import torch
 import tqdm
 import yaml
 import sys
 import os
-from typing import Optional
 
 # torch >= 2.6 defaults torch.load to weights_only=True, which rejects the
 # pickled objects (omegaconf DictConfig, argparse Namespace, faiss indices)
@@ -42,7 +42,6 @@ from splatt3r_slam.frame import (
     Mode,
     SharedKeyframes,
     SharedStates,
-    SharedGaussians,
     create_frame,
 )
 from splatt3r_slam.splatt3r_utils import (
@@ -50,34 +49,13 @@ from splatt3r_slam.splatt3r_utils import (
     load_retriever,
     splatt3r_inference_mono,
     splatt3r_render,
-    gaussians_to_world,
 )
 from splatt3r_slam.multiprocess_utils import new_queue, try_get_msg
+from splatt3r_slam.refiner import RefinedMapSnapshot, SupervisionFrames, run_refiner
+from splatt3r_slam.retrieval_dump import RetrievalFeatureDumper
 from splatt3r_slam.tracker import FrameTracker
 from splatt3r_slam.visualization import WindowMsg, run_visualization
 import torch.multiprocessing as mp
-
-
-def should_append_gaussians(
-    add_new_kf: bool,
-    frame_idx: int,
-    current_T_WC: lietorch.Sim3,
-    last_append_T_WC: Optional[lietorch.Sim3],
-    last_append_frame_idx: int,
-    min_translation: float,
-    min_frame_gap: int,
-) -> bool:
-    if add_new_kf:
-        return True
-    if last_append_T_WC is None:
-        return True
-    if (frame_idx - last_append_frame_idx) < min_frame_gap:
-        return False
-
-    t_cur = current_T_WC.matrix()[0, :3, 3]
-    t_last = last_append_T_WC.matrix()[0, :3, 3]
-    translation = torch.linalg.norm(t_cur - t_last).item()
-    return translation >= min_translation
 
 
 def relocalization(frame, keyframes, factor_graph, retrieval_database):
@@ -161,12 +139,20 @@ def run_backend(cfg, model, states, keyframes, K):
         for j in range(min(n_consec, idx)):
             kf_idx.append(idx - 1 - j)
         frame = keyframes[idx]
+        # NOTE: update() must always be called, even with no_loop_closure on:
+        # besides querying candidates it inserts this keyframe into the
+        # retrieval database (add_after_query=True), which relocalization
+        # (Mode.RELOC) depends on. We only discard the returned loop
+        # candidates so no loop-closure edges enter the factor graph.
         retrieval_inds = retrieval_database.update(
             frame,
             add_after_query=True,
             k=config["retrieval"]["k"],
             min_thresh=config["retrieval"]["min_thresh"],
         )
+        # config.get() fallback: old config yamls have no such key.
+        if config.get("no_loop_closure", False):
+            retrieval_inds = []
         kf_idx += retrieval_inds
 
         lc_inds = set(retrieval_inds)
@@ -206,6 +192,10 @@ if __name__ == "__main__":
     datetime_now = str(datetime.datetime.now()).replace(" ", "_")
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dump-keyframe-gaussians", action="store_true",
+                        help="also write <seq>_kfgauss.pt: each keyframe's "
+                             "camera-space Gaussians and current pose, which "
+                             "the baked .ply cannot express")
     parser.add_argument("--dataset", default="datasets/tum/rgbd_dataset_freiburg1_desk")
     parser.add_argument("--config", default="config/base.yaml")
     parser.add_argument("--save-as", default="default")
@@ -215,6 +205,32 @@ if __name__ == "__main__":
         "--checkpoint",
         default=None,
         help="Path to Splatt3R checkpoint (downloads if not provided)",
+    )
+    parser.add_argument(
+        "--map-keyframe-stride",
+        type=int,
+        default=1,
+        help="bake only every Nth keyframe into the exported Gaussian map. "
+             "Used to measure the amortized pipeline at a reduced view count; "
+             "does not affect tracking or the trajectory.",
+    )
+    parser.add_argument(
+        "--head",
+        default=None,
+        help="Path to a fine-tuned Gaussian-head state_dict (e.g. "
+        "checkpoints/head_only/tum/head_best.pt) to load on top of "
+        "--checkpoint. This is the fine-tuning route measured to beat the "
+        "released weights; the encoder is left untouched. See the "
+        "splatt3r-finetuning-experiments skill.",
+    )
+    parser.add_argument(
+        "--lora",
+        default=None,
+        help="Path to a trained LoRA adapter directory (e.g. "
+        "checkpoints/lora/<scene>/) to hot-load on top of --checkpoint. "
+        "NEGATIVE RESULT: this route measured 49%% worse than the released "
+        "checkpoint; kept only to reproduce that. Prefer --head. "
+        "Requires `pip install peft`.",
     )
     parser.add_argument(
         "--render-gaussians",
@@ -235,14 +251,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max-gaussians",
         type=int,
-        default=4 * 1024 * 1024,
-        help="Max number of Gaussians in shared buffer (default: 4194304)",
+        default=16 * 1024 * 1024,
+        help="Target Gaussian render budget across all keyframes (default: 16777216). "
+        "The live per-keyframe baker coarsens its stride to stay under this. "
+        "Raise further for a denser map at the cost of more VRAM/render time.",
     )
     parser.add_argument(
         "--spatial-stride",
         type=int,
-        default=4,
-        help="Spatial stride for subsampling Gaussians per frame (default: 4, stride=1 means no subsampling)",
+        default=1,
+        help="Spatial stride for subsampling Gaussians per frame (default: 1, full "
+        "per-pixel density). WARNING: this setting -- and stride=2 too, just less "
+        "reliably -- has been observed to crash the vendored CUDA gaussian "
+        "rasterizer with an illegal memory access once enough Gaussians accumulate. "
+        "The 'spatial stride' GUI slider adjusts this live if you hit instability; "
+        "see the splatt3r-gaussian-map skill for what's been tried.",
     )
     parser.add_argument(
         "--depth-max-percentile",
@@ -265,10 +288,80 @@ if __name__ == "__main__":
         help="Remove Gaussians at pixels with pointmap confidence below this (default: 1.5). "
         "Set 0 to disable confidence filtering.",
     )
+    parser.add_argument(
+        "--no-loop-closure",
+        action="store_true",
+        help="Disable loop-closure edges produced by retrieval-database candidate "
+        "queries in the backend pose graph. Relocalization (reloc) still queries "
+        "the database and is unaffected. Intended for ablation experiments.",
+    )
+    parser.add_argument(
+        "--dump-retrieval-features",
+        default=None,
+        metavar="DIR",
+        help="Dump each keyframe's retrieval feature (frame.feat, the raw "
+        "Splatt3R encoder feature fed to the retrieval head) to DIR/<seq_name>/ "
+        "as feat_<kf_idx>.npy + metadata.jsonl, for refitting the retrieval "
+        "whitening/codebook.",
+    )
+    parser.add_argument(
+        "--frame-timing",
+        default=None,
+        metavar="CSV",
+        help="Write per-frame wall-clock timing (mode, tracking ms, backend-wait "
+             "ms, total iteration ms) to CSV, for GPU-contention measurement "
+             "(experiment (g) in the splatt3r-finetuning-experiments skill). "
+             "The INIT frame is not logged.",
+    )
+    parser.add_argument(
+        "--refiner",
+        action="store_true",
+        help="Run the online map-refinement process (P1 stage 4): optimizes a "
+             "keyframe-local Gaussian map in the background, supervised by "
+             "anchor-carried tracked frames, and writes <seq>_refined.ply at "
+             "the end. Requires use_calib (a fixed K to render through).",
+    )
+    parser.add_argument(
+        "--refiner-duty",
+        type=float,
+        default=0.25,
+        help="Refiner GPU duty cycle (default 0.25). An unthrottled refiner "
+             "doubles tracker latency on one card (skill 15.2); the process "
+             "sleeps between iterations to hold this share of its unthrottled "
+             "rate. Steps are dropped, never frames.",
+    )
+    parser.add_argument(
+        "--refiner-gpu",
+        type=int,
+        default=-1,
+        help="GPU index the refiner COMPUTES on (default -1 = same card as "
+             "SLAM). (g) measured cross-GPU contention as noise, so on a "
+             "two-card box '--refiner-gpu 1' (launched with both cards "
+             "visible) moves the render loop off the tracking card; only "
+             "small per-keyframe copies still touch it.",
+    )
+    parser.add_argument(
+        "--refiner-dedup-voxel",
+        type=float,
+        default=0.0,
+        help="Voxel edge (m) for the de-clustering lifecycle (skill 15.7): "
+             "when the refined map exceeds --refiner-max-gaussians after a "
+             "keyframe injection, shared voxels keep only the earliest "
+             "keyframe's Gaussians. 0 disables.",
+    )
+    parser.add_argument(
+        "--refiner-max-gaussians",
+        type=int,
+        default=4_000_000,
+        help="Map size that triggers a dedup pass (default 4M).",
+    )
 
     args = parser.parse_args()
 
     load_config(args.config)
+    # Injected before the backend process is spawned below, so run_backend
+    # picks it up via set_global_config(cfg).
+    config["no_loop_closure"] = args.no_loop_closure
     print(args.dataset)
     print(config)
 
@@ -292,31 +385,59 @@ if __name__ == "__main__":
             intrinsics["calibration"],
         )
 
-    keyframes = SharedKeyframes(manager, h, w)
+    # Load Splatt3R model instead of MASt3R. Loaded before SharedKeyframes so
+    # we know the model's SH degree and can size the per-keyframe local
+    # Gaussian storage buffer correctly (see gs_sh_dim below).
+    print("Loading Splatt3R model...")
+    model = load_splatt3r(path=args.checkpoint, device=device,
+                          lora_path=args.lora, head_path=args.head)
+    model.share_memory()
+    gs_sh_dim = getattr(model.encoder, "sh_degree", 1)
+
+    keyframes = SharedKeyframes(manager, h, w, gs_sh_dim=gs_sh_dim)
     states = SharedStates(manager, h, w)
-    shared_gaussians = SharedGaussians(manager, max_gaussians=args.max_gaussians)
+
+    # Refiner-side shared structures are created before the viz process so
+    # the viewer can subscribe to the refined-map snapshot channel from the
+    # start (the refiner process itself spawns after the backend).
+    sup_frames = None
+    snapshot = None
+    if args.refiner:
+        sup_frames = SupervisionFrames(manager, h, w)
+        snapshot = RefinedMapSnapshot(
+            manager, args.refiner_max_gaussians + 1_000_000)
 
     if not args.no_viz:
         viz = mp.Process(
             target=run_visualization,
-            args=(config, states, keyframes, shared_gaussians, main2viz, viz2main),
+            args=(config, states, keyframes, main2viz, viz2main),
             kwargs=dict(
-                spatial_stride=args.spatial_stride, max_gaussians=args.max_gaussians
+                spatial_stride=args.spatial_stride,
+                max_gaussians=args.max_gaussians,
+                depth_max_percentile=args.depth_max_percentile,
+                max_scale=args.max_scale,
+                min_confidence=args.min_confidence,
+                keyframe_stride=args.map_keyframe_stride,
+                refined_snapshot=snapshot,
             ),
         )
         viz.start()
-
-    # Load Splatt3R model instead of MASt3R
-    print("Loading Splatt3R model...")
-    model = load_splatt3r(path=args.checkpoint, device=device)
-    model.share_memory()
 
     has_calib = dataset.has_calib()
     use_calib = config["use_calib"]
 
     if use_calib and not has_calib:
-        print("[Warning] No calibration provided for this dataset!")
-        sys.exit(0)
+        # This check runs AFTER viz.start() above, so a bare sys.exit()
+        # here would leave the viz process running forever (it does not
+        # act on Mode.TERMINATED on its own) -- a batch/eval script would
+        # hang. Tear it down explicitly, and exit nonzero: this is a
+        # misconfiguration, and exiting 0 makes shell `&&` chains and CI
+        # treat a failed run as successful.
+        print("[Error] No calibration provided for this dataset!", file=sys.stderr)
+        if not args.no_viz:
+            viz.terminate()
+            viz.join()
+        sys.exit(1)
     K = None
     if use_calib:
         K = torch.from_numpy(dataset.camera_intrinsics.K_frame).to(
@@ -327,242 +448,424 @@ if __name__ == "__main__":
     # remove the trajectory from the previous run
     if dataset.save_results:
         save_dir, seq_name = eval.prepare_savedir(args, dataset)
-        traj_file = save_dir / f"{seq_name}.txt"
-        recon_file = save_dir / f"{seq_name}.ply"
-        if traj_file.exists():
-            traj_file.unlink()
-        if recon_file.exists():
-            recon_file.unlink()
+        # Include the Gaussian map: if this run ends up not writing one
+        # (crash, or nothing survived filtering), a stale file from a
+        # previous run would otherwise sit next to freshly-written
+        # trajectory/reconstruction files and look current.
+        for stale in (
+            save_dir / f"{seq_name}.txt",
+            save_dir / f"{seq_name}.ply",
+            save_dir / f"{seq_name}_gaussians.ply",
+            save_dir / f"{seq_name}_refined.ply",
+        ):
+            if stale.exists():
+                stale.unlink()
 
     tracker = FrameTracker(model, keyframes, device)
+    frame_pose_log = eval.FramePoseLog()
     last_msg = WindowMsg(
         spatial_stride=args.spatial_stride, max_gaussians=args.max_gaussians
     )
 
-    # Gaussian rendering setup
+    # Optional per-keyframe retrieval-feature dump (main process, at the two
+    # keyframes.append() sites below). seq_name matches prepare_savedir().
+    retrieval_dumper = None
+    if args.dump_retrieval_features:
+        retrieval_dumper = RetrievalFeatureDumper(
+            args.dump_retrieval_features, dataset.dataset_path.stem
+        )
+
+    # Per-frame Gaussian-rendered PNG preview (novel-view render from the
+    # frame's own just-computed local Gaussians -- independent of the
+    # accumulated map, which the viz process now owns entirely).
     render_gaussians = args.render_gaussians and not args.no_render_gaussians
-    spatial_stride = args.spatial_stride
-    # Avoid repeatedly appending near-identical Gaussians from almost the same view.
-    gs_append_min_translation = 0.12  # meters
-    gs_append_min_frame_gap = 3  # frames
-    last_gs_append_T_WC = None
-    last_gs_append_frame_idx = -(10**9)
     render_dir = None
     if render_gaussians:
         render_dir = pathlib.Path(args.render_dir)
         render_dir.mkdir(exist_ok=True, parents=True)
         print(f"[Gaussian Rendering] Enabled. Saving to {render_dir}")
     print(
-        f"[Gaussians] max_gaussians={args.max_gaussians}, spatial_stride={spatial_stride}"
+        f"[Gaussians] map baking now lives in the viz process "
+        f"(max_gaussians={args.max_gaussians}, spatial_stride={args.spatial_stride}, "
+        f"depth_max_pct={args.depth_max_percentile}, max_scale={args.max_scale}, "
+        f"min_conf={args.min_confidence})"
     )
-    print(
-        f"[Gaussians] splash filter: depth_max_pct={args.depth_max_percentile}, "
-        f"max_scale={args.max_scale}, min_conf={args.min_confidence}"
-    )
-
-    # Enable gaussian splatting visualization whenever the viz window is active
-    enable_gs_viz = not args.no_viz
 
     backend = mp.Process(target=run_backend, args=(config, model, states, keyframes, K))
     backend.start()
+
+    # Online map refinement (P1 stage 4): a third worker process optimizing a
+    # keyframe-local map against anchor-carried supervision. Needs a fixed K
+    # to render through, so it is calib-only.
+    refiner = None
+    sup_rng = np.random.default_rng(1)
+    if args.refiner:
+        if K is None:
+            print("[refiner] requires use_calib (fixed intrinsics); disabled",
+                  file=sys.stderr)
+        else:
+            refined_path = None
+            if dataset.save_results:
+                _sd, _sn = eval.prepare_savedir(args, dataset)
+                refined_path = str(_sd / f"{_sn}_refined.ply")
+            refiner_device = (
+                f"cuda:{args.refiner_gpu}" if args.refiner_gpu >= 0 else None)
+            refiner = mp.Process(
+                target=run_refiner,
+                args=(config, states, keyframes, sup_frames, K.cpu().numpy()),
+                kwargs=dict(save_path=refined_path,
+                            duty_cycle=args.refiner_duty,
+                            device=refiner_device,
+                            dedup_voxel=args.refiner_dedup_voxel,
+                            max_gaussians=args.refiner_max_gaussians,
+                            snapshot=snapshot),
+            )
+            refiner.start()
+            print(f"[refiner] started (duty_cycle={args.refiner_duty}, "
+                  f"device={refiner_device or 'same'}, save={refined_path})")
 
     i = 0
     fps_timer = time.time()
 
     frames = []
 
-    while True:
-        mode = states.get_mode()
-        msg = try_get_msg(viz2main)
-        last_msg = msg if msg is not None else last_msg
+    # Set to True only once the normal teardown below (drain -> TERMINATED
+    # -> backend.join -> save -> viz.join) has completed. The finally
+    # block uses it to tell a clean exit apart from an exception unwinding
+    # the main loop (KeyboardInterrupt, or e.g. an IndexError from the
+    # frame pipeline): only the latter needs best-effort process cleanup,
+    # otherwise the backend/viz processes would be left running as
+    # orphans.
+    clean_exit = False
+    timing_f = open(args.frame_timing, "w") if args.frame_timing else None
+    if timing_f is not None:
+        timing_f.write("frame,timestamp,mode,track_ms,backend_wait_ms,iter_ms\n")
+    try:
+        while True:
+            # Watchdog: if the backend process dies (e.g. OOM in the retriever),
+            # fail fast instead of blocking forever on queues it will never
+            # drain -- the finally block below then reaps any remaining
+            # children instead of leaving GPU-memory-holding orphans.
+            if not backend.is_alive():
+                raise RuntimeError("backend process died unexpectedly")
+            mode = states.get_mode()
+            msg = try_get_msg(viz2main)
+            last_msg = msg if msg is not None else last_msg
 
-        # Update runtime params from GUI sliders
-        spatial_stride = last_msg.spatial_stride
-        shared_gaussians.max_gaussians = last_msg.max_gaussians
+            if last_msg.is_terminated:
+                states.set_mode(Mode.TERMINATED)
+                break
 
-        if last_msg.is_terminated:
-            states.set_mode(Mode.TERMINATED)
-            break
+            if last_msg.is_paused and not last_msg.next:
+                states.pause()
+                time.sleep(0.01)
+                continue
 
-        if last_msg.is_paused and not last_msg.next:
-            states.pause()
-            time.sleep(0.01)
-            continue
+            if not last_msg.is_paused:
+                states.unpause()
 
-        if not last_msg.is_paused:
-            states.unpause()
+            if i == len(dataset):
+                states.set_mode(Mode.TERMINATED)
+                break
 
-        if i == len(dataset):
-            states.set_mode(Mode.TERMINATED)
-            break
+            timestamp, img = dataset[i]
+            t_iter0 = time.perf_counter()
+            t_track = 0.0
+            t_wait = 0.0
+            if save_frames:
+                frames.append(img)
 
-        timestamp, img = dataset[i]
-        if save_frames:
-            frames.append(img)
-
-        # get frames last camera pose
-        T_WC = (
-            lietorch.Sim3.Identity(1, device=device)
-            if i == 0
-            else states.get_frame().T_WC
-        )
-        frame = create_frame(i, img, T_WC, img_size=dataset.img_size, device=device)
-
-        if mode == Mode.INIT:
-            # Initialize via mono inference with Splatt3R
-            X_init, C_init = splatt3r_inference_mono(model, frame)
-            frame.update_pointmap(X_init, C_init)
-            keyframes.append(frame)
-            states.queue_global_optimization(len(keyframes) - 1)
-            states.set_mode(Mode.TRACKING)
-            states.set_frame(frame)
-
-            # --- Gaussian Splatting: accumulate world-space Gaussians ---
-            if enable_gs_viz or render_gaussians:
-                gs_world = gaussians_to_world(
-                    frame,
-                    include_cross=False,
-                    spatial_stride=spatial_stride,
-                    depth_max_percentile=args.depth_max_percentile,
-                    max_scale=args.max_scale,
-                    min_confidence=args.min_confidence,
-                )
-                if gs_world is not None:
-                    means_w, cov_w, colors_w, opas_w = gs_world
-                    if enable_gs_viz:
-                        shared_gaussians.append(
-                            means_w,
-                            cov_w,
-                            colors_w,
-                            opas_w,
-                            kf_idx=len(keyframes) - 1,
-                            opacity_threshold=0.3,
-                        )
-                        last_gs_append_T_WC = frame.T_WC
-                        last_gs_append_frame_idx = i
-                    if render_gaussians:
-                        rendered = splatt3r_render(model, frame, frame, K=K)
-                        if rendered is not None:
-                            rendered_img = (
-                                rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
-                            )
-                            rendered_np = (rendered_img.numpy() * 255).astype("uint8")
-                            rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
-                            cv2.imwrite(
-                                str(render_dir / f"gs_init_{i:06d}.png"), rendered_bgr
-                            )
-
-            i += 1
-            continue
-
-        if mode == Mode.TRACKING:
-            add_new_kf, match_info, try_reloc = tracker.track(frame)
-            if try_reloc:
-                states.set_mode(Mode.RELOC)
-            states.set_frame(frame)
-
-            should_append = should_append_gaussians(
-                add_new_kf=add_new_kf,
-                frame_idx=i,
-                current_T_WC=frame.T_WC,
-                last_append_T_WC=last_gs_append_T_WC,
-                last_append_frame_idx=last_gs_append_frame_idx,
-                min_translation=gs_append_min_translation,
-                min_frame_gap=gs_append_min_frame_gap,
+            # get frames last camera pose
+            T_WC = (
+                lietorch.Sim3.Identity(1, device=device)
+                if i == 0
+                else states.get_frame().T_WC
             )
+            frame = create_frame(i, img, T_WC, img_size=dataset.img_size, device=device)
 
-            # --- Gaussian Splatting: accumulate world-space Gaussians every tracked frame ---
-            if (enable_gs_viz or render_gaussians) and not try_reloc and should_append:
-                gs_world = gaussians_to_world(
-                    frame,
-                    include_cross=False,
-                    spatial_stride=spatial_stride,
-                    depth_max_percentile=args.depth_max_percentile,
-                    max_scale=args.max_scale,
-                    min_confidence=args.min_confidence,
-                )
-                if gs_world is not None:
-                    means_w, cov_w, colors_w, opas_w = gs_world
-                    if enable_gs_viz:
-                        shared_gaussians.append(
-                            means_w,
-                            cov_w,
-                            colors_w,
-                            opas_w,
-                            kf_idx=len(keyframes),
-                            opacity_threshold=0.3,
-                        )
-                        last_gs_append_T_WC = frame.T_WC
-                        last_gs_append_frame_idx = i
-            if render_gaussians and not try_reloc:
-                keyframe = keyframes.last_keyframe()
-                if keyframe is not None:
-                    rendered = splatt3r_render(
-                        model,
-                        frame,
-                        keyframe,
-                        K=K,
-                        target_T_WC=frame.T_WC,
-                    )
+            if mode == Mode.INIT:
+                # Initialize via mono inference with Splatt3R
+                X_init, C_init = splatt3r_inference_mono(model, frame)
+                frame.update_pointmap(X_init, C_init)
+                keyframes.append(frame)
+                frame_pose_log.record_keyframe(i, len(keyframes) - 1)
+                if sup_frames is not None:
+                    sup_frames.offer(
+                        (frame.uimg * 255).round().to(torch.uint8),
+                        len(keyframes) - 1,
+                        torch.tensor([0., 0., 0., 0., 0., 0., 1., 1.]),
+                        sup_rng)
+                states.queue_global_optimization(len(keyframes) - 1)
+                if retrieval_dumper is not None:
+                    retrieval_dumper.dump(len(keyframes) - 1, frame, timestamp)
+                states.set_mode(Mode.TRACKING)
+                states.set_frame(frame)
+
+                # Local (camera-space) Gaussians were just written into
+                # frame.gaussian_pred by splatt3r_inference_mono() above, and
+                # keyframes.append() (via SharedKeyframes.__setitem__) already
+                # persisted them into the keyframe's shared-memory slot. The
+                # viz process bakes them to world space itself, live, using
+                # this keyframe's current T_WC -- nothing more to do here.
+                if render_gaussians:
+                    rendered = splatt3r_render(model, frame, frame, K=K)
                     if rendered is not None:
                         rendered_img = rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
                         rendered_np = (rendered_img.numpy() * 255).astype("uint8")
                         rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
                         cv2.imwrite(
-                            str(render_dir / f"gs_track_{i:06d}.png"), rendered_bgr
+                            str(render_dir / f"gs_init_{i:06d}.png"), rendered_bgr
                         )
 
-        elif mode == Mode.RELOC:
-            X, C = splatt3r_inference_mono(model, frame)
-            frame.update_pointmap(X, C)
-            states.set_frame(frame)
-            states.queue_reloc()
-            # In single threaded mode, make sure relocalization happen for every frame
-            while config["single_thread"]:
-                with states.lock:
-                    if states.reloc_sem.value == 0:
-                        break
-                time.sleep(0.01)
+                i += 1
+                continue
 
+            if mode == Mode.TRACKING:
+                _t = time.perf_counter()
+                add_new_kf, match_info, try_reloc = tracker.track(frame)
+                t_track += time.perf_counter() - _t
+                if try_reloc:
+                    states.set_mode(Mode.RELOC)
+                states.set_frame(frame)
+
+                # Every tracked frame's pose, kept relative to the keyframe it
+                # was tracked against (see FramePoseLog). Frames that go on to
+                # become keyframes are re-tagged below, since their own pose
+                # then gets corrected by the backend and is the better source.
+                if not try_reloc:
+                    anchor_rel = frame_pose_log.record(i, keyframes, frame.T_WC)
+                    # The same anchor-relative pair feeds the refiner's
+                    # supervision store: its poses re-compose through the
+                    # anchor's CURRENT pose at sample time, so supervision
+                    # follows loop closures (skill 15.5).
+                    if sup_frames is not None and anchor_rel is not None:
+                        sup_frames.offer(
+                            (frame.uimg * 255).round().to(torch.uint8),
+                            anchor_rel[0], anchor_rel[1], sup_rng)
+
+                # If this frame becomes a keyframe, tracker.track() already
+                # attached its local-space gaussian_pred; keyframes.append()
+                # below persists it. Non-keyframe tracked frames never enter
+                # the map (only real keyframe poses are ever corrected by the
+                # pose-graph backend, so only keyframe-tagged Gaussians can be
+                # safely re-baked -- see the splatt3r-gaussian-map skill).
+                if render_gaussians and not try_reloc:
+                    keyframe = keyframes.last_keyframe()
+                    if keyframe is not None:
+                        rendered = splatt3r_render(
+                            model,
+                            frame,
+                            keyframe,
+                            K=K,
+                            target_T_WC=frame.T_WC,
+                        )
+                        if rendered is not None:
+                            rendered_img = rendered[0, 0].cpu().clamp(0, 1).permute(1, 2, 0)
+                            rendered_np = (rendered_img.numpy() * 255).astype("uint8")
+                            rendered_bgr = cv2.cvtColor(rendered_np, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(
+                                str(render_dir / f"gs_track_{i:06d}.png"), rendered_bgr
+                            )
+
+            elif mode == Mode.RELOC:
+                X, C = splatt3r_inference_mono(model, frame)
+                frame.update_pointmap(X, C)
+                states.set_frame(frame)
+                states.queue_reloc()
+                # In single threaded mode, make sure relocalization happen for every frame
+                _t = time.perf_counter()
+                while config["single_thread"]:
+                    if not backend.is_alive():
+                        raise RuntimeError("backend process died unexpectedly")
+                    with states.lock:
+                        if states.reloc_sem.value == 0:
+                            break
+                    time.sleep(0.01)
+                t_wait += time.perf_counter() - _t
+
+            else:
+                raise Exception("Invalid mode")
+
+            if add_new_kf:
+                keyframes.append(frame)
+                frame_pose_log.record_keyframe(i, len(keyframes) - 1)
+                states.queue_global_optimization(len(keyframes) - 1)
+                if sup_frames is not None:
+                    # A new keyframe supervises with its own pose: anchor =
+                    # itself, rel = identity Sim3 (txyz, quat xyzw, scale).
+                    sup_frames.offer(
+                        (frame.uimg * 255).round().to(torch.uint8),
+                        len(keyframes) - 1,
+                        torch.tensor([0., 0., 0., 0., 0., 0., 1., 1.]),
+                        sup_rng)
+                if retrieval_dumper is not None:
+                    retrieval_dumper.dump(len(keyframes) - 1, frame, timestamp)
+                # In single threaded mode, wait for the backend to finish
+                _t = time.perf_counter()
+                while config["single_thread"]:
+                    if not backend.is_alive():
+                        raise RuntimeError("backend process died unexpectedly")
+                    with states.lock:
+                        if len(states.global_optimizer_tasks) == 0:
+                            break
+                    time.sleep(0.01)
+                t_wait += time.perf_counter() - _t
+            # log time
+            if i % 30 == 0:
+                FPS = i / (time.time() - fps_timer)
+                print(f"FPS: {FPS}")
+            if timing_f is not None:
+                timing_f.write(
+                    f"{i},{timestamp},{mode.name},{t_track * 1e3:.3f},"
+                    f"{t_wait * 1e3:.3f},{(time.perf_counter() - t_iter0) * 1e3:.3f}\n"
+                )
+                if i % 50 == 0:
+                    timing_f.flush()
+            i += 1
+
+        # Shut the backend down and join it BEFORE reading keyframes out for
+        # saving. The backend runs global optimization asynchronously and
+        # writes its corrections back into the shared `keyframes`; saving
+        # first (as this used to) serializes a pose graph missing whatever
+        # optimization was still outstanding when the dataset ran out.
+        #
+        # Joining alone is NOT enough: run_backend loops on
+        # `while mode is not Mode.TERMINATED`, checked at the top of each
+        # iteration, so setting TERMINATED makes it abandon everything still
+        # queued in states.global_optimizer_tasks -- join() would then only
+        # cover the single task already in flight. Drain the queue first
+        # (same wait the single_thread path above uses), then terminate.
+        #
+        # Bounded, because an already-dead backend would never drain it and
+        # this must not hang a finished run forever.
+        #
+        # If the viz GUI is paused, the backend idles in its pause branch
+        # and never consumes global_optimizer_tasks -- the drain below
+        # would then sit out the full 120s timeout doing nothing. Unpause
+        # first so the backend can finish whatever is still queued.
+        states.unpause()
+        drain_deadline = time.time() + 120.0
+        while time.time() < drain_deadline:
+            with states.lock:
+                if len(states.global_optimizer_tasks) == 0:
+                    break
+            if not backend.is_alive():
+                print("[warn] backend exited with optimization tasks still queued", file=sys.stderr)
+                break
+            time.sleep(0.01)
         else:
-            raise Exception("Invalid mode")
+            with states.lock:
+                n_left = len(states.global_optimizer_tasks)
+            print(
+                f"[warn] timed out draining backend queue ({n_left} task(s) left); "
+                f"saved results may omit the last pose corrections",
+                file=sys.stderr,
+            )
 
-        if add_new_kf:
-            keyframes.append(frame)
-            states.queue_global_optimization(len(keyframes) - 1)
-            # In single threaded mode, wait for the backend to finish
-            while config["single_thread"]:
-                with states.lock:
-                    if len(states.global_optimizer_tasks) == 0:
-                        break
-                time.sleep(0.01)
-        # log time
-        if i % 30 == 0:
-            FPS = i / (time.time() - fps_timer)
-            print(f"FPS: {FPS}")
-        i += 1
+        states.set_mode(Mode.TERMINATED)
+        backend.join()
+        if refiner is not None:
+            # Join AFTER the backend: the refiner's final map save composes
+            # through the keyframes' poses, and those are only final once the
+            # drained backend has written its last corrections.
+            refiner.join(timeout=120)
+            if refiner.is_alive():
+                print("[warn] refiner did not exit in 120s; terminating",
+                      file=sys.stderr)
+                refiner.terminate()
+                refiner.join(timeout=10)
+            # Publication-side check of the viewer snapshot channel.
+            print(f"[refiner] snapshot v{snapshot.version.value}, "
+                  f"{snapshot.count.value:,} gaussians published")
 
-    if dataset.save_results:
-        save_dir, seq_name = eval.prepare_savedir(args, dataset)
-        eval.save_traj(save_dir, f"{seq_name}.txt", dataset.timestamps, keyframes)
-        eval.save_reconstruction(
-            save_dir,
-            f"{seq_name}.ply",
-            keyframes,
-            last_msg.C_conf_threshold,
-        )
-        eval.save_keyframes(
-            save_dir / "keyframes" / seq_name, dataset.timestamps, keyframes
-        )
-    if save_frames:
-        savedir = pathlib.Path(f"logs/frames/{datetime_now}")
-        savedir.mkdir(exist_ok=True, parents=True)
-        for i, frame in tqdm.tqdm(enumerate(frames), total=len(frames)):
-            frame = (frame * 255).clip(0, 255)
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(f"{savedir}/{i}.png", frame)
+        if dataset.save_results:
+            save_dir, seq_name = eval.prepare_savedir(args, dataset)
+            eval.save_traj(save_dir, f"{seq_name}.txt", dataset.timestamps, keyframes)
+            # Same trajectory, but every tracked frame rather than the ~14
+            # keyframes -- the supervision-view bottleneck for per-scene
+            # refinement. Poses are resolved against their anchor keyframe's
+            # CURRENT (post-loop-closure) pose at this point, so this file and
+            # the Gaussian map written below share one frame of reference.
+            frame_pose_log.save(
+                save_dir, f"{seq_name}_frames.txt", dataset.timestamps, keyframes
+            )
+            eval.save_reconstruction(
+                save_dir,
+                f"{seq_name}.ply",
+                keyframes,
+                last_msg.C_conf_threshold,
+            )
+            eval.save_keyframes(
+                save_dir / "keyframes" / seq_name, dataset.timestamps, keyframes
+            )
+            # The Gaussian map itself -- this project's actual output, and
+            # until now the only one that was never persisted (the .ply above
+            # is a plain point cloud: positions/colours, no covariance,
+            # opacity or SH, so it cannot be re-rendered from a new view).
+            # Written in standard 3DGS .ply form so external viewers can open
+            # it directly. Uses the same CLI knobs as the live renderer so the
+            # export matches what was on screen.
+            if args.dump_keyframe_gaussians:
+                # Camera-space Gaussians per keyframe, for the online refiner's
+                # offline validation path (see splatt3r_slam/refiner.py).
+                eval.save_keyframe_gaussians(
+                    save_dir / f"{seq_name}_kfgauss.pt", keyframes
+                )
+            eval.save_gaussian_map(
+                save_dir / f"{seq_name}_gaussians.ply",
+                keyframes,
+                spatial_stride=args.spatial_stride,
+                depth_max_percentile=args.depth_max_percentile,
+                max_scale=args.max_scale,
+                min_confidence=args.min_confidence,
+            )
+        if save_frames:
+            savedir = pathlib.Path(f"logs/frames/{datetime_now}")
+            savedir.mkdir(exist_ok=True, parents=True)
+            for i, frame in tqdm.tqdm(enumerate(frames), total=len(frames)):
+                frame = (frame * 255).clip(0, 255)
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(f"{savedir}/{i}.png", frame)
 
-    print("done")
-    backend.join()
-    if not args.no_viz:
-        viz.join()
+        print("done")
+        if not args.no_viz:
+            # Normal path: block until the user closes the viz window.
+            viz.join()
+        clean_exit = True
+    finally:
+        if timing_f is not None:
+            timing_f.close()
+        if not clean_exit:
+            # Exception path only. Best-effort, idempotent teardown: each
+            # step is individually guarded so cleanup can never mask the
+            # original exception, and each is a no-op once the process it
+            # targets is already dead. (On the normal path this whole
+            # block is skipped via clean_exit; even if it ran, the backend
+            # would already be joined and the viz process already reaped
+            # after the user closed the window.)
+            try:
+                states.set_mode(Mode.TERMINATED)
+            except Exception:
+                pass
+            try:
+                if backend.is_alive():
+                    backend.join(timeout=30)
+                    if backend.is_alive():
+                        backend.terminate()
+                        backend.join(timeout=10)
+            except Exception:
+                pass
+            if refiner is not None:
+                try:
+                    if refiner.is_alive():
+                        refiner.terminate()
+                        refiner.join(timeout=10)
+                except Exception:
+                    pass
+            if not args.no_viz:
+                try:
+                    if viz.is_alive():
+                        viz.terminate()
+                        viz.join(timeout=10)
+                except Exception:
+                    pass

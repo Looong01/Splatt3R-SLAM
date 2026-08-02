@@ -4,7 +4,6 @@ import cv2
 from natsort import natsorted
 import numpy as np
 import torch
-import pyrealsense2 as rs
 import yaml
 
 from splatt3r_slam.splatt3r_utils import resize_img
@@ -151,6 +150,23 @@ class SevenScenesDataset(MonocularDataset):
 class RealsenseDataset(MonocularDataset):
     def __init__(self):
         super().__init__()
+        # Imported here, not at module top level: pyrealsense2 is only
+        # needed for live RealSense capture, but a top-level import made it
+        # a hard dependency of this module -- and therefore of every
+        # file/dataset path in the project -- for users who only ever run
+        # on recorded datasets (TUM/EuRoC/ETH3D/7-Scenes) and have no
+        # RealSense hardware.
+        try:
+            import pyrealsense2 as rs
+        except ImportError as e:
+            raise ImportError(
+                "pyrealsense2 is required for live RealSense capture "
+                "(--dataset realsense) but is not installed. It is not "
+                "needed for recorded datasets. Install with: "
+                "pip install pyrealsense2"
+            ) from e
+        self.rs = rs
+
         self.dataset_path = None
         self.pipeline = rs.pipeline()
         # self.h, self.w = 720, 1280

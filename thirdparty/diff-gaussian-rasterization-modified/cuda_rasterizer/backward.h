@@ -65,7 +65,13 @@ namespace BACKWARD
 		float* dL_dcov3D,
 		float* dL_dsh,
 		glm::vec3* dL_dscale,
-		glm::vec4* dL_drot);
+		glm::vec4* dL_drot,
+		// Camera-pose gradients (Splatt3R-SLAM addition). Raw matrix
+		// gradients, laid out exactly like the corresponding input buffers,
+		// so the pose parameterization stays on the Python side. May be null.
+		float* dL_dviewmatrix,
+		float* dL_dprojmatrix,
+		glm::vec3* dL_dcampos);
 }
 
 #endif

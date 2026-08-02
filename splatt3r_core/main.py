@@ -206,7 +206,22 @@ class MAST3RGaussians(L.LightningModule):
         predicted_color = color
 
         if apply_mask:
-            assert mask.sum() > 0, "There are no valid pixels in the mask!"
+            # Used to be `assert mask.sum() > 0` here. That's fatal under DDP:
+            # an empty mask is a real, data-dependent possibility (this
+            # batch's context/target views just don't overlap enough), and
+            # it doesn't happen on every rank's batch at once. One rank
+            # raising AssertionError and dying while the other rank(s)
+            # proceed into backward()'s implicit gradient all-reduce is
+            # exactly how a DDP training run hangs for 30 minutes and then
+            # self-terminates with a NCCL ALLREDUCE watchdog timeout instead
+            # of failing immediately with a clear error -- confirmed as the
+            # likely cause after hitting exactly that hang in practice (see
+            # the splatt3r-lora-finetuning skill). Every rank must take the
+            # same control-flow path regardless of its own batch's mask
+            # content, so instead of raising, an empty mask now just
+            # produces a harmless zero loss contribution from this batch
+            # (rgb_l2_loss below is already 0 wherever mask is 0, so the
+            # only thing that needed guarding was the division).
             target_color = target_color * mask[..., None, :, :]
             predicted_color = predicted_color * mask[..., None, :, :]
 
@@ -217,14 +232,37 @@ class MAST3RGaussians(L.LightningModule):
         # MSE loss
         rgb_l2_loss = (predicted_color - target_color) ** 2
         if average_over_mask:
-            mse_loss = (rgb_l2_loss * mask[:, None, ...]).sum() / mask.sum()
+            # clamp(min=1000), not min=1: a mask with only a handful of
+            # valid pixels (not exactly zero, just sparse -- plausible
+            # given the coverage-based sampling) still lets a couple of
+            # badly-fit pixels dominate the average and produce an outlier
+            # loss/gradient magnitude. min=1 only prevented literal div-by-
+            # zero, not this. 1000 is a heuristic floor (~0.7% of one
+            # 384x384 view) -- a hypothesis for what caused the training
+            # collapse documented in the splatt3r-lora-finetuning skill,
+            # not a confirmed root cause; combined with the lower LR/
+            # tighter GRADIENT_CLIP_VAL as the primary, root-cause-agnostic
+            # defense.
+            # mask[:, :, None, ...], NOT mask[:, None, ...] (upstream's
+            # version, silently wrong): mask is (b, v, h, w) and
+            # rgb_l2_loss is (b, v, c, h, w). mask[:, None, ...] gives
+            # (b, 1, v, h, w), which broadcasts the mask's VIEW axis onto
+            # the CHANNEL axis -- it only fails to raise because
+            # num_target_views (3, data.py) happens to equal the RGB
+            # channel count. Effect: view i's mask gets applied to colour
+            # channel i of every view, dropping valid pixels from the
+            # numerator while still counting them in mask.sum(), i.e. a
+            # systematically under-estimated MSE. Note the apply_mask
+            # block ~20 lines above already does this correctly with
+            # mask[..., None, :, :] -- the two were inconsistent.
+            mse_loss = (rgb_l2_loss * mask[:, :, None, ...]).sum() / mask.sum().clamp(min=1000)
         else:
             mse_loss = rgb_l2_loss.mean()
 
         # LPIPS loss
         lpips_loss = self.lpips_criterion(flattened_target_color, flattened_color, normalize=True)
         if average_over_mask:
-            lpips_loss = (lpips_loss * flattened_mask[:, None, ...]).sum() / flattened_mask.sum()
+            lpips_loss = (lpips_loss * flattened_mask[:, None, ...]).sum() / flattened_mask.sum().clamp(min=1000)
         else:
             lpips_loss = lpips_loss.mean()
 

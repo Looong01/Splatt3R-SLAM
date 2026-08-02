@@ -11,6 +11,7 @@
 
 #include <math.h>
 #include <torch/extension.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <cstdio>
 #include <sstream>
 #include <iostream>
@@ -58,6 +59,11 @@ RasterizeGaussiansCUDA(
 	const bool prefiltered,
 	const bool debug)
 {
+  // Pin the runtime to the INPUT tensors' device for the whole call: every
+  // buffer below allocates on "current device" and every kernel launches on
+  // it, so with several cards visible and inputs on cuda:1 the unguarded
+  // code mixed cuda:0 buffers with cuda:1 pointers (illegal memory access).
+  const c10::cuda::OptionalCUDAGuard device_guard(at::device_of(means3D));
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
   }
@@ -118,7 +124,7 @@ RasterizeGaussiansCUDA(
   return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer);
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
  RasterizeGaussiansBackwardCUDA(
  	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -142,6 +148,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const torch::Tensor& imageBuffer,
 	const bool debug) 
 {
+  const c10::cuda::OptionalCUDAGuard device_guard(at::device_of(means3D));
   const int P = means3D.size(0);
   const int H = dL_dout_color.size(1);
   const int W = dL_dout_color.size(2);
@@ -161,6 +168,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   torch::Tensor dL_dsh = torch::zeros({P, M, 3}, means3D.options());
   torch::Tensor dL_dscales = torch::zeros({P, 3}, means3D.options());
   torch::Tensor dL_drotations = torch::zeros({P, 4}, means3D.options());
+  // Camera-pose gradients (Splatt3R-SLAM addition). Shapes and element order
+  // match the corresponding inputs, so autograd on the Python side maps them
+  // straight back onto viewmatrix / projmatrix / campos.
+  torch::Tensor dL_dviewmatrix = torch::zeros({4, 4}, means3D.options());
+  torch::Tensor dL_dprojmatrix = torch::zeros({4, 4}, means3D.options());
+  torch::Tensor dL_dcampos = torch::zeros({3}, means3D.options());
   
   if(P != 0)
   {  
@@ -193,10 +206,13 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  dL_dsh.contiguous().data<float>(),
 	  dL_dscales.contiguous().data<float>(),
 	  dL_drotations.contiguous().data<float>(),
+	  dL_dviewmatrix.contiguous().data<float>(),
+	  dL_dprojmatrix.contiguous().data<float>(),
+	  dL_dcampos.contiguous().data<float>(),
 	  debug);
   }
 
-  return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dsh, dL_dscales, dL_drotations);
+  return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dsh, dL_dscales, dL_drotations, dL_dviewmatrix, dL_dprojmatrix, dL_dcampos);
 }
 
 torch::Tensor markVisible(
@@ -204,6 +220,7 @@ torch::Tensor markVisible(
 		torch::Tensor& viewmatrix,
 		torch::Tensor& projmatrix)
 { 
+  const c10::cuda::OptionalCUDAGuard device_guard(at::device_of(means3D));
   const int P = means3D.size(0);
   
   torch::Tensor present = torch::full({P}, false, means3D.options().dtype(at::kBool));

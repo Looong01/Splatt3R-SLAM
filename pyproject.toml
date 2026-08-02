@@ -5,10 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "Splatt3R-SLAM"
 version = "0.1.0"
+# Lower bounds reflect the versions this project is actually developed and
+# tested against (captured from the working `splatt3r-slam` conda env on
+# 2026-07-27), not aspirational minimums. They are `>=` rather than `==`
+# so this stays installable alongside the CUDA-specific torch build, which
+# is not resolvable from PyPI metadata anyway (see the note below).
+#
+# NOTE on numpy: this was previously pinned `numpy==1.26.4`, which
+# contradicted both the installed environment (2.4.6) and this project's
+# own NumPy-2.x compatibility work. Installing that pin into a working
+# checkout would have downgraded numpy and broken it.
 dependencies = [
-    "numpy==1.26.4",
+    "numpy>=2.0",
+    "scipy>=1.13",
     "einops",
-    "pyrealsense2",
+    "pyrealsense2",           # optional at runtime -- only needed for live RealSense capture, see splatt3r_slam/dataloader.py
     "evo",
     "natsort",
     "plyfile",
@@ -16,18 +27,58 @@ dependencies = [
     "opencv-python",
     "tqdm",
     "pyyaml",
+    "trimesh",                # splatt3r_core/utils/export.py
+    "scikit-image",           # splatt3r_core/utils/compute_ssim.py
+    "scikit-learn",           # vendored mast3r/losses.py
+    "matplotlib",             # splatt3r_slam/visualization_utils.py
+    # Visualisation (GUI). `imgui` is in practice provided by the vendored
+    # pyimgui at thirdparty/in3d/thirdparty/pyimgui: thirdparty/in3d/setup.py
+    # installs it via a direct `imgui @ file://...` URL, and it comes in with
+    # README Step 5's `pip install -e thirdparty/in3d`. The bare `imgui` here
+    # is only a fallback / metadata completeness: when in3d is installed
+    # first, pip sees the requirement as already satisfied and does not
+    # overwrite the vendored copy with PyPI pyimgui (either binding provides
+    # the `imgui` top-level module that splatt3r_slam/visualization_utils.py
+    # imports). Note a potential version-skew surface: in3d's setup.py pins
+    # moderngl==5.12.0 / moderngl-window==2.4.6 while the two entries below
+    # are unpinned.
+    "moderngl",
+    "moderngl-window",
+    "imgui",
+    "PyGLM",
     # Splatt3r dependencies
     "lightning",
     "lpips",
     "omegaconf",
     "huggingface_hub",
     "gitpython",
-    # lietorch needs to be installed separately
+    # LoRA fine-tuning (splatt3r_core/lora.py, scripts/train_lora_*.py).
+    # safetensors is not imported directly by this project -- peft pulls it
+    # in -- so it is deliberately not listed.
+    "peft",
+    # torch/torchvision are intentionally NOT listed: this project needs a
+    # CUDA-matched build (developed against 2.13.0+cu132) that must come
+    # from the PyTorch index, not PyPI's default resolution.
+    # lietorch also needs to be installed separately:
     # "lietorch @ git+https://github.com/princeton-vl/lietorch.git",
     # "torchcodec==0.1",  # Optional
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["splatt3r_slam", "splatt3r_core"]
+# Globs, not bare names: the previous `include = ["splatt3r_slam",
+# "splatt3r_core"]` matched only those two exact names, dropping real
+# subpackages such as splatt3r_core.data (and its per-dataset
+# subpackages) from a non-editable install -- 2 packages matched before,
+# 7 now.
+#
+# Still NOT covered, and not fixable from here: splatt3r_core/utils/ and
+# splatt3r_core/src/ have no __init__.py, so setuptools does not treat
+# them as packages regardless of this pattern. They resolve today only
+# because the scripts insert their parent directories onto sys.path
+# (and because editable installs expose the source tree as-is). Packaging
+# them properly would mean adding __init__.py files, which would change
+# how the vendored mast3r/dust3r source is imported -- deliberately not
+# done here.
+include = ["splatt3r_slam*", "splatt3r_core*"]
 namespaces = false

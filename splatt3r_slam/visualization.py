@@ -1,4 +1,5 @@
 import dataclasses
+import os
 import weakref
 import math
 from pathlib import Path
@@ -29,6 +30,7 @@ from splatt3r_slam.visualization_utils import (
     image_with_text,
 )
 from splatt3r_slam.config import load_config, config, set_global_config
+from splatt3r_slam.splatt3r_utils import bake_gaussians_world
 
 # Gaussian rasterization (same CUDA rasterizer used by DecoderSplattingCUDA)
 try:
@@ -51,8 +53,8 @@ class WindowMsg:
     is_paused: bool = False
     next: bool = False
     C_conf_threshold: float = 1.5
-    spatial_stride: int = 4
-    max_gaussians: int = 4 * 1024 * 1024
+    spatial_stride: int = 1
+    max_gaussians: int = 16 * 1024 * 1024
 
 
 class Window(WindowEvents):
@@ -63,11 +65,14 @@ class Window(WindowEvents):
         self,
         states,
         keyframes,
-        shared_gaussians,
         main2viz,
         viz2main,
-        spatial_stride=4,
-        max_gaussians=4 * 1024 * 1024,
+        spatial_stride=1,
+        max_gaussians=16 * 1024 * 1024,
+        depth_max_percentile=0.98,
+        max_scale=1.0,
+        min_confidence=1.5,
+        refined_snapshot=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -100,7 +105,17 @@ class Window(WindowEvents):
         )
         self.keyframes = keyframes
         self.states = states
-        self.shared_gaussians = shared_gaussians
+
+        # Refined-map display channel (publication side: splatt3r_slam/
+        # refiner.py RefinedMapSnapshot). When the --refiner process feeds
+        # this, the viewer draws the REFINED map instead of the baked one;
+        # falls back to the baked path while nothing is published yet.
+        # NOTE: consumer side implemented but UNVERIFIED -- the headless
+        # build box cannot create an OpenGL context, so this path has never
+        # been drawn (see skill 15.11).
+        self.refined_snapshot = refined_snapshot
+        self._refined_version = -1
+        self._refined_gpu = None
 
         self.show_all = True
         self.show_keyframe_edges = True
@@ -127,14 +142,46 @@ class Window(WindowEvents):
 
         # CLI defaults for GUI sliders
         self.spatial_stride = spatial_stride
-        self.max_gaussians_limit = max_gaussians  # buffer allocation cap
+        self.max_gaussians_limit = max_gaussians  # upper bound for the GUI slider
         self.max_gaussians = max_gaussians  # current effective value
 
         # --- Gaussian Splatting interactive rendering ---
         self.use_gs_rendering = _HAS_DIFF_GS  # ON by default when available
         self.gs_render_img = Image()  # preview image for GUI panel
         self.gs_tex = None  # moderngl texture for fullscreen quad
-        self.gs_resolution_scale = 0.5  # render at fraction of viewport size
+        self.gs_resolution_scale = 1.0  # render at fraction of viewport size
+
+        # Splash-artifact filters applied every time a keyframe is (re-)baked.
+        self.gs_depth_max_percentile = depth_max_percentile
+        self.gs_max_scale = max_scale
+        self.gs_min_confidence = min_confidence
+        self.gs_min_opacity = 0.3
+
+        # World-space Gaussian bake cache, keyed by keyframe index. Values
+        # are (means_w, cov_triu, colors, opacities) tensors already in
+        # world space. Nothing here is ever treated as permanent: every
+        # frame we compare each live keyframe's current T_WC (and the
+        # active spatial_stride) against what a cache entry was baked
+        # with, and re-bake from the keyframe's *stored local-space*
+        # Gaussians (SharedKeyframes.get_gaussians_local) whenever either
+        # changed. This is what makes a loop-closure / pose-graph
+        # correction move the map instead of leaving a stale duplicate --
+        # see the splatt3r-gaussian-map skill for the failure mode this
+        # replaces (Plan A) and the lighter-weight fallback (Plan B).
+        self._gs_world_cache = {}  # kf_idx -> (means_w, cov_triu, colors, opacities)
+        self._gs_cache_key = {}  # kf_idx -> (T_WC_data_tuple, stride_used)
+
+        # Debug-only: periodically dump the interactive fullscreen GS render
+        # to disk. This desktop runs Wayland, where X11 screenshot tools
+        # (scrot/xdotool) cannot see native GLFW/Wayland surfaces, so this
+        # is how an agent (or anyone without eyes on the physical screen)
+        # inspects what the accumulated world-space map actually looks
+        # like. Off by default; set SPLATT3R_GS_DUMP_DIR to enable.
+        self._gs_dump_dir = os.environ.get("SPLATT3R_GS_DUMP_DIR")
+        self._gs_dump_every = max(1, int(os.environ.get("SPLATT3R_GS_DUMP_EVERY", "30")))
+        self._gs_dump_counter = 0
+        if self._gs_dump_dir:
+            Path(self._gs_dump_dir).mkdir(parents=True, exist_ok=True)
         # Fullscreen quad shader for displaying GS-rendered images
         self.gs_quad_prog = self.ctx.program(
             vertex_shader="""
@@ -176,6 +223,7 @@ class Window(WindowEvents):
                 self.ctx.disable(moderngl.CULL_FACE)
                 self._render_gs_fullscreen(gs_img_np)
                 self.gs_render_img.write(gs_img_np)
+                self._maybe_dump_gs_debug_frame(gs_img_np)
                 self.ctx.enable(moderngl.DEPTH_TEST)
                 if self.culling:
                     self.ctx.enable(moderngl.CULL_FACE)
@@ -353,8 +401,7 @@ class Window(WindowEvents):
                 _, self.gs_resolution_scale = imgui.slider_float(
                     "GS resolution", self.gs_resolution_scale, 0.1, 1.0
                 )
-                gs_data = self.shared_gaussians.get_all()
-                n_gs = 0 if gs_data is None else gs_data[0].shape[0]
+                n_gs = sum(v[0].shape[0] for v in self._gs_world_cache.values())
                 imgui.text(f"Gaussians: {n_gs:,}")
         imgui.spacing()
 
@@ -464,15 +511,146 @@ class Window(WindowEvents):
         self.gs_quad_prog["gs_texture"].value = 0
         self.gs_quad_vao.render(mode=moderngl.TRIANGLE_STRIP, vertices=4)
 
+    def _maybe_dump_gs_debug_frame(self, gs_img_np):
+        """Debug-only: see _gs_dump_dir setup in __init__."""
+        if not self._gs_dump_dir:
+            return
+        self._gs_dump_counter += 1
+        if self._gs_dump_counter % self._gs_dump_every != 0:
+            return
+        from PIL import Image as PILImage
+
+        arr = (np.clip(gs_img_np, 0, 1) * 255).astype(np.uint8)
+        out_path = Path(self._gs_dump_dir) / f"gs_map_{self._gs_dump_counter:08d}.png"
+        PILImage.fromarray(arr).save(out_path)
+
+    @torch.inference_mode()
+    def _read_refined(self):
+        """Version-locked read of the refiner's published snapshot, with an
+        upload cache keyed on the version counter so the per-frame cost is
+        one integer compare between publishes. Returns the same
+        (means, cov_triu, colors, opacities) tuple _get_world_gaussians()
+        yields, or None before the first publish."""
+        snap = self.refined_snapshot
+        if snap.version.value == self._refined_version:
+            return self._refined_gpu
+        data = None
+        for _ in range(3):
+            v0 = snap.version.value
+            if v0 == 0:
+                return None
+            w = 1 - snap.write_idx.value
+            n = snap.count.value
+            with snap.lock:
+                candidate = snap.buf[w][:n].clone()
+            if snap.version.value == v0:
+                data = candidate
+                break
+        if data is None:
+            return self._refined_gpu  # lost the race thrice; keep last good
+        dev = self.keyframes.device
+        means = data[:, 0:3].to(dev)
+        cov = data[:, 3:9].to(dev)
+        colors = data[:, 9:12].to(dev)
+        opac = data[:, 12].to(dev)
+        self._refined_gpu = (means, cov, colors, opac)
+        self._refined_version = v0
+        return self._refined_gpu
+
+    def _get_world_gaussians(self):
+        """Refresh the per-keyframe world-space bake cache and concatenate it.
+
+        For every live keyframe, compares its *current* T_WC (and the
+        active spatial_stride) against what its cache entry was last baked
+        with; only changed keyframes are re-baked from their stored
+        local-space Gaussians (SharedKeyframes.get_gaussians_local). A
+        keyframe whose pose the backend just corrected (loop closure /
+        local BA) is therefore re-baked to its corrected location on the
+        very next frame -- there is no permanently stale copy left behind.
+
+        Returns (means, cov_triu, colors, opacities) or None if nothing is
+        available yet.
+        """
+        if self.refined_snapshot is not None:
+            refined = self._read_refined()
+            if refined is not None:
+                return refined
+        with self.keyframes.lock:
+            n_keyframes = len(self.keyframes)
+        if n_keyframes == 0:
+            return None
+
+        h, w = self.keyframes.h, self.keyframes.w
+        # Render-budget: coarsen the stride uniformly across all keyframes
+        # so the total baked count stays near max_gaussians as the map
+        # grows, but never finer than what the user explicitly requested.
+        budget_stride = max(
+            1,
+            math.ceil(
+                math.sqrt((h * w * n_keyframes) / max(1, self.state.max_gaussians))
+            ),
+        )
+        stride = max(1, int(self.state.spatial_stride), budget_stride)
+
+        # Locked for the whole scan: T_WC reads must not tear against the
+        # backend's concurrent update_T_WCs() writes.
+        live_idx = set(range(n_keyframes))
+        with self.keyframes.lock:
+            for kf_idx in live_idx:
+                T_WC_data = tuple(self.keyframes.T_WC[kf_idx, 0].tolist())
+                cache_key = (T_WC_data, stride)
+                if self._gs_cache_key.get(kf_idx) == cache_key:
+                    continue  # pose and stride unchanged -- reuse cached bake
+
+                local = self.keyframes.get_gaussians_local(kf_idx)
+                if local is None:
+                    continue  # no gaussian_pred stored for this slot (yet)
+
+                keyframe = self.keyframes[kf_idx]
+                baked = bake_gaussians_world(
+                    local,
+                    keyframe.img,
+                    h,
+                    w,
+                    keyframe.T_WC,
+                    spatial_stride=stride,
+                    depth_max_percentile=self.gs_depth_max_percentile,
+                    max_scale=self.gs_max_scale,
+                    min_confidence=self.gs_min_confidence,
+                    min_opacity=self.gs_min_opacity,
+                )
+                if baked is None:
+                    self._gs_world_cache.pop(kf_idx, None)
+                else:
+                    self._gs_world_cache[kf_idx] = baked
+                self._gs_cache_key[kf_idx] = cache_key
+
+        stale = [k for k in self._gs_world_cache if k not in live_idx]
+        for k in stale:
+            self._gs_world_cache.pop(k, None)
+            self._gs_cache_key.pop(k, None)
+
+        if not self._gs_world_cache:
+            return None
+
+        means, cov, colors, opac = zip(*self._gs_world_cache.values())
+        return (
+            torch.cat(means, dim=0),
+            torch.cat(cov, dim=0),
+            torch.cat(colors, dim=0),
+            torch.cat(opac, dim=0),
+        )
+
     @torch.inference_mode()
     def _render_gs_interactive(self):
-        """Render Gaussians from SharedGaussians buffer using the interactive camera.
+        """Render the live-baked world-space Gaussian map from the interactive camera.
 
-        Uses diff_gaussian_rasterization to rasterize all accumulated Gaussians
-        from the current interactive viewport camera.  Returns (H, W, 3) float32
-        numpy array in [0, 1] or None if no Gaussians are available.
+        Uses diff_gaussian_rasterization to rasterize the current bake
+        cache (see _get_world_gaussians) from the current interactive
+        viewport camera.  Returns (H, W, 3) float32 numpy array in [0, 1]
+        or None if no Gaussians are available.
         """
-        gs_data = self.shared_gaussians.get_all()
+        gs_data = self._get_world_gaussians()
         if gs_data is None:
             return None
 
@@ -652,11 +830,14 @@ def run_visualization(
     cfg,
     states,
     keyframes,
-    shared_gaussians,
     main2viz,
     viz2main,
-    spatial_stride=4,
-    max_gaussians=4 * 1024 * 1024,
+    spatial_stride=1,
+    max_gaussians=16 * 1024 * 1024,
+    depth_max_percentile=0.98,
+    max_scale=1.0,
+    min_confidence=1.5,
+    refined_snapshot=None,
 ) -> None:
     set_global_config(cfg)
 
@@ -684,11 +865,14 @@ def run_visualization(
     window_config = config_cls(
         states=states,
         keyframes=keyframes,
-        shared_gaussians=shared_gaussians,
         main2viz=main2viz,
         viz2main=viz2main,
         spatial_stride=spatial_stride,
         max_gaussians=max_gaussians,
+        depth_max_percentile=depth_max_percentile,
+        max_scale=max_scale,
+        min_confidence=min_confidence,
+        refined_snapshot=refined_snapshot,
         ctx=window.ctx,
         wnd=window,
         timer=timer,
