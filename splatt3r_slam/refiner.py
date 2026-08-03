@@ -357,6 +357,14 @@ class RefinedMapSnapshot:
                 [means_w, cov_w[:, row, col], model.rgb(),
                  model.opacity().reshape(-1, 1)], dim=1).cpu().float()
         n = data.shape[0]
+        cap = self.buf[0].shape[0]
+        if n > cap:
+            # Display-only channel: a map larger than the buffer is
+            # stride-subsampled to fit, never an error -- the refined .ply
+            # (the actual artifact) is written separately and unaffected.
+            stride = (n + cap - 1) // cap
+            data = data[::stride]
+            n = data.shape[0]
         with self.lock:
             w = self.write_idx.value
             self.buf[w][:n] = data
@@ -589,8 +597,10 @@ def run_refiner(cfg, states, keyframes, sup_frames, K, save_path=None,
         with keyframes.lock:
             kf_data = keyframes.T_WC[:known_kf, 0].clone()
         kf_mats = sim3_to_mat(kf_data).to(device)
-        if snapshot is not None:
-            snapshot.publish(model, kf_mats)
+        # Save BEFORE publishing: the .ply is the artifact; the snapshot is
+        # a viewer convenience and must never be able to block the save.
         if save_path:
             save_refined_map(save_path, model, kf_mats)
+        if snapshot is not None:
+            snapshot.publish(model, kf_mats)
     print(f"[refiner] terminated after {step} steps", flush=True)
