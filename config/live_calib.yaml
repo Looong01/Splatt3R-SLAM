@@ -1,0 +1,8 @@
+inherit: "config/base.yaml"
+
+# Live GUI demo mode: base.yaml's full-rate multithreaded pipeline
+# (single_thread: False, subsample: 1) WITH known intrinsics. use_calib is
+# required whenever the refiner runs (--refiner needs a fixed K to render
+# through; without it main.py prints "requires use_calib" and disables the
+# refiner, leaving the second GPU idle).
+use_calib: True

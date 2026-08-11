@@ -884,33 +884,24 @@ def main():
 
     mse, psnr, lpv = score(model, held_frames, K, dev, lp)
     def save_refined(path):
-        from splatt3r_slam.gaussian_ply_codec import encode_gaussians_for_ply
-        from plyfile import PlyData, PlyElement
+        from splatt3r_slam.gaussian_ply_codec import gaussians_to_ply_element
+        from plyfile import PlyData
 
         with torch.no_grad():
             cov = model.covariances().double().cpu()
             row, col = torch.triu_indices(3, 3)
-            attrs = encode_gaussians_for_ply(
+            # The f_dc columns are NOT clamped (they round-trip exactly; the
+            # 1.32 dB save/load loss below came from clamping them). The
+            # appended uchar red/green/blue display columns are clipped to
+            # [0,1] inside the helper -- uchar has no other choice, and it
+            # affects display only.
+            element = gaussians_to_ply_element(
                 model.means.detach().cpu(), cov[:, row, col],
-                # NO clamp. encode_gaussians_for_ply inverts SH2RGB, so this
-                # round-trips f_dc exactly -- but only if it is not clipped on
-                # the way out. f_dc is a free pre-activation parameter and the
-                # optimizer routinely drives it outside the [0,1] RGB box:
-                # measured 2.9% of channels pinned at a bound, costing 1.32 dB
-                # (a map scoring 19.0375 reloaded at 17.7225). The clamp came
-                # from the SLAM-export path, where colours are genuinely
-                # in-range; for a refined map it is simply wrong.
                 (model.f_dc.detach().cpu() * C0 + 0.5),
                 model.opacity().detach().cpu())
-        names = (["x", "y", "z", "nx", "ny", "nz"]
-                 + [f"f_dc_{i}" for i in range(3)] + ["opacity"]
-                 + [f"scale_{i}" for i in range(3)] + [f"rot_{i}" for i in range(4)])
-        el = np.empty(attrs.shape[0], dtype=[(n_, "f4") for n_ in names])
-        for i, nm in enumerate(names):
-            el[nm] = attrs[:, i]
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        PlyData([PlyElement.describe(el, "vertex")]).write(path)
-        print(f"  saved refined map: {path} ({attrs.shape[0]:,} gaussians)", flush=True)
+        PlyData([element]).write(path)
+        print(f"  saved refined map: {path} ({element.count:,} gaussians)", flush=True)
 
     tag = f"[{args.tag}] " if args.tag else ""
     print(f"\n  {tag}iter     0 | held-out psnr={psnr:7.4f}  lpips={lpv:.4f}  (init)", flush=True)

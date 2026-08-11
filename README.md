@@ -207,6 +207,13 @@ wget 'https://huggingface.co/brandonsmart/splatt3r_v1.0/resolve/main/epoch%3D19-
 | `--refiner-gpu` | `-1` (same card) | GPU index the refiner computes on, e.g. `--refiner-gpu 1` with both cards visible — measured as the deployable configuration (tracker latency unaffected) |
 | `--refiner-max-gaussians` | `4000000` | Refined-map size that triggers a de-clustering (dedup) pass |
 | `--refiner-dedup-voxel` | `0.0` (off) | Voxel edge in metres for the dedup pass; `0.01` measured |
+| `--refiner-polish-secs` | `0.0` (off) | After the sequence ends, keep refining with the final poses for this many seconds. **The single largest online win measured: +2.21 dB psnr and −16.7% lpips over seven TUM fr1 sequences.** `300` is the measured setting |
+| `--refiner-polish-tol` | `0.0` (off) | Stop the polish early once the training loss improves by less than this fraction over one logging window. Sequences need 2.4× different step counts (1445–3821) and no static quantity predicts which, so a convergence criterion is the only way to size the phase |
+| `--refiner-freeze-means` | off | Hold the Gaussian centres fixed during refinement. Measured optimal at both online (~300 step) and offline (3000 step) budgets — the centres come from the network's pointmap and photometric gradients degrade them |
+| `--refiner-aa-sigma` | `0.0` (off) | Band-limit the injected Gaussians against the measured lattice pitch (τ; `0.5` measured). Removes the dot/moiré lattice: 2.3× less alpha lattice and −9.7% lpips online |
+| `--refiner-min-confidence` | `1.5` | Confidence gate at injection. `4.0` for maps above ~4M Gaussians |
+| `--refiner-streak-opacity` | `0.5` | Reduce opacity in proportion to how long each Gaussian is relative to its local surface sampling. Measured to fade 64-98% of Gaussians by 39-65% of their opacity, so it is a **global de-hazing** weighting, not the sparse trailing-streak eraser it was originally described as (skill 17.53). Online paired A/B, 3 sequences, lpips improves on all three but by very different amounts: desk −12.7%, room −6.6%, 360 −1.3%, for −0.04 to −0.22 dB psnr. The size of the win tracks how much streaked geometry a scene actually has |
+| `--refiner-unfreeze-in-polish` | off | Release the frozen centres when the polish phase begins |
 
 > **`--spatial-stride` stability note.** The default — and the only
 > recommended value — is `1` (full per-pixel density). Older revisions of
@@ -244,6 +251,47 @@ Measured on TUM freiburg1_desk (held-out novel views, n=100): map psnr
 10.66 → **12.81** (two-GPU) with ATE bit-identical and tracker latency
 within +1%. The refiner needs a fixed calibration (`use_calib: True`) and
 is off by default.
+
+#### The measured configuration
+
+The defaults above are conservative — each quality flag is off unless asked
+for. This is the configuration the experiments actually select, and the one
+to use if the goal is image quality:
+
+```bash
+python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
+    --config config/eval_calib.yaml --refiner --refiner-gpu 1 --refiner-duty 1.0 \
+    --refiner-freeze-means \
+    --refiner-aa-sigma 0.5 \
+    --refiner-polish-secs 300 \
+    --refiner-streak-opacity 0.5
+```
+
+Each flag is a separately measured effect, and they are **additive** — the sum
+of the individual deltas reproduces the total to four decimals, so they can be
+adopted one at a time:
+
+| flag | measured on | effect |
+| --- | --- | --- |
+| `--refiner-polish-secs 300` | 7 sequences, online | **+2.21 dB psnr, −16.7% lpips** |
+| `--refiner-aa-sigma 0.5` | 360 + desk, online | −9.7% lpips, 2.3× less lattice, −0.35 dB psnr |
+| `--refiner-streak-opacity 0.5` | 3 sequences, online paired A/B | −1.3% to −12.7% lpips (desk 12.7, room 6.6, 360 1.3), −0.04 to −0.22 dB psnr |
+| `--refiner-freeze-means` | desk + 360, both budgets | optimum at every budget tested |
+
+The psnr/lpips split is real and expected: the band limit and the streak fade
+both trade a little fitting accuracy for a large perceptual gain, and lpips is
+the metric that tracks what the artifacts look like. Absolute numbers here are
+for the trajectory-anchored map on held-out frames — see
+`docs/online-refinement-campaign.md` for the per-sequence tables.
+
+**Known limits, measured rather than assumed.** Seam artifacts between
+keyframe clusters are geometric, caused by the network's ~9% per-pair depth
+scale error, and are *not* removable after the fact: correcting each cluster's
+scale against an external reference improves the map's absolute geometry by up
+to 6.4× and makes the rendered image **worse**, because SLAM fitted each pose
+to that keyframe's own biased prediction and the two are only meaningful
+together. Trailing streaks over single-coverage geometry, and unobserved
+regions, are absences of information rather than errors.
 
 Example with explicit rendering-related parameters:
 

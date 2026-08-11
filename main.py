@@ -322,6 +322,98 @@ if __name__ == "__main__":
              "the end. Requires use_calib (a fixed K to render through).",
     )
     parser.add_argument(
+        "--refiner-streak-opacity",
+        type=float,
+        default=0.5,
+        help="hide ray-elongated Gaussians at injection: opacity *= "
+             "min(1, K*pitch/max_scale). ON by default at K=0.5: -10.4%% lpips "
+             "ONLINE (17.42), -5.0%% offline (17.32). "
+             "(skill 17.32) and NOT yet tested online, which after 17.21 is the "
+             "only thing that could license it as a default. Requires "
+             "--refiner-aa-sigma > 0: the criterion is defined against the "
+             "lattice pitch and there is no sound fallback without it.",
+    )
+    parser.add_argument(
+        "--refiner-polish-tol",
+        type=float,
+        default=0.0,
+        help="stop the polish phase once the training loss improves by less "
+             "than this fraction over one logging window, instead of burning "
+             "the full --refiner-polish-secs. Sequences need 2.4x different "
+             "step counts (desk 1581, room 1856, 360 3821; skill 17.25), so a "
+             "fixed duration either wastes time or starves the hard ones. "
+             "0 = off, which is what ships until this is measured.",
+    )
+    parser.add_argument(
+        "--refiner-uniform-fade",
+        type=float,
+        default=0.0,
+        help="multiply every injected opacity by (1-D). The measured form of "
+             "the thinning prior (skill 17.56): the elongation selector it "
+             "replaces was shown to contribute nothing, and on a deep fade to "
+             "be actively worse. Arm it when the map's accumulated alpha is "
+             "high and the head has not un-saturated itself; it carries a "
+             "measured lattice cost (17.59) that neither psnr nor lpips sees.",
+    )
+    parser.add_argument(
+        "--refiner-scale-cap",
+        type=float,
+        default=0.0,
+        help="clamp injected Gaussian scales to at most this many metres. "
+             "Head training inflates the scale tail on 4 of 5 families (p90 "
+             "ratio 2.2-3.3 vs base); the cap is the clean lever -- it costs no "
+             "lattice, unlike the fade. Anchor it to the BASE checkpoint's p90.",
+    )
+    parser.add_argument(
+        "--refiner-polish-patience",
+        type=int,
+        default=3,
+        help="how many consecutive windows must sit below --refiner-polish-tol "
+             "before the polish stops. 1 was measured too trigger-happy: it "
+             "fired on a window whose mean loss had risen while the map was "
+             "still improving.",
+    )
+    parser.add_argument(
+        "--refiner-unfreeze-in-polish",
+        action="store_true",
+        help="restore the positional learning rate when the post-sequence "
+             "polish phase starts. Only meaningful with --refiner-freeze-means. "
+             "The decisive test for skill 17.22's conflict-averaging "
+             "explanation of the online lpips deficit.",
+    )
+    parser.add_argument(
+        "--refiner-freeze-means",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="hold the Gaussian centres fixed. ON by default, and measured "
+             "optimal at every budget tested: at the ~300 in-sequence steps a "
+             "large map gets, letting positions move buys 0.35 dB psnr and "
+             "costs 9.7%% lpips (skill 17.12/17.13/17.14). Pass "
+             "--no-refiner-freeze-means to let them move.",
+    )
+    parser.add_argument(
+        "--refiner-min-confidence",
+        type=float,
+        default=1.5,
+        help="confidence threshold at injection for the REFINER's map. 0 by "
+             "default, which is the opposite of the 4.0 that skill 16.9 "
+             "recommended: that result was measured at matched wall clock while "
+             "throughput was binding, and exact culling removed that constraint. "
+             "At the ~300 in-sequence steps a large map gets, 0.0 beats 1.5 by "
+             "+0.43 dB with 43%% less unmapped area, and 4.0 loses 1.94 dB "
+             "(skill 17.16). Offline runs with thousands of steps should raise "
+             "it -- 4.0 takes psnr there, at 4%% of lpips.",
+    )
+    parser.add_argument(
+        "--refiner-aa-sigma",
+        type=float,
+        default=0.5,
+        help="band limit at injection, as a multiple of each Gaussian's own "
+             "lattice pitch, held as a constraint. 0 disables. Without it the "
+             "map is perforated between its own sample points and every render "
+             "above the source sampling rate shows a halftone lattice (17.2).",
+    )
+    parser.add_argument(
         "--refiner-duty",
         type=float,
         default=0.25,
@@ -355,8 +447,61 @@ if __name__ == "__main__":
         default=4_000_000,
         help="Map size that triggers a dedup pass (default 4M).",
     )
+    parser.add_argument(
+        "--save-gs-view",
+        default=None,
+        metavar="DIR",
+        help="Save the interactive 3DGS map render (what the GUI window "
+             "shows) to DIR as PNGs, for offline analysis. Writes every "
+             "--gs-view-stride-th rendered frame as gs_map_%%08d.png.",
+    )
+    parser.add_argument(
+        "--gs-view-stride",
+        type=int,
+        default=1,
+        help="Save every Nth GUI-rendered frame (default 1 = every frame).",
+    )
+    parser.add_argument(
+        "--gs-scale-inflate",
+        type=float,
+        default=1.0,
+        help="Display-only uniform splat-size multiplier (default 1.0). "
+             "~1.15-1.3 closes sub-pixel gaps (black speckle) when the map "
+             "is rendered above its capture resolution and low-passes moiré. "
+             "Never written into the map or exports; the GUI 'GS scale "
+             "inflate' slider adjusts it live.",
+    )
+    parser.add_argument(
+        "--refiner-polish-secs",
+        type=float,
+        default=0.0,
+        help="After the dataset ends, keep the refiner optimizing with the "
+             "final poses for this many seconds before termination (default "
+             "0 = stop immediately). The measured win of online refinement "
+             "concentrates in the first few hundred steps (skill 15.1), and "
+             "big maps are supervision-starved at sequence end -- this is "
+             "the cheap way to buy them back.",
+    )
 
     args = parser.parse_args()
+
+    # Validate flag combinations here, not in the refiner subprocess. The
+    # streak lever needs the lattice pitch, which is only computed when the
+    # band limit is on; getting that wrong used to raise inside `run_refiner`,
+    # which killed the refiner and let the rest of the run finish looking
+    # normal -- a full sequence with no refined map and no obvious reason why.
+    if args.refiner_streak_opacity > 0 and args.refiner_aa_sigma <= 0:
+        parser.error(
+            "--refiner-streak-opacity needs --refiner-aa-sigma > 0: the "
+            "elongation criterion is defined against the measured lattice "
+            "pitch, which is only computed when the band limit is on. "
+            "--refiner-aa-sigma 0.5 is the measured setting.")
+    if args.refiner_polish_tol > 0 and args.refiner_polish_secs <= 0:
+        parser.error("--refiner-polish-tol only does something during the "
+                     "polish phase; set --refiner-polish-secs as well.")
+    if args.refiner_unfreeze_in_polish and not args.refiner_freeze_means:
+        parser.error("--refiner-unfreeze-in-polish requires "
+                     "--refiner-freeze-means; there is nothing to unfreeze.")
 
     load_config(args.config)
     # Injected before the backend process is spawned below, so run_backend
@@ -366,6 +511,10 @@ if __name__ == "__main__":
     print(config)
 
     manager = mp.Manager()
+    # Set when the post-sequence polish phase begins. The refiner is a separate
+    # process and cannot otherwise tell -- main just sleeps while it runs on.
+    polish_flag = manager.Value("i", 0)
+    polish_done = manager.Value("i", 0)
     main2viz = new_queue(manager, args.no_viz)
     viz2main = new_queue(manager, args.no_viz)
 
@@ -419,6 +568,9 @@ if __name__ == "__main__":
                 min_confidence=args.min_confidence,
                 keyframe_stride=args.map_keyframe_stride,
                 refined_snapshot=snapshot,
+                save_gs_view=args.save_gs_view,
+                gs_view_stride=args.gs_view_stride,
+                gs_scale_inflate=args.gs_scale_inflate,
             ),
         )
         viz.start()
@@ -518,6 +670,17 @@ if __name__ == "__main__":
                             device=refiner_device,
                             dedup_voxel=args.refiner_dedup_voxel,
                             max_gaussians=args.refiner_max_gaussians,
+                            aa_sigma=args.refiner_aa_sigma,
+                            min_confidence=args.refiner_min_confidence,
+                            streak_opacity=args.refiner_streak_opacity,
+                            freeze_means=args.refiner_freeze_means,
+                            polish_flag=polish_flag,
+                            unfreeze_in_polish=args.refiner_unfreeze_in_polish,
+                            polish_done=polish_done,
+                            polish_tol=args.refiner_polish_tol,
+                            polish_patience=args.refiner_polish_patience,
+                            uniform_fade=args.refiner_uniform_fade,
+                            scale_cap=args.refiner_scale_cap,
                             snapshot=snapshot),
             )
             refiner.start()
@@ -565,7 +728,8 @@ if __name__ == "__main__":
                 states.unpause()
 
             if i == len(dataset):
-                states.set_mode(Mode.TERMINATED)
+                if not (refiner is not None and args.refiner_polish_secs > 0):
+                    states.set_mode(Mode.TERMINATED)
                 break
 
             timestamp, img = dataset[i]
@@ -761,6 +925,18 @@ if __name__ == "__main__":
                 f"saved results may omit the last pose corrections",
                 file=sys.stderr,
             )
+
+        # Post-sequence polish: with the backend drained (poses final) but the
+        # refiner still alive, keep optimizing for --refiner-polish-secs. This
+        # is where big, supervision-starved maps buy their quality back.
+        if refiner is not None and args.refiner_polish_secs > 0:
+            print(f"[refiner] polish phase: {args.refiner_polish_secs:.0f}s "
+                  f"with final poses", flush=True)
+            polish_flag.value = 1
+            polish_end = time.time() + args.refiner_polish_secs
+            while (time.time() < polish_end and refiner.is_alive()
+                   and not polish_done.value):
+                time.sleep(0.5)
 
         states.set_mode(Mode.TERMINATED)
         backend.join()

@@ -187,6 +187,10 @@ def batch_to_dev(batch):
             "target": [to_dev(v) for v in batch["target"]]}
 
 
+OPACITY_PENALTY = 0.0
+OPACITY_TARGET = 0.9
+
+
 def step_loss(model, batch):
     b = batch_to_dev(batch)
     v1, v2 = b["context"]
@@ -194,9 +198,24 @@ def step_loss(model, batch):
     p1, p2 = model.forward(v1, v2)
     color, _ = model.decoder(b, p1, p2, (h, w))
     m = loss_mask.calculate_loss_mask(b)
-    return model.calculate_loss(b, v1, v2, p1, p2, color, m,
-                                apply_mask=True, average_over_mask=True,
-                                calculate_ssim=False)
+    out = model.calculate_loss(b, v1, v2, p1, p2, color, m,
+                               apply_mask=True, average_over_mask=True,
+                               calculate_ssim=False)
+    if OPACITY_PENALTY > 0:
+        # ANTI-SATURATION. The base checkpoint predicts opacity 1.0 for
+        # essentially every Gaussian (17.58) and the Replica head keeps it
+        # there, while the TUM head learns to un-saturate -- and only the
+        # un-saturated head improves a baked map. This penalises only the
+        # saturated tail, so a healthy distribution is untouched: it asks the
+        # head to stop using full opacity everywhere, not to prefer any
+        # particular value.
+        pen = 0.0
+        for p in (p1, p2):
+            o = p["opacities"] if "opacities" in p else p.get("opacity")
+            if o is not None:
+                pen = pen + torch.relu(o - OPACITY_TARGET).mean()
+        out = (out[0] + OPACITY_PENALTY * pen,) + tuple(out[1:])
+    return out
 
 
 EVAL_SEED = 1234
@@ -307,13 +326,27 @@ def main():
                     help="checkpoint dir; override so a long run does not "
                          "overwrite the 6-epoch result it is compared against")
     ap.add_argument("--family", default=FAMILY,
-                    choices=("tum", "7-scenes", "euroc", "eth3d"))
+                    choices=("tum", "7-scenes", "euroc", "eth3d", "replica", "replica-noisy", "replica-photo"))
     ap.add_argument("--batch", type=int, default=BATCH,
                     help="batch>2 buys at most 12%% throughput (measured, see "
                          "exp_batch_scan.py) and changes the optimization, so "
                          "it needs the LR scaling and warmup that come with it")
     ap.add_argument("--lr", type=float, default=None,
                     help="explicit LR; default is sqrt-scaled from batch")
+    ap.add_argument("--opacity-penalty", type=float, default=0.0, metavar="W",
+                    help="weight on relu(opacity-0.9), i.e. a penalty on the "
+                         "saturated tail only. Kimi round 24: if this yields an "
+                         "unsaturated head that keeps the val gain and flips "
+                         "the baked sign, it is simultaneously the evidence "
+                         "for the saturation mechanism and the fix for it.")
+    ap.add_argument("--opacity-target", type=float, default=0.9, metavar="T",
+                    help="the knee of the penalty: relu(opacity - T). T=0.9 "
+                         "only clips the saturated tail and left the median at "
+                         "0.84, which is why external thinning still bought "
+                         "21%% on that head (17.60) -- the >0.9 fraction said "
+                         "'un-saturated' while the accumulated alpha did not. "
+                         "T=0.6 targets the level the TUM head reached on its "
+                         "own (median 0.66).")
     ap.add_argument("--seed", type=int, default=None,
                     help="training seed (data order + any stochastic op). "
                          "Every head-training result so far is single-seed, "
@@ -331,6 +364,9 @@ def main():
         _r.seed(args.seed)
         torch.manual_seed(args.seed)
         torch.cuda.manual_seed_all(args.seed)
+    global OPACITY_PENALTY, OPACITY_TARGET
+    OPACITY_PENALTY = args.opacity_penalty
+    OPACITY_TARGET = args.opacity_target
     configure_family(args.family, args.batch, args.lr)
     # This module does os.chdir(CORE) at import, long before argparse runs, so
     # a relative --out would silently resolve under splatt3r_core/ instead of

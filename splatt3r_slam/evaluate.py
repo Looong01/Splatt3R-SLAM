@@ -268,7 +268,7 @@ def save_gaussian_map(
     and the quaternion is reordered scipy's (x,y,z,w) -> 3DGS's (w,x,y,z).
     """
     from splatt3r_slam.splatt3r_utils import bake_gaussians_world
-    from splatt3r_slam.gaussian_ply_codec import encode_gaussians_for_ply
+    from splatt3r_slam.gaussian_ply_codec import gaussians_to_ply_element
 
     all_means, all_cov, all_rgb, all_opa = [], [], [], []
     with keyframes.lock:
@@ -328,23 +328,9 @@ def save_gaussian_map(
     # gaussian_ply_codec so scripts/test_gaussian_ply_roundtrip.py can
     # exercise the exact same code. It also recovers rotation/scale from the
     # world-space covariance by SVD and handles det=-1 reflections.
-    attributes = encode_gaussians_for_ply(means, cov_tri, rgb, opa)
-
-    names = (
-        ["x", "y", "z", "nx", "ny", "nz"]
-        + [f"f_dc_{i}" for i in range(3)]
-        + ["opacity"]
-        + [f"scale_{i}" for i in range(3)]
-        + [f"rot_{i}" for i in range(4)]
-    )
-    n_gauss = attributes.shape[0]
-    elements = np.empty(n_gauss, dtype=[(n_, "f4") for n_ in names])
-    # Column-wise, not `elements[:] = list(map(tuple, attributes))`: that
-    # builds one Python tuple per Gaussian, which for a full-density map
-    # (tens of millions) costs several GB of transient memory and minutes
-    # of pure interpreter overhead.
-    for i, name in enumerate(names):
-        elements[name] = attributes[:, i]
-    PlyData([PlyElement.describe(elements, "vertex")]).write(str(filename))
+    # gaussians_to_ply_element additionally appends uchar red/green/blue so
+    # generic viewers (MeshLab) show colour instead of a default swatch.
+    PlyData([gaussians_to_ply_element(means, cov_tri, rgb, opa)]).write(str(filename))
+    n_gauss = means.shape[0]
     print(f"[gaussian-map] wrote {n_gauss} Gaussians -> {filename}")
     return n_gauss

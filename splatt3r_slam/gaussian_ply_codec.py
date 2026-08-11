@@ -108,6 +108,39 @@ def encode_gaussians_for_ply(means, cov_tri, rgb, opa, f_rest=None):
     ).astype(np.float32)
 
 
+def gaussians_to_ply_element(means, cov_tri, rgb, opa, f_rest=None):
+    """encode_gaussians_for_ply + wrap as a PlyElement, with uchar
+    red/green/blue columns appended.
+
+    The 3DGS convention stores colour as SH DC coefficients (f_dc_*), which
+    generic point-cloud tools (MeshLab, CloudCompare) do not read -- they
+    fall back to a single default colour. Appending standard uchar RGB keeps
+    the file a valid 3DGS ply (all original properties intact, readers that
+    select columns by name are unaffected) while displaying coloured points
+    everywhere. RGB is computed from the same [0,1] colour encode inverts,
+    so the two columns are consistent by construction.
+    """
+    from plyfile import PlyElement
+
+    attributes = encode_gaussians_for_ply(means, cov_tri, rgb, opa, f_rest)
+    names = (
+        ["x", "y", "z", "nx", "ny", "nz"]
+        + [f"f_dc_{i}" for i in range(3)]
+        + ["opacity"]
+        + [f"scale_{i}" for i in range(3)]
+        + [f"rot_{i}" for i in range(4)]
+    )
+    dtype = [(n_, "f4") for n_ in names] + [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    elements = np.empty(attributes.shape[0], dtype=dtype)
+    for i, name in enumerate(names):
+        elements[name] = attributes[:, i]
+    rgb_u8 = (np.clip(rgb.cpu().numpy(), 0, 1) * 255).round().astype(np.uint8)
+    elements["red"] = rgb_u8[:, 0]
+    elements["green"] = rgb_u8[:, 1]
+    elements["blue"] = rgb_u8[:, 2]
+    return PlyElement.describe(elements, "vertex")
+
+
 def decode_gaussians_from_ply(path, device="cpu", dtype=torch.float32):
     """Inverse of ``encode_gaussians_for_ply``: read a 3DGS .ply back into
     Gaussian parameters.

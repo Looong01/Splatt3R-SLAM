@@ -3074,7 +3074,13 @@ lpips. Treat the psnr lead as "causality is free" (within noise: the post-hoc
 trace itself wobbles ±0.1 dB between checkpoints), not as "causality helps".
 Caveats: one sequence, one seed; the mid-run evals of a partially-built map
 (e.g. 11.05 dB at iter 500 of the 3000-iter causal run) measure map
-incompleteness, not optimization failure.
+incompleteness, not optimization failure. A further confound, flagged in
+review: the causal arm iterates on a SMALLER map for much of the run
+(keyframes are injected over time), so equal total iterations give each
+Gaussian MORE updates than in the post-hoc arm — a curriculum effect. As a
+deployment answer this is the correct comparison (wall-clock iterations are
+the real budget); as a scientific claim about the causal constraint alone it
+needs that label.
 
 ### 15.2 (g) GPU contention — latency doubles on one GPU, is free on two
 
@@ -3582,6 +3588,16 @@ refinement) is deliberately NOT built on that evidence (§15.9).
 
 ### 16.4 What is NOT claimed
 
+- **A gain on all nine sequences.** The nine-sequence table reports psnr
+  deltas of +0.10 to +1.80, but on **room (+0.30, lpips 0.5418 → 0.6019,
+  +11.1%) and 360 (+0.14, lpips 0.4841 → 0.5838, +20.6%) the perceptual
+  metric moves the wrong way by far more than psnr moves the right way.**
+  This project has argued throughout (§10.11, §13.10) that lpips is the
+  better perceptual proxy, so by its own standard those two are **negative**.
+  The honest headline is **7/9 positive, 2/9 negative**, not "delivered on
+  all four families". Both losing sequences are the large maps (7.3M+
+  Gaussians), which is the supervision-starvation signature of §13.12a —
+  see §16.5 for the arithmetic.
 - Generalization beyond TUM desk/room for the online numbers (the offline
   family-level head gains are separately measured, §8.1; causal/seam work
   is two sequences, one seed each).
@@ -3591,3 +3607,4665 @@ refinement) is deliberately NOT built on that evidence (§15.9).
   implemented but never drawn (headless box).
 - Long-sequence behaviour of the dedup lifecycle (desk fires it once, at
   the tail, with no recovery budget).
+
+### 16.5 The supervision budget is the binding constraint on large maps
+
+§13.10 measured a saturation rule from two independent scenes: supervision
+saturates at roughly **40k Gaussians per view** (desk's knee at ~45 views for
+1.86M; room's at ~200 for 7.35M). Applying it to the online runs explains the
+2/9 losses without any new hypothesis:
+
+| sequence | map | views the rule asks for | online gain |
+|---|---|---|---|
+| desk | 1.86M | ~46 | **+1.33 dB** |
+| room | 7.35M | ~184 | +0.30, lpips worse |
+| 360 | 7.27M | ~182 | +0.14, lpips worse |
+
+desk is the only one whose supervision budget is anywhere near what its map
+needs, and it is the only large gain among the TUM sequences.
+
+There are two ways to satisfy the rule, and only one has been tried:
+
+1. **Raise the views** — more supervision per unit time. `--refiner-polish-secs`
+   (added at the end of the session) does this by continuing to optimize after
+   the sequence ends; untested on a large map.
+2. **Shrink the map** — 86.7% of pixels in a median held-out view are covered
+   by ≥2 keyframes, and the dedup ablation located the redundancy precisely: a
+   10 mm voxel merge removes 27.6% of desk's Gaussians and collapses the
+   overlap/single-coverage anomaly from +0.63 to +0.18 dB. **Untested as a
+   quality lever** — the one dedup run fired at the tail with ~6 steps of
+   recovery budget and cost −0.53 dB, which measures the schedule, not the
+   idea. Fired early, it should raise per-Gaussian update count for the same
+   wall-clock budget, which is exactly what the rule says the large maps lack.
+
+Neither has been measured. Both are cheap. On 360 the second is the larger
+lever by construction: 7.27M Gaussians against ~50 effective supervision views
+is 145k Gaussians/view, 3.6x past the measured saturation point.
+
+### 16.6 The large-map loss is budget, and dedup contributes nothing (controlled)
+
+§16.5 proposed two ways to satisfy the 40k-Gaussians-per-view rule on the large
+maps: raise the supervision, or shrink the map. Run as a 2x2 on 360 (offline,
+`refine_local.py --stage 2`, n_train 50 — the same effective supervision the
+online arm had):
+
+```
+                    init                3000 iterations
+no dedup      11.7902 / 0.4876    ->    13.5105 / 0.4409
+10 mm dedup   11.7870 / 0.4926    ->    13.5021 / 0.4407
+```
+
+**The two curves coincide at every checkpoint** (3000-iteration difference
+0.008 dB / 0.0002 lpips). Dedup deletes 584,665 Gaussians (8.0%) and buys
+nothing.
+
+So the entire recovery — **+1.71 dB psnr and −10.4% lpips, on the sequence
+whose online arm was a net loss** — is the offline iteration budget alone.
+
+Two consequences:
+
+1. **The 2/9 online losses are supervision starvation, confirmed.** The same
+   map, the same 50 views, the same optimizer: given enough iterations the
+   perceptual metric moves the *right* way by 10%, against +20.6% the wrong way
+   online. The lever is `--refiner-polish-secs` (continue optimizing after the
+   sequence ends), not a different method and not colour harmonization.
+2. **"Shrink the map" is dead, at least on 360.** The prediction that dedup
+   would help came from desk's 27.6% removal rate; 360 removes only 8.0%
+   because it is a rotation sequence whose keyframes overlap far less than
+   desk's back-and-forth sweep. Extrapolating one scene's redundancy structure
+   to another was wrong, and even the 8% that is removed changes nothing.
+
+Note what this does **not** say: dedup may still be worth keeping as a
+map-*size* control on long sequences (its original purpose), and the desk
+overlap anomaly it was built to probe is a separate question. It is only
+falsified as a *quality* lever.
+
+#### The full 2x2, and the budget gap it exposes
+
+```
+360, n_train 50            3000 iterations      12000 iterations
+no dedup                   13.5105 / 0.4409     13.9951 / 0.4322
+10 mm dedup                13.5021 / 0.4407     13.9978 / 0.4310
+```
+
+Dedup buys nothing at *either* budget (0.008 / 0.003 dB). Iterations keep
+paying and are **not saturated at 12000** — 10000 to 12000 still adds 0.08 dB.
+
+Against the online arm on the same sequence (baked 11.9973 / 0.4841):
+
+```
+online refiner       +0.14 dB   lpips +20.6%   <- net loss
+offline 3000 iters   +1.51 dB   lpips  -8.9%   <- net gain
+offline 12000 iters  +2.00 dB   lpips -10.7%   <- net gain
+```
+
+So the large-map perceptual regression is **budget, definitively**: the same
+map and the same 50 views move psnr and lpips the same direction once the
+optimizer is given enough steps.
+
+**But the gap is two orders of magnitude, not a knob's worth.** Throughput
+measured directly (300 iterations, same harness, one A6000):
+
+```
+desk  1.86M Gaussians   300 iters / 122 s   2.46 it/s
+360   7.27M Gaussians   300 iters / 437 s   0.69 it/s
+```
+
+3.9x the map, 3.6x the time — per-step cost is essentially linear in Gaussian
+count, as a full-map render per step implies. 360's sequence lasts ~125 s, so
+the online refiner gets about **86 steps**:
+
+```
+online actually gets      ~86 steps
+first turns positive     3000 steps     35x the sequence duration
+best measured           12000 steps    140x
+```
+
+`--refiner-polish-secs` was sized in seconds. At 0.69 it/s, 3000 steps is
+**73 minutes** of polish and 12000 is **4.9 hours**. That is not "polish briefly
+after the sequence" — it is offline post-processing under another name.
+
+**Boundary this forces into the write-up:** online refinement's benefit decays
+with map size, and at the ~7M-Gaussian scale the online budget is structurally
+insufficient to turn it positive. Small maps (desk 1.86M, MH_01, plant_1) win
+online by +1.3 to +1.8 dB and need no change. Large maps either accept an
+offline post-processing pass — labelled as such — or need real throughput work
+(the per-step cost is rendering 7.27M Gaussians; that is visibility culling or
+LOD, not a parameter).
+
+#### Figure pipeline (and why GUI captures are not it)
+
+The stippled "salt and pepper" in the GUI captures is **not** a map property.
+Same map, same Gaussians, rendered at the capture resolution (512x384) instead
+of the viewport's 1960x1061: no stippling at all, surfaces continuous. The
+earlier attribution to `inflate_scales_for_stride` was wrong — that branch is
+`if s > 1`, and these runs used stride 1, so it never executed.
+
+The real mechanism is that per-pixel Gaussians have a density fixed at
+prediction time, which cannot support arbitrarily close or high-resolution
+viewing: the 3D gaps always existed and the viewport merely resolves them.
+Getting closer does the same thing (the worst GUI frames are the ones nearest a
+wall). A display-side `--gs-scale-inflate` (covariance x inflate^2 at render
+time only) closes them for demos without touching the map or any metric.
+
+For figures, render at native resolution from the offline path:
+
+```
+main.py ... --dump-keyframe-gaussians --save-as frames_head
+refine_local.py --stage 2 --iters 3000 --save-renders logs/figs/<seq> ...
+```
+
+Verified on 360: holes closed, wall camera and shelf legible, poster layout
+recoverable; blurry against ground truth but structurally correct and complete.
+
+#### How much budget, exactly — and why 360 starved while desk did not
+
+Extending the 2x2 to 12000 iterations separates the two metrics, which do not
+saturate together:
+
+```
+iterations      psnr      lpips
+     3000      13.51     0.4409
+     6000      13.69     0.4364
+    12000      14.00     0.4322       (dedup arm identical: 13.9978 / 0.4310)
+```
+
+**lpips is bought by the first ~3000-6000 iterations and then flattens; psnr
+keeps climbing.** Since it is lpips that turned 360 into a net loss online, the
+polish budget only has to reach the knee — roughly 3000 iterations — not the
+psnr asymptote.
+
+The online refiner's actual step counts explain the 2/9 losses exactly, and the
+explanation is sharper than "the large maps got fewer steps":
+
+| sequence | Gaussians | online steps | Gaussians per step | online Δpsnr | lpips |
+|---|---|---|---|---|---|
+| desk | 1.86M | 200 | **9,300** | +1.33 | improved |
+| 360 | 7.27M | 176 | **41,307** | +0.14 | worse |
+
+**176 and 200 are nearly the same absolute step count.** What differs by 4.4x is
+the optimization *per Gaussian*. desk's map is small enough that 200 steps is a
+real budget; 360's is not, and the loss follows.
+
+Concrete sizing for `--refiner-polish-secs`, from measurement rather than taste:
+
+- to match desk's per-Gaussian density (9,300 Gaussians/step), 360 needs
+  **~780 steps** — 4.4x its current 176;
+- to reach the offline lpips knee (3000 steps at 2,423 Gaussians/step) it needs
+  **~2,800 additional steps**.
+
+The first target is the cheap one and is where the sign of the result flips;
+the second buys the remaining psnr. Neither has been run online yet — the
+offline arms above are the evidence that the budget is the binding variable,
+not a demonstration that polish delivers it. Throughput at 7.27M Gaussians is
+also lower than the ~3-4 it/s calibrated at 1.86M, so the wall-clock cost of
+780 steps has to be measured before quoting a number of seconds.
+
+### 16.7 Where the per-step cost actually goes, and what buys steps back
+
+§16.6 left "throughput work — visibility culling or LOD" as a hand-wave. Profiled
+instead (360, 7,267,700 Gaussians, 512x384, 10-step mean, CUDA-synchronized):
+
+```
+world() composition   242.3 ms   17.6%
+forward render        143.1 ms   10.4%
+backward              977.2 ms   71.1%
+Adam step              11.4 ms    0.8%
+total                1374.0 ms   -> 0.73 it/s
+
+Gaussians receiving gradient from one view: 960,524 / 7,267,700 = 13.2%
+```
+
+Two things this kills and one it locates:
+
+- **Sparse Adam is not worth doing.** The optimizer is 0.8% of the step. The
+  intuition that updating 7.27M x 14 parameters every step must dominate is
+  simply wrong.
+- **The rasterizer is not the bottleneck.** Forward render is 10.4%.
+- **The bottleneck is our own composition layer.** Backward is 6.8x forward,
+  where 2-3x is normal for a rasterizer. The excess is the backward through
+  `world()` — the `einsum`, `build_covariance`, and the `A @ cov @ A^T`
+  sandwich, all differentiated over 7.27M primitives. `world()` forward plus
+  its backward is roughly **54% of the step**.
+
+#### Measured: culling before `world()`, not inside the rasterizer
+
+The rasterizer already frustum-culls internally; that is not where the waste is.
+The waste is composing 7.27M Gaussians when 13% of them can affect the image.
+Gathering the visible subset *before* `world()`:
+
+```
+full        7,267,700 gaussians   1410.9 ms/step   0.71 it/s
+visible sub 1,260,287 gaussians    255.1 ms/step   3.92 it/s    5.5x
+```
+
+Per-view visible fraction ranges 9.5-17.3%, involving **16-26 of 46 keyframes**
+— so a keyframe-level frustum test (46 tests, not 7.27M) captures most of it
+essentially for free, and `kf_id` is already carried on every Gaussian.
+
+**IoU between two different views' masks: 0.000.** Completely disjoint on a
+rotation sequence. That cuts both ways: per-view mask caching is perfect (each
+supervision view has its own stable set, and the map changes slowly), but there
+is **no shared hot subset** to keep resident — every step swaps a different
+tranche of parameters.
+
+#### The four levers, with sizes
+
+| lever | size | status |
+|---|---|---|
+| 1. per-view visibility culling before `world()` | **5.5x measured** | not built; `kf_id` and the backend's covisibility graph already exist |
+| 2. lower injection density (top-K by confidence per keyframe, instead of one Gaussian per pixel) | 2-4x by construction — 46 x 512x384 = 9.0M raw, 7.27M after filtering, against 1-2M for a comparable room in standard 3DGS | not measured for quality; the dedup null result (8% removed, zero quality change) is indirect evidence of slack |
+| 3. group `A @ cov @ A^T` by keyframe | unmeasured; A takes only 46 distinct values, so 46 contiguous block matmuls replace 7.27M batched 3x3 sandwiches | independent of 1, multiplies with it |
+| 4. sparse Adam | **0.8% — do not build** | falsified above |
+
+#### What this does and does not achieve
+
+```
+today                 0.71 it/s   86 steps in-sequence    3000 steps = 73 min
++ culling (5.5x)      3.9  it/s   480 steps               3000 steps = 13 min
++ half the density   ~7    it/s   875 steps               3000 steps =  7 min
+```
+
+Even with both, in-sequence is ~875 steps against the 3000 that turn 360
+positive — still under a third. What changes is `--refiner-polish-secs`: from
+73 minutes (offline post-processing wearing a different name) to ~7 minutes (a
+defensible post-sequence step). That is the qualitative difference this work
+buys; it does not make large maps converge inside the sequence.
+
+Closing that last 3-4x cannot come from making each step faster. It has to come
+from needing fewer steps — better initialization, or more supervision per step
+(multiple views per iteration) — which is a different investigation.
+
+**Order to build in, and the check for the first one:** lever 1 first. It is
+measured, it is the simplest (the mask is derivable from data already carried),
+and it changes no numerical semantics — the Gaussians it drops have exactly
+zero gradient. So the acceptance test is strict: **the same iteration count must
+produce a bit-identical result, only faster.** Anything else means the mask is
+wrong.
+
+### 16.8 Lever 1 built: 2.1x, not 5.5x, and why the difference matters
+
+`LocalGaussianMap.visible_keyframes/visible_subset` — per-keyframe clusters split
+into `tiles^2` blocks along the source raster, each bounded by a world-space AABB,
+kept if any corner falls in the widened frustum. 46 x tiles^2 box tests instead of
+7.27M projections.
+
+```
+tiles=4   keeps 45.4%   false negatives 0   mask cost 703 ms
+tiles=8   keeps 44.1%   false negatives 0   mask cost 481 ms
+(actual gradient support: 12.5%)
+
+full        1383.7 ms/step   0.72 it/s
+culled       653.5 ms/step   1.53 it/s      2.12x
+```
+
+**Correct, and by the right test.** Zero false negatives against the measured
+gradient support, and the numerical difference culling introduces (3.93e-04 on
+means after 8 steps) is *smaller than the same configuration re-run against
+itself* (5.48e-04).
+
+That second number matters more than the speedup. **The acceptance criterion
+stated in §16.7 — "bit-identical, only faster" — is unachievable by
+construction and was wrong to write down.** `renderCUDA`'s backward accumulates
+with `atomicAdd`, and Adam's `eps=1e-15` turns any difference in a near-zero
+gradient into a full `lr`-sized step (the ratio `exp_avg / (sqrt(exp_avg_sq) +
+1e-15)` is O(1) regardless of magnitude). The correct criterion is **"within the
+system's own run-to-run noise"**, which is what was checked.
+
+**Why 2.1x and not the 5.5x of §16.7.** That 5.5x was measured by gathering the
+*actual gradient support* — which includes occlusion. An axis-aligned box test
+cannot: on a rotation sequence each keyframe's cluster is deep along the view
+ray, so its box sweeps in Gaussians that are geometrically in frustum but
+hidden behind nearer surfaces. Refining the blocks does not help (4 -> 8 tiles
+moves 45.4% -> 44.1%); the limit is the box, not its granularity. **5.5x is the
+ceiling for any occlusion-aware scheme; 2.1x is what pure geometry buys.**
+
+Revised arithmetic:
+
+```
+today                  0.72 it/s    86 steps in-sequence   3000 steps = 73 min
++ block culling (2.1x) 1.53 it/s   183 steps               3000 steps = 33 min
+```
+
+The remaining 2.6x needs occlusion, which means **per-view mask caching**: run
+one full step per supervision view, record `radii > 0` (the rasterizer computes
+it anyway), reuse. The pool is ~50 fixed views and the per-view masks were
+measured to be *completely disjoint* (IoU 0.000), so each view's set is stable
+and independent — caching is exact and there is no shared set to thrash. Cost is
+a ~50-step warm-up and a refresh policy after pose corrections.
+
+### 16.9 Lever 2 built: the map is too dense for its own budget — 1.65x, and better
+
+Density knob is `min_confidence` on injection (`prepare_gaussians_local` already
+filters on it; `refine_local.py --min-confidence` exposes it). 360, 3000
+iterations per arm, each arm timed:
+
+```
+conf   gaussians    it/s     psnr@3000   wall
+1.5    7,267,700    0.704    13.5045     4261 s   (default)
+2.5    6,371,960    0.787    13.4916     3811 s
+4.0    4,531,321    1.162    13.5945     2581 s
+8.0    1,719,650    —        crashed     — (only 30 of 46 keyframes survive
+                                            the filter; that is the limit)
+```
+
+Compared at **matched wall clock** — the only fair comparison, since a sparser
+map is worse per step and gets more steps per second — at T = 2581 s:
+
+```
+conf   steps in T   psnr@T    lpips@T
+1.5      1817       13.4314   0.4530
+2.5      2032       13.4091   0.4473
+4.0      3000       13.5945   0.4447   <- wins BOTH metrics
+```
+
+**`min_confidence=4.0` is strictly better**: 62% of the Gaussians, 1.65x the
+throughput, +0.163 dB and −0.0083 lpips against the default at equal seconds.
+The default map is carrying 2.7M Gaussians that cost time and contribute
+nothing the supervision budget can exploit.
+
+This is the same finding as §13.10's 40k-Gaussians-per-view rule seen from the
+other side: rather than raising the views to match the map, lower the map to
+match the views. Note it is the *density*, not the redundancy, that mattered —
+voxel dedup removed 8% and changed nothing (§16.6), while confidence-ranked
+thinning removes 38% and improves the result.
+
+Levers 1 and 2 are independent (culling acts per view, density acts on the map),
+so they should compose to roughly **3.5x**:
+
+```
+today                      0.72 it/s     86 steps in-sequence   3000 steps = 73 min
++ block culling (2.1x)     1.53 it/s    183 steps                           33 min
++ conf 4.0    (1.65x)     ~2.5  it/s    ~300 steps                          20 min
+```
+
+Still not in-sequence convergence for a 7M map, but 73 minutes of "polish" has
+become 20, and the quality at any fixed budget is higher, not merely faster.
+
+### 16.10 Lever 3 falsified: grouping the composition by keyframe is slower
+
+`A` in `A @ cov @ A^T` takes only K distinct values (one per keyframe), and
+gathering it per Gaussian materializes a (M,3,3) tensor — 262 MB at 7.27M. The
+proposal in §16.7 was to exploit that: Gaussians are appended keyframe by
+keyframe, so `kf_id` is sorted into 46 contiguous runs, and one (3,3) can be
+broadcast against each run instead.
+
+Implemented, verified numerically identical (means 4.8e-07, cov 1.9e-09 — fp
+noise), and **measured slower**:
+
+```
+per-Gaussian gather   1383.7 ms/step
+grouped by run        1427.7 ms/step
+```
+
+The hypothesis was wrong. The cost is the matmul itself — M x 27 FLOPs either
+way — not the gather. Replacing two large kernel launches with 46 small ones
+plus a final `torch.cat` loses more to launch overhead and the copy than the
+avoided materialization saves. Reverted; the reasoning is left as a comment at
+the call site so it is not re-attempted.
+
+Levers, final status:
+
+| lever | claim | outcome |
+|---|---|---|
+| 1. per-view visibility culling | 5.5x hoped | **2.1x built** — geometry cannot see occlusion (§16.8) |
+| 2. lower injection density | 2-4x hoped | **1.65x built, and better quality at matched wall clock** (§16.9) |
+| 3. group composition by keyframe | unmeasured | **falsified — slower** |
+| 4. sparse Adam | — | **falsified before building — 0.8% of the step** (§16.7) |
+
+Two of four survive, for ~3.5x combined. The remaining headroom is the 2.6x
+between geometric culling and true visibility, which needs per-view mask
+caching (record `radii > 0`, reuse; masks are disjoint across views, IoU 0.000,
+so caching is exact and thrash-free).
+
+### 16.11 Throughput work: handover
+
+Consolidated so the next person does not re-derive it. Detail in §16.7-16.10.
+
+#### Set this today
+
+**`--min-confidence 4.0` for any map above ~4M Gaussians.** It is the only one
+of the four levers that improves speed *and* quality, and it carries no risk:
+1.65x throughput, +0.163 dB, −0.0083 lpips at matched wall clock on 360, using
+62% of the Gaussians. The default 1.5 leaves 2.7M Gaussians in the map that
+cost time and that the supervision budget cannot exploit.
+
+The general statement is §13.10's 40k-Gaussians-per-view rule read backwards:
+**lower the map to match the views** rather than raise the views to match the
+map. And note *which* reduction works — voxel dedup removed 8% and changed
+nothing (§16.6), confidence thinning removed 38% and improved the result. The
+problem is density, not redundancy.
+
+#### The throughput ladder as built
+
+```
+today                    0.72 it/s     86 steps in-sequence   3000 steps = 73 min
++ block culling (2.1x)   1.53 it/s    183 steps                           33 min
++ conf 4.0    (1.65x)   ~2.5  it/s   ~300 steps                           20 min
++ mask caching (2.6x)   ~6.5  it/s   ~780 steps                            8 min
+```
+
+The first three are built and measured; the fourth is designed and not built.
+
+#### Next, and its evidence
+
+**Per-view mask caching** is the only remaining throughput item worth doing.
+Geometric culling stops at 2.1x because an axis-aligned box cannot represent
+occlusion, and 5.5x is the measured ceiling for anything that can (§16.8).
+Record `radii > 0` per supervision view — the rasterizer computes it anyway —
+and reuse. The design is safe for two measured reasons: the per-view masks are
+**completely disjoint** (IoU 0.000 on a rotation sequence), so caching is exact
+and there is nothing to thrash; and the pool is ~50 fixed views, so warm-up is
+~50 full steps. It needs a refresh policy after pose corrections.
+
+#### Do not re-attempt
+
+- **Sparse Adam.** 0.8% of a step. The intuition that updating 7.27M x 14
+  parameters must dominate is simply wrong (§16.7).
+- **Grouping `A @ cov @ A^T` by keyframe.** Numerically identical, measurably
+  slower — the matmul is the cost, not the gather (§16.10). A comment at the
+  call site records this.
+
+#### The limit none of this reaches
+
+Even with all four, a 7M-Gaussian map gets ~780 in-sequence steps against the
+3000 that turn 360 net-positive. **The remaining 3-4x cannot come from making
+each step faster** — it has to come from needing fewer steps: better
+initialization, or more supervision per step (several views per iteration).
+That is a different investigation and nothing here bears on it.
+
+Small maps are unaffected by all of the above: desk (1.86M) already converges
+in-sequence and wins by +1.3 to +1.8 dB online.
+
+#### Method note, for the write-up
+
+Four hypotheses were stated with predicted sizes before building. Two survived
+(2.1x against 5.5x predicted; 1.65x within the 2-4x predicted), and **two were
+falsified by measurement, one of them before any code was written**. The two
+that died were both mine, and both died to a measurement rather than to an
+argument — the profile in §16.7 killed sparse Adam, and a benchmark killed the
+grouped composition. Stating the predicted size up front is what made the
+falsifications legible.
+## 17. Image quality: the dot lattice, and what the optimizer does to it (2026-08-08)
+
+The trigger was visual, not metric. Every GUI capture of the online 360 map
+(`logs/gs_view_360/gs_map_*.png`) is covered in a regular halftone dot pattern,
+worst on flat surfaces, with moire where it beats against the output pixel grid;
+frame 48 also shows straight-edged seams with a brightness step across them, and
+frame 700 (a close-up late in the sequence) is dominated by the dots to the point
+where geometry is barely readable. None of it moves `psnr`/`lpips`.
+
+### 17.1 Lever 4 replaced, not built: per-Gaussian culling is 6.51 it/s
+
+§16.11 queued per-view mask caching for the remaining 2.6x. Two measurements
+were taken before writing it, and both went against the design.
+
+**The signal `radii > 0` is nearly the whole story.** §16.11 argued it was
+unusable because it is blind to occlusion. Measured on 360 against the true
+gradient support (the Gaussians with nonzero `f_dc.grad` after a backward):
+
+```
+view   block AABB    radii>0   grad support
+   0      48.3%        9.7%        8.6%
+   6      49.7%       11.9%       11.2%
+  18      28.5%        7.1%        6.9%
+  36      29.8%        4.8%        4.5%
+```
+
+Occlusion is worth ~12%, not the 2.6x §16.11 attributed to it. **The 45.4% the
+block test keeps was almost entirely frustum slack, not occlusion.**
+
+**And the reason the block test was chosen was itself wrong.** §16.8 justified
+block AABBs as "46 x tiles^2 box tests instead of 7.27M projections". Projecting
+7.27M points is one gathered 3x3 matvec — 65 MFLOP, and the Gaussians are stored
+contiguously per keyframe so it is 46 small matmuls with no gather at all. The
+composition it guards is two 3x3 matmuls per Gaussian *plus a backward*. The
+test was never the expensive part; the block scheme's own Python loop over
+46 x 16 boxes cost more than the thing it replaced.
+
+`LocalGaussianMap.visible_exact` — per-Gaussian frustum test with each
+Gaussian's own 3-sigma footprint, the projection Jacobian's off-axis factor
+`sqrt(1 + (x/z)^2)`, and a 6-pixel pad:
+
+```
+             kept        mask cost    throughput
+none         100%           —          0.72 it/s
+block      28-50%        137 ms        1.41 it/s
+exact     4.9-12.6%       12.5 ms      6.51 it/s     false negatives 0
+```
+
+**9.0x over no culling, 4.6x over the block test, and exact** — zero Gaussians
+carrying gradient are dropped, on the same acceptance test §16.8 used. It is
+also stateless: no warm-up, no staleness, no refresh policy after a pose
+correction, none of which the cache could have avoided.
+
+The pad matters and is not decoration: without it, 34-1042 Gaussians per view
+(0.05-0.2% of the support) fell outside the test. The rasterizer adds 0.3 to the
+2D covariance diagonal before taking its own radius, worth ~1.6 px. Six pixels
+costs +0.4 pp of kept fraction and takes the false negatives to exactly zero.
+
+Revised ladder, all three built and measured:
+
+```
+today                      0.72 it/s     86 steps in-sequence   3000 steps = 73 min
++ conf 4.0    (1.65x)     ~1.2  it/s    ~140 steps                          42 min
++ exact culling (9.0x)    ~6.5+ it/s    ~780 steps                       <  8 min
+```
+
+`ViewMaskCache` remains in `refiner.py`, unused, with the measurement that
+retired it in its docstring. **Two designs in a row (grouped composition,
+mask caching) died to a measurement taken before the code was written.** Both
+times the premise was an unexamined guess about which operation was expensive.
+
+### 17.2 The dots are a coverage defect in the map, and they are measurable
+
+Splatt3R emits one Gaussian per source pixel and sizes it to roughly its own
+pixel footprint *at the source view*. The rasterizer point-samples each Gaussian
+at the pixel centre — there is no area integration — so with lattice pitch `dx`
+and effective std `sigma`, a flat region's first lattice harmonic has relative
+amplitude `exp(-2 pi^2 sigma^2 / dx^2)`. At the source view and resolution the
+sample points sit on the lattice centres and it is invisible. Magnify, shift, or
+resample and it enters the output Nyquist band: dots. At a non-integer ratio it
+beats against the pixel grid: moire.
+
+The governing quantity `sigma/dx` is a property of the **map** and does not
+depend on the view; only its visibility depends on magnification. (An earlier
+version of this argument had it that a closer view covers fewer output pixels
+per Gaussian, which is backwards. Kimi caught it. The frequency argument is the
+right one and it is what predicts the sweep.)
+
+**E1, the decisive test, needs no ground truth**: render each held-out view at
+1x and at 2x, average-pool the 2x back to native, and compare. If the map has no
+structure between the native sample points the two agree. `scripts/diag_lattice.py`,
+360, 25 held-out views, raw baked map, no optimization:
+
+```
+  tau    psnr_1x  psnr_ss   self    lpips   hp_flat   alpha   hp_alpha
+ 0.00    12.7910  12.8118   27.94   0.4854  0.01042   0.9760  0.03514
+ 0.30    12.7827  12.8661   33.51   0.4880  0.00360   0.9839  0.00902
+ 0.50    12.7820  12.8322   39.14   0.4936  0.00177   0.9889  0.00258
+ 0.70    12.7904  12.8075   43.72   0.5018  0.00151   0.9911  0.00169
+ 1.00    12.7909  12.7911   47.57   0.5167  0.00126   0.9918  0.00127
+```
+
+- **self = 27.94 dB at tau=0.** The map really does have structure between its
+  own sample points. It is a representation defect, not a viewer artifact.
+- **psnr_1x is flat to +-0.01 dB across the entire sweep.** The metric this
+  project has optimized all along is *provably blind* to the most visible defect
+  in the output. That disconnect is the finding, not a caveat to it.
+- **`hp_alpha` — the lattice amplitude in the accumulated ALPHA channel — falls
+  13.6x** (0.03514 -> 0.00258 at tau=0.5). Alpha carries no colour, so this
+  settles the competing hypothesis: the dots are **coverage**, not low opacity.
+  Opacity is one scalar per Gaussian, uniform over its own footprint; producing
+  a *pattern* needs spatial modulation of alpha, which only coverage supplies.
+  Mean alpha is already 0.976 at tau=0, so there was no opacity deficit to
+  begin with. `logs/lattice_360/crop_tau0_alpha.png` vs `crop_tau0.5_alpha.png`
+  shows it directly — a textbook halftone, and then nothing.
+- **lpips is the price**: +1.7% at tau=0.5, +6.4% at tau=1. Monotone. This is
+  the blur the filter buys the coverage with.
+
+The fix is Mip-Splatting's 3D smoothing filter with the band limit read off the
+lattice instead of estimated from the cameras: the Gaussians are born on a pixel
+grid and nothing densifies, so the pitch is *directly measurable* as the distance
+to the nearest 4-neighbour on the source raster. **Min over the neighbours, not
+mean or median**: across a depth discontinuity two of the four neighbours are
+metres away, and any central statistic would inflate every silhouette Gaussian
+into a blob spanning the gap — manufacturing the trailing-streak artifact on
+purpose. Adding `sigma^2 I` is exact in this parameterization since
+`R diag(s^2) R^T + sigma^2 I = R (diag(s^2) + sigma^2 I) R^T`.
+
+Predicted vs measured, for the record. The perceptual criterion `exp(-2 pi^2
+tau^2)` predicts residual amplitudes of 11% / 0.7% / 0.02% at tau = 0.3 / 0.5 /
+0.7. Measured (floor-subtracted) 22.9% / 3.9% / 1.2%. **Right shape, ~5x slower
+decay** — expected, since `dx` varies by an order of magnitude across a 0.5-5 m
+depth range and one global `tau` cannot put every Gaussian at the same
+`sigma/dx`.
+
+One prediction of E1 was falsified, and it was made by both reviewer and author:
+the 2x-pooled render was expected to score 1-3 dB *worse* against ground truth,
+because pooling sees the gaps. It scores slightly *better* (12.8118 vs 12.7910)
+— pooling also removes noise, and that gain dominates. **The whole verdict rests
+on the self-consistency column, which is the one number in the table that
+involves no ground truth at all.**
+
+### 17.3 The optimizer destroys coverage, and it is the position updates
+
+The filter fixes the map as baked. It does not survive optimization. 360,
+tau=0.5 held as a hard constraint (per-Gaussian `scale_floor` buffer, added in
+quadrature at every forward, not reachable by Adam), **30 steps**:
+
+```
+              self-psnr   hp_alpha
+init            39.76      0.00163
+after 30        36.58      0.00692      -3.2 dB, 4.2x worse
+```
+
+Without the floor: 28.25 -> 24.97. **Same -3.3 dB slope.** The floor raises the
+starting point and does nothing about the rate.
+
+Supersampled supervision was tried first, on the theory that a point-sampled
+loss cannot see the gaps it is opening: render the training view at 2x and
+average-pool before the loss (`--ss-loss 2`), which is area integration by Monte
+Carlo and needs no CUDA change. **No effect at all** — 36.60 / 0.00698 against
+36.58 / 0.00692.
+
+So the five parameter groups were ablated one at a time, 100 steps each, lr set
+to zero for exactly one group:
+
+```
+arm            psnr@100   lpips@100   self-psnr   hp_alpha
+all            12.2754     0.5481       35.46      0.01079
+no-opacity     12.2608     0.5530       35.53      0.01059
+no-scale       12.2557     0.5493       35.42      0.01091
+no-rot         12.2626     0.5487       35.46      0.01080
+no-f_dc        12.2735     0.5575       35.10      0.01139
+no-means       12.1604     0.4909       37.57      0.00198   <--
+(init)                     ~0.507       39.76      0.00163
+```
+
+**It is the means, alone.** Freezing positions keeps `hp_alpha` at 0.00198
+against an init of 0.00163, while every other arm lands at ~0.0107 — a 5.4x
+difference, with the other four indistinguishable from each other.
+
+The mechanism is arithmetic. `lr_means = 1.6e-4 * extent = 4.8e-4 m/step` on a
+2.98 m scene, while the lattice pitch at 2 m through an f~500 camera is ~4 mm.
+A hundred steps of random walk is ~5 mm — **larger than the spacing the surface
+is tiled at**. INRIA's positional rate is tuned for a few hundred thousand
+points that densification is actively re-seeding; here it is applied to 7.27M
+points already placed on a metric-correct lattice, where almost any motion is
+destructive.
+
+**My stated hypothesis was per-Gaussian opacity jitter, and it is false.** The
+`no-opacity` arm is indistinguishable from `all`. The argument behind it — that
+neighbouring Gaussians receiving different opacity updates *is* spatial
+modulation at the lattice frequency, so an ensemble can pattern where a single
+Gaussian cannot — is sound as far as it goes and simply is not what happens at
+these learning rates. Kimi's Q7 reasoning stands as originally written.
+
+The by-product is larger than the thing it was measured for. **`no-means` also
+has the best lpips in the table by a wide margin: 0.4909 against 0.5481, −10.4%
+— and it is the only arm that improves lpips over the initial map at all.** Every
+other arm makes lpips *worse* than the map it started from. That is the same sign
+and roughly the same size as the unexplained lpips regression on room (+11.1%)
+and 360 (+20.6%) in `docs/online-eval-all-families.md`, which §16 attributed to
+budget starvation.
+
+**Read that lpips result with its caveat, though.** The ablation is 100 steps on
+10 held-out views, and 100 steps is inside a transient: the full 3000-step arms
+below start at lpips 0.4876 and are already at 0.4736 by step 1000, so "every
+arm is worse than init" is a statement about step 100, not about convergence.
+What the ablation establishes without qualification is the *coverage* result —
+`hp_alpha` 0.00198 vs 0.0107, a 5.4x separation with the other four arms tied.
+Whether frozen positions still win on lpips at 3000 steps is a separate question
+and is answered by the matrix, not by this table.
+
+### 17.4 The seams are misregistration, not exposure — my diagnosis was wrong
+
+The straight-edged boundaries in `gs_map_00000048.png` were attributed to TUM
+freiburg1's auto-exposure: each keyframe bakes the raw pixel colour, so one
+surface seen at two exposures gets painted two brightnesses, and the boundary is
+the cluster edge. Three measurements, none of which supports it.
+
+**Exposure drift is 4%, and the between-keyframe step is 0.6%.** Per-keyframe
+mean luminance of the source images in the dumps:
+
+```
+                     n_kf   mean     range           spread   consecutive |d|
+                                                              median   p90
+360                    46   0.4229   0.4084-0.4255   4.1%     0.05%    0.6%
+room                   51   0.4586   0.4413-0.4623   4.6%     0.07%    1.8%
+```
+
+A 0.6% step between neighbouring keyframes cannot produce a visible seam. The
+premise is close to false for these sequences.
+
+**Overlap-based gain fitting does not survive its own chain.**
+`scripts/color_harmonize.py` (causal, keyframe k fitted against 0..k-1 already
+corrected) runs away: gains pin at the 0.600 clamp from keyframe ~5 onward and
+the composed map loses 1.59 dB / +0.026 lpips. Each keyframe darkens against
+already-darkened predecessors and the chain compounds. Whatever it is fitting,
+it is not a bounded exposure difference. The first keyframe's gain, before the
+chain diverges, is ~0.9 — but a 1 cm voxel match under pose error pairs up
+surfaces that are not the same surface, so that number is confounded and cannot
+carry the claim either.
+
+**And the artifact does not look like a colour step.** Magnified
+(`scratchpad/seam_crop.png`), the boundary is a straight-edged *polygon* — a
+projected image rectangle — enclosing a region that reads as a semi-transparent
+lighter **veil** over the floor, not a region of different colour. A colour
+difference cannot produce a veil. A keyframe cluster placed at slightly wrong
+depth or scale, floating in front of the true surface with its silhouette being
+that keyframe's image footprint, produces exactly this.
+
+**So the seams are geometric misregistration between clusters, and they belong
+to the pose/scale problem, not to appearance.** Which changes what fixes them:
+per-frame exposure compensation is the wrong tool, while confidence thinning
+(§16.9's `min_confidence=4.0`, which removes 38% of the map by dropping exactly
+the low-confidence predictions these veils are made of) and refinement given
+enough steps to lower the veil's opacity are the right ones. That is a second,
+independent argument for the throughput work rather than a separate project.
+
+The per-frame exposure parameters were built anyway (`--exposure`,
+6 params/frame on the render, never the target) because the hypothesis deserved
+a measurement rather than an argument, and because the falsification above is
+about *global* exposure — it does not rule out per-view appearance variation
+from other sources. The arm is in the matrix below.
+
+### 17.5 Why supersampled supervision cannot work, and where the fix has to live
+
+`--ss-loss 2` was the obvious response to "the loss cannot see the gaps": render
+the training view at 2x, average-pool, then compute the loss — area integration
+by Monte Carlo, no CUDA change. It did nothing (§17.3). The reason is structural,
+and it generalizes.
+
+Under pooling, the prediction is an average over sub-pixel phases. A small
+positional perturbation `delta` shifts where a *smooth* underlying field is
+sampled, so its effect on the pooled value is second order in `delta`. The
+pooled loss is therefore differentiable with respect to a smoothed field and is
+close to blind to lattice-frequency position jitter — **and going to 4x makes it
+worse, not better, because more averaging means less sensitivity.**
+
+The deeper statement: **the ground truth contains no information about the space
+between its own sample points.** No loss built from a native-resolution target
+can constrain what the map does there. Rendering at 2x against a 1x target
+recovers the *coverage* term (gaps darken the pooled render) but not
+identifiability of the lattice-frequency modes, which is what the experiment
+showed. So the fix cannot come from extracting more supervision signal. It has
+to come from the parameter space: a prior, a band-limited parameterization, or
+freezing.
+
+Three options, in increasing strength (Kimi's framing, adopted):
+
+1. **Grid smoothness prior.** The Gaussians of one keyframe *are* an H x W
+   image of parameters, so lattice-frequency modulation is literally
+   high-frequency power in that image. Penalize `||grad_grid logit_opacity||^2`
+   and the same on `log_scales`, edge-aware against the source image gradient.
+   Costs one conv per cluster per step. Keeps every degree of freedom.
+2. **Band-limited parameterization.** Store each cluster's parameter field as a
+   coarse grid upsampled bilinearly, so lattice modulation is impossible by
+   construction while the common mode stays free.
+3. **Freeze.** The measurement in §17.3 says only the means matter, so freezing
+   the means alone is the minimal version, and it is what the matrix tests.
+
+Kimi's stated prediction was **opacity >> scale > means**, from `(lr x steps) /
+dynamic range`: opacity moves a logit by 1.5 in 30 steps, log-scale by 0.15,
+while the positional step "should be" much smaller than `dx` if noise-driven.
+It also computed that the means *could* jitter by several `dx` and then
+dismissed that branch because "self-psnr would collapse much more than 3.2 dB".
+**The arithmetic was right and the dismissal was wrong**: the ablation shows the
+opacity arm recovering 0% of the degradation against a predicted >=50%, and the
+means arm recovering essentially all of it. Both reviewer and author had a
+stated numeric prediction here and both were falsified by the same table.
+
+The correction to §17.2's Q7 conclusion, which was that only coverage can
+produce a pattern: **any per-Gaussian quantity that multiplies the blob can
+carry the lattice** — scale is its width, position its phase, opacity its gain,
+colour its value. At initialization the network's predictions are spatially
+smooth (neighbouring source pixels get similar values), so coverage is the only
+carrier, which is what the alpha-channel image shows and what that experiment
+legitimately established. Optimization gives every Gaussian its own Adam state
+and de-smooths those fields, at which point any of them can carry it. The
+alpha-channel test at init cannot bound the post-optimization state, and the
+original phrasing over-reached.
+
+**Correction to the paragraph above, from the 3000-step arms.** "Optimization
+destroys coverage" is what 30 and 100 steps show and it is not what happens over
+a full run. The `base` arm (no filter, so it starts badly) ends *better* than it
+started:
+
+```
+              self-psnr    hp_alpha
+base   init     26.77       0.04113
+base   3000     37.38       0.01971
+```
+
+while the tau=0.5 arm starting at 39.76 / 0.00163 degraded to 36.58 / 0.00692 in
+30 steps. **The optimizer drives `hp_alpha` toward an equilibrium around
+0.01-0.02 from either side** — it is not monotonically destructive, it is
+attracted to a coverage level set by the supervision it can see. That reframes
+the finding: the filter's advantage is not that optimization would otherwise
+ruin the map, it is that the equilibrium the native-rate loss selects is an
+order of magnitude worse than what the filter can hold, and the loss has no term
+that would prefer otherwise. The `--aa-hard-floor` arm is the test of whether a
+constraint can hold the map below that equilibrium for a whole run.
+
+This is also why the 30-step and 100-step numbers had to be re-checked rather
+than written up: a short run measures the transient, and the transient here has
+the opposite sign to the steady state.
+
+### 17.6 The means are the carrier in BOTH directions, and freezing them wins
+
+360, 3000 iterations, exact culling, 50 held-out views. `fit` is psnr after a
+per-view closed-form per-channel affine onto the target, which removes any
+global exposure mismatch from the comparison; `self`/`hp_alpha` as in §17.2.
+
+```
+arm          psnr@3000  lpips@3000   fit psnr   self@3000   hp_alpha@3000
+(init)         11.7902    0.4876       12.9339    26.77        0.04113
+base           13.5071    0.4415       14.7003    37.38        0.01971
+m_frozen       13.6149    0.4399       14.7737    25.78        0.04258
+```
+
+**Freezing the positional learning rate wins on both metrics**: +0.108 dB and
+−0.36% lpips against the arm that optimizes everything, with a lower training
+loss (0.0698 vs 0.0803). It is behind early — at 1000 steps it is 0.36 dB down
+— and overtakes between 2000 and 3000. The other four parameter groups can do
+the work; the positions were mostly wandering.
+
+**And the coverage result inverts at length.** `m_frozen` ends at
+hp_alpha 0.04258, essentially its initial 0.04113, while `base` improves to
+0.01971. Over 3000 steps the means updates *close* gaps. Over 30 steps from a
+filtered start they *open* them. Both are the same fact: the means are the
+carrier of lattice change in either direction, and the native-rate loss has an
+equilibrium coverage level around hp_alpha 0.01-0.02 that it pulls toward from
+whichever side it starts.
+
+So the three levers are separable and each does one thing:
+
+- **`--aa-sigma 0.5` sets where the map starts** (hp_alpha 0.041 -> 0.0026).
+- **`--lr-means 0` decides whether it stays there** — frozen means pin coverage
+  at the baked value, free means drag it to the equilibrium.
+- **The equilibrium itself is a property of the loss**, and nothing tried so far
+  moves it, because the target contains no information between its own sample
+  points (§17.5).
+
+That predicts the combination — filter to 0.0026 *and* freeze so nothing drags
+it back to 0.02 — and `aa_m_frozen` is running to test it. It is the arm the
+whole section is for, and neither half is sufficient alone: the filter without
+the freeze decays, the freeze without the filter pins a bad value.
+
+**Kimi's decision rule, adopted:** the right parameter set is budget-dependent.
+Starved (in-sequence, hundreds of steps) freeze; abundant (offline, 12000 steps)
+leave free and add priors, since the full arm is what produced the −10.7% lpips
+in §16.5. That is a statement about *which regime the online system is in*, and
+it is in the starved one.
+
+**Two more arms, and a correction to the prediction just above.** §17.6 said the
+filter without the freeze would decay back to the equilibrium. It does not:
+
+```
+arm          psnr@3000  lpips@3000   fit psnr   self@3000   hp_alpha@3000
+(init)         11.7902    0.4876       12.9339    26.77        0.04113
+base           13.5071    0.4415       14.7003    37.38        0.01971
+aa (tau .5)    13.5243    0.4381       14.7118    41.90        0.00721
+m_frozen       13.6149    0.4399       14.7737    25.78        0.04258
+m_10x          13.5576    0.4513       14.7319    25.59        0.05886
+```
+
+`aa` decays from its initial 0.00163 to 0.00721 — 4.4x worse than where it
+started, but **2.7x better than the equilibrium the free map settles at**, and
+it holds that for 3000 steps. So the hard floor is a real constraint, not a
+delaying tactic, and "it gets dragged back" was wrong. It also has **the best
+lpips of every arm** (0.4381) at psnr indistinguishable from base.
+
+`m_10x` (positional lr divided by 10) is the interesting negative: **worse than
+both endpoints**. Worst coverage of the four (0.05886, above even the frozen
+arm's 0.04258) and the worst lpips (0.4513, worse than base). Lowering the rate
+is not a partial version of freezing it — a small persistent drift is enough to
+scramble the lattice and not enough to let the Gaussians re-close the gaps they
+open, which is the worst of both. **The lever is binary; do not tune it.**
+
+Ranking, and it depends on what is being bought:
+
+```
+lpips        aa 0.4381  <  m_frozen 0.4399  <  base 0.4415  <  m_10x 0.4513
+psnr         m_frozen 13.615 > m_10x 13.558 > aa 13.524 > base 13.507
+coverage     aa 0.0072  <<  base 0.0197  <  m_frozen 0.0426  <  m_10x 0.0589
+```
+
+`aa` wins the two that matter for how the map *looks* (lpips and coverage);
+`m_frozen` wins psnr. `aa_m_frozen` is the arm that should take both and is
+still queued.
+
+**The positional rate is U-shaped, and the worst value is in the middle.**
+
+```
+lr_means        psnr     lpips    hp_alpha
+0   (frozen)   13.6149   0.4399   0.04258
+1.6e-6         13.6058   0.4444   0.05175
+1.6e-5         13.5576   0.4513   0.05886
+1.6e-4 (base)  13.5071   0.4415   0.01971
+```
+
+lpips and coverage are both worst at 1.6e-5, better at both ends. The mechanism
+is legible: at the full rate the Gaussians move far enough to *re-close* the
+gaps they open (coverage ends best of the four); frozen, nothing moves at all;
+in between they jitter enough to scramble the lattice and not enough to repair
+it. **Confirms the lever is binary. Anyone who "tunes it down a bit" lands in
+the hole.**
+
+**Per-frame exposure: helps, but not for the reason it was built.**
+
+```
+arm      psnr@3000  lpips@3000   fit psnr   fit lpips   hp_alpha
+base      13.5071    0.4415       14.7003     0.4359     0.01971
+exp       13.3477    0.4302       15.1449     0.4168     0.01921
+```
+
+**+0.4446 dB fit psnr, −2.6% lpips, −4.4% fit lpips** — the largest single-lever
+gain on the perceptual metrics in this section. And raw psnr *drops* 0.159 dB.
+
+That split is diagnostic. Raw psnr falling while fit psnr rises by three times as
+much means the map has drifted to a different absolute brightness (which the
+per-frame parameters now compensate at training time and nothing compensates at
+deployment), while its *structure* matches the targets better. lpips is close to
+invariant under a global affine, so the lpips gain is structural, not
+bookkeeping.
+
+The fitted parameters moved a lot more than §17.4 predicted: gains
+1.037/1.048/1.051 with a **per-frame std of 11-12%**, against the 4.1% spread and
+0.6% consecutive step measured on the source images. So §17.4's falsification
+stands as stated — *global exposure drift* is not the cause of the seams, and
+the seams are still a veil with a rectangular silhouette — but **something
+per-view and globally affine is being absorbed, and absorbing it is worth more
+than any other appearance lever tried.** Candidates not yet separated: auto white
+balance (the three channel gains do differ), a view-dependent illumination term,
+the network's per-pair conditional bias, or per-frame render darkening from
+incomplete alpha. Naming it is open.
+
+One thing to fix before this ships: **re-centre the exposure parameters into the
+map at the end** — multiply `f_dc` by the mean gain and add the mean bias, so the
+deployed map carries the average exposure instead of leaving it in per-frame
+parameters that are then discarded. That should recover the 0.159 dB of raw psnr
+without touching the structural gain. Not yet built.
+
+### 17.7 The matrix, complete
+
+360, 3000 iterations, exact culling, 50 held-out views, one seed. `init` differs
+between the two groups because `--aa-sigma` changes the map before any
+optimization (it starts at a worse lpips and a far better coverage), so read
+each arm against its own init where the delta matters.
+
+```
+arm            psnr     lpips   fit psnr  fit lpips   self    hp_alpha
+init (tau 0)  11.7902  0.4876   12.9339    0.4726    26.77    0.04113
+init (tau .5) 11.8085  0.4962   12.9469    0.4816    39.76    0.00163
+
+base          13.5071  0.4415   14.7003    0.4359    37.38    0.01971
+aa            13.5243  0.4381   14.7118    0.4335    41.90    0.00721
+m_frozen      13.6149  0.4399   14.7737    0.4309    25.78    0.04258
+m_10x         13.5576  0.4513   14.7319    0.4414    25.59    0.05886
+m_100x        13.6058  0.4444   14.7661    0.4350    24.87    0.05175
+exp           13.3477  0.4302   15.1449    0.4168    38.05    0.01921
+aa_exp        13.3633  0.4262   15.1467    0.4130    42.57    0.00711
+aa_m_frozen   13.6497  0.4338   14.7940    0.4262    35.54    0.00729
+```
+
+**`aa_m_frozen` confirms the prediction in §17.6**: the filter sets the starting
+coverage, the freeze keeps it, and the combination takes the best psnr in the
+table (13.6497, +0.143 over base) while holding coverage in the good tier
+(0.00729 against base's 0.01971). Neither half does this alone — `aa` gives up
+0.09 dB of psnr, `m_frozen` gives up the coverage entirely (0.04258).
+
+**`aa_exp` takes every perceptual measure**: lpips 0.4262 (−3.5% vs base), fit
+psnr 15.1467 (+0.446), fit lpips 0.4130 (−5.3%), and the best coverage
+(0.00711). Its raw psnr is the weak point, and §17.6 identified why and how to
+fix it — the exposure re-centring, now built and running as `aa_exp_rc`.
+
+So there are two configurations, not one, and which is right depends on the
+metric being defended:
+
+- **psnr-first: `--aa-sigma 0.5 --aa-hard-floor --lr-means 0`.**
+- **perception-first: `--aa-sigma 0.5 --aa-hard-floor --exposure`** (with
+  re-centring), which is the configuration matching this project's stated
+  preference for lpips as its perceptual proxy (§10.11/§13.10) and the one whose
+  renders should look best.
+
+`aa_exp_mfrozen` (all three) is running and is the obvious candidate to collapse
+that choice.
+
+**Caveats, stated rather than buried.** One seed, one sequence, one map size.
+360 is the hard case (7.27M Gaussians, budget-starved) and desk is untested here
+— §16 measured desk converging in-sequence, so it sits in the "abundant" regime
+where Kimi's decision rule predicts the *opposite* choice on `--lr-means`. The
+lpips differences between the top arms (0.4262 to 0.4399) are larger than the
+0.09 dB psnr noise floor established in §13, but no seed ensemble was run for
+lpips specifically. `--aa-sigma 0.5` was selected on the tau sweep of the raw
+baked map (§17.2) and not re-selected after refinement; the refined arms are
+consistent with it but do not re-derive it.
+
+### 17.8 The exposure re-centring fix is falsified
+
+§17.6 predicted that folding the mean exposure back into `f_dc` at the end would
+recover the 0.159 dB of raw psnr that `--exposure` costs, without touching the
+structural gain. Built (`--exposure` now re-centres by default,
+`--no-exposure-recenter` is the control) and measured on `aa_exp_rc`:
+
+```
+                          psnr      lpips    fit psnr   fit lpips
+aa_exp   (no recentring) 13.3633   0.4262    15.1467     0.4130
+aa_exp_rc before         13.3573   0.4262    15.1458     0.4131
+aa_exp_rc after          13.2517   0.4269    15.1410     0.4133
+```
+
+mean gain 1.040/1.048/1.051, mean bias −0.013/−0.020/−0.018.
+
+**It makes raw psnr worse by another 0.106 dB.** And `fit psnr` moves by −0.005,
+i.e. not at all — so the map's structure is untouched and only its absolute level
+moved, in the wrong direction.
+
+Two reasons the reasoning was wrong, and the second is the interesting one:
+
+1. The exposure transform acts on the **composited image**; folding it into
+   per-Gaussian colour is only equivalent where accumulated alpha is 1. The bias
+   in particular lands on the background too when applied to the render, and
+   scales with alpha when applied to the colours.
+2. More fundamentally, **the mean of the per-frame gains is not a property the
+   held-out frames share.** The gains have mean 1.04 and std 0.11: they are
+   absorbing per-frame error whose *average* is an artifact of the training set,
+   not a global exposure the map should adopt. The un-recentred map was already
+   at the raw-psnr optimum.
+
+So the honest accounting for `--exposure` is: **it buys −3.5% lpips and +0.45 dB
+fit psnr at a real, non-recoverable cost of ~0.16 dB raw psnr.** That is a
+perception-distortion trade, not a bookkeeping error, and it should be presented
+as one. The re-centring code stays (it is the control that establishes this) but
+is not the default recommendation.
+
+Third falsified prediction of mine in this section, after "opacity is the
+carrier" (§17.3) and "the filter decays back to the equilibrium" (§17.6). All
+three were stated with a direction and a size before the run, which is the only
+reason they are legible as failures rather than as things quietly not mentioned.
+
+### 17.9 Final matrix and the recommendation
+
+```
+arm               psnr     lpips   fit psnr  fit lpips   self    hp_alpha
+init (tau 0)     11.7902  0.4876   12.9339    0.4726    26.77    0.04113
+init (tau .5)    11.8085  0.4962   12.9469    0.4816    39.76    0.00163
+
+base             13.5071  0.4415   14.7003    0.4359    37.38    0.01971
+aa               13.5243  0.4381   14.7118    0.4335    41.90    0.00721
+m_frozen         13.6149  0.4399   14.7737    0.4309    25.78    0.04258
+m_10x            13.5576  0.4513   14.7319    0.4414    25.59    0.05886
+m_100x           13.6058  0.4444   14.7661    0.4350    24.87    0.05175
+exp              13.3477  0.4302   15.1449    0.4168    38.05    0.01921
+aa_exp           13.3633  0.4262   15.1467    0.4130    42.57    0.00711
+aa_m_frozen      13.6497  0.4338   14.7940    0.4262    35.54    0.00729
+aa_exp_mfrozen   13.4625  0.4195   15.1785    0.4046    35.25    0.00789
+```
+
+**`aa_exp_mfrozen` — all three levers — is the recommendation.** Against `base`:
+
+```
+lpips      0.4415 -> 0.4195    -5.0%
+fit lpips  0.4359 -> 0.4046    -7.2%
+fit psnr  14.7003 -> 15.1785   +0.478 dB
+psnr      13.5071 -> 13.4625   -0.045 dB    (was -0.16 for exp alone)
+hp_alpha   0.01971 -> 0.00789  2.5x less lattice
+```
+
+The raw-psnr cost of the exposure lever, 0.16 dB on its own, **falls to 0.045 dB
+once the positions are frozen** — the two interact, and freezing recovers most of
+what exposure gives up. That collapses §17.7's two-configuration choice: −0.045
+dB psnr for −5.0% lpips and 2.5x less lattice is the trade this project's stated
+preference for lpips (§10.11/§13.10) says to take. `aa_m_frozen` remains the
+answer if raw psnr is the number being defended (13.6497, best in the table).
+
+```
+ONLINE, at injection      --aa-sigma 0.5           (and --min-confidence 4.0, 16.9)
+ONLINE, in the refiner    --aa-hard-floor --lr-means 0 --exposure --cull-exact
+OFFLINE, once             the tau sweep and E1; not in the product path
+NOT BUILT                 area-integrating rasterization (needs CUDA; 17.5 shows
+                          it would fix viewing, not learning)
+```
+
+`--exposure-recenter` **stays off**: it cost another 0.105 dB here too, an exact
+replication of §17.8 on a second configuration.
+
+**What is fixed, and what is not.**
+
+- Dot lattice / halftone / moire: **fixed**, and measured three ways (self-psnr,
+  hp_alpha, the alpha-channel images).
+- lpips regression on the large maps: **explained and fixed** — it was the
+  positional learning rate, not only budget starvation.
+- Seams: **re-diagnosed, not fixed.** They are geometric misregistration (a
+  semi-transparent veil with a rectangular silhouette), not exposure (§17.4).
+  Confidence thinning and more steps are the levers; neither was isolated here.
+- Trailing streaks at depth edges: **not addressed.** The min-neighbour pitch
+  rule avoids manufacturing new ones, which is not the same as removing the
+  existing ones. Anisotropy clamping at injection is designed and unbuilt.
+- Large black regions: **not a defect.** Those are unmapped — no keyframe covered
+  them. Do not spend budget there.
+- The per-view affine that `--exposure` absorbs: **works but unexplained.** 11-12%
+  per-frame std against 4% measured image-mean drift. Auto white balance,
+  view-dependent illumination, per-pair network bias and alpha-deficit darkening
+  are not separated.
+
+### 17.10 The cull re-verified in the regime it will run in
+
+§17.1's zero-false-negative result was measured on the raw baked map with
+`n_sigma = 3.0`. Two things changed after it: `n_sigma` went to 3.4 (the
+rasterizer drops a contribution at alpha < 1/255, which for opacity near 1 is
+3.33 sigma, not 3 — `forward.cu:345`), and the recommended configuration now
+builds the map with `--aa-sigma 0.5`, which enlarges every scale and therefore
+every footprint the bound depends on. A false-negative check does not carry
+across either change for free. Re-run with the filter on and after **300
+optimizer steps**, so the anisotropy and scale distributions are the refined
+ones:
+
+```
+view    block    exact  radii>0  grad sup   miss  miss|grad|
+   0   49.3%   10.5%    9.7%     7.7%        0    0.00e+00
+   6   50.0%   12.8%   12.0%    10.5%       0    0.00e+00
+  18   28.6%    7.7%    7.2%     6.7%        0    0.00e+00
+  36   29.8%    5.3%    4.8%     4.4%        0    0.00e+00
+  42   35.0%    7.8%    7.2%     6.1%        0    0.00e+00
+
+none 0.70 it/s   block 1.37 it/s   exact 5.58 it/s
+```
+
+**Still zero, on every probe view, by count and by gradient magnitude.** The
+kept fraction rises ~0.6 pp (the filter's larger footprints plus 3.4 vs 3.0
+sigma) and throughput lands at 5.58 it/s rather than 6.51 for the same reason —
+still 8.0x over no culling and 4.1x over the block test.
+
+Kimi's remaining critiques of the cull, answered:
+
+- **"3 sigma truncates a shell the rasterizer still renders."** Correct, and
+  fixed above. It was worth ~2 pp of kept fraction.
+- **"Verify the ellipse test uses the full conic; diagonal-only under-estimates
+  a rotated elongated Gaussian."** Not applicable: the bound uses `smax`, the
+  largest scale axis, which is a bounding *sphere*. Orientation cannot produce a
+  false negative against a sphere.
+- **"The per-view numbers look cross-averaged — 4.9% kept cannot coexist with
+  8.6% support and FN=0."** They are per-view, and per-view `exact >= support`
+  holds on every row (view 36: 5.3% vs 4.4%). The two ranges quoted in the
+  summary came from different views.
+- **"Sim3 scale drift could exceed the 6 px margin."** The footprint already
+  carries the transform's own scale via `det(P)^(1/3)`, and the mask is computed
+  from the same `kf_mats` the render uses, in the same step. Stateless is what
+  makes this safe, and it is the property the cache design would have lost.
+
+### 17.11 Correction: the levers are additive, not interacting
+
+§17.9 said the exposure lever's raw-psnr cost "falls to 0.045 dB once the
+positions are frozen — the two interact, and freezing recovers most of what
+exposure gives up". **That is wrong**, and the matched-pair arithmetic says so
+immediately:
+
+```
+exposure tax          exp - base                = -0.1594
+                      aa_exp - aa               = -0.1610
+                      aa_exp_mfrozen - aa_m_frozen = -0.1872
+
+freeze benefit        m_frozen - base           = +0.1078
+                      aa_m_frozen - aa          = +0.1254
+
+additive prediction   aa +0.0172, freeze +0.1254, exp -0.1872
+                      sum -0.0446   actual -0.0446
+```
+
+The tax is a **constant 0.16-0.19 dB in all three configurations**, and if
+anything it is slightly *larger* with the positions frozen, not smaller. The
+−0.045 dB figure came from comparing `aa_exp_mfrozen` against `base`, where
+freezing's independent +0.125 happens to offset most of the tax. **The three
+levers add; there is no interaction to claim.** The sum reproduces the measured
+total to four decimal places.
+
+My proposed mechanism — free positions absorbing the exposure residual through
+geometry, so freezing would shrink the tax — predicted the *opposite sign* to
+what was measured, and it has no signature in the coverage numbers either
+(`exp` 0.01921 vs `base` 0.01971: the exposure residual leaves no mark on
+coverage at all).
+
+**The recommendation itself is unchanged** — `aa_exp_mfrozen` still holds the
+best lpips, fit psnr, fit lpips and top-tier coverage, and those are measured
+facts. Only the explanation for its raw-psnr number was wrong, and the honest way
+to report the exposure lever is its matched-pair tax of **−0.17 dB**, not the
+−0.045 dB that a mismatched baseline produced.
+
+Fourth falsified prediction of mine in this section. It is also the one that
+mattered most, because unlike the other three it had already been stated as a
+finding rather than caught in-flight.
+
+**A real interaction does exist, and it is with step count.** Freezing the
+positions is worth −0.115 dB at 100 steps and +0.11 dB at 3000: the sign flips.
+Early, the positional updates do legitimate sub-pixel alignment and are worth
+paying for; late, they overfit per-view noise and freezing blocks it. **The
+online regime is ~300 steps, not 3000**, which is exactly where the sign flip
+lives and where nothing has been measured. That gap is now the blocking question
+for shipping this online, and it is measured next.
+
+### 17.12 The online regime (300 steps) picks a different configuration
+
+§17.11 flagged the sign flip and this measures it. 360, τ=0.5 hard floor,
+**300 iterations** — the budget §16 established for a 7.27M map in-sequence,
+against the 3000 every arm above used.
+
+```
+arm                psnr     lpips   fit psnr  fit lpips   self    hp_alpha
+init (tau .5)     11.8085  0.4962   12.9469    0.4816    39.76    0.00163
+aa300             12.3955  0.4982   13.7424    0.4845    35.91    0.01460
+aa_exp300         12.3985  0.4970   13.7597    0.4827    35.87    0.01472
+aa_m_frozen300    12.0488  0.4500   13.4065    0.4393    33.92    0.00627
+```
+
+**The free-means arms do not improve lpips at all in this regime.** `aa300` ends
+at 0.4982 against an initial 0.4962 — marginally *worse* than the map it started
+from, after 300 steps of optimization. `aa_m_frozen300` ends at 0.4500, **−9.3%
+against init and −9.7% against the free arm**, and holds coverage at 0.00627
+against 0.01460.
+
+**This is the online lpips regression, reproduced and fixed.**
+`docs/online-eval-all-families.md` records room at +11.1% and 360 at +20.6%
+*worse* lpips after online refinement, which §16 attributed to budget starvation.
+The mechanism is now identified and it is not starvation: **at a starved step
+count the positional updates buy psnr and cost lpips**, and freezing them
+converts a −0.4% lpips outcome into −9.3%. The price is 0.347 dB of psnr.
+
+So the configuration is genuinely budget-dependent, and the flip is much larger
+than §17.11's 100-step number suggested:
+
+```
+freeze benefit, psnr      100 steps   -0.115
+                300 steps   -0.347
+               3000 steps   +0.125
+freeze benefit, lpips     300 steps   -9.7%   (better)
+                3000 steps  -1.0%    (better)
+```
+
+**Online (~300 steps): freeze, and take −0.35 dB psnr for −9.7% lpips and 2.3x
+less lattice.** That is the trade this project's stated lpips preference
+(§10.11/§13.10) selects, and it is the trade that turns the online refiner from
+lpips-negative to strongly lpips-positive on the large maps — the single
+outstanding defect in the online results table.
+
+**Offline (3000+ steps): freeze also wins**, but only just (+0.125 dB, −1.0%
+lpips), so the choice barely matters there.
+
+Exposure is nearly inert at 300 steps (`aa_exp300` vs `aa300`: +0.003 dB, −0.2%
+lpips) — 6 parameters per frame with each frame visited ~6 times cannot converge.
+**Exposure is an offline lever; at online budgets it is not worth its
+complexity.** That is a cleaner separation than §17.9's, which recommended it
+online on 3000-step evidence.
+
+### 17.13 desk: the budget-dependent rule is falsified, freezing wins everywhere
+
+desk (1.86M Gaussians, 14 keyframes) is the "abundant" regime — §16 measured it
+converging in-sequence, where 360 cannot. Kimi's decision rule
+("starved -> freeze; abundant -> free + priors") therefore predicts free
+positions should win here, and it committed to a number before the run:
+**free beats frozen by +0.4 to +0.9 dB psnr (centre 0.6), falsified if the gap
+is below +0.2 dB.** The reasoning was supervision density — 360 sits at 145k
+Gaussians per view (3.6x §13.10's saturation point, so positions overfit) and
+desk at ~37k (≈1x, so positions can converge honestly).
+
+```
+desk, 3000 iters   psnr     lpips   fit psnr  fit lpips   self    hp_alpha
+base              14.3694  0.3726   14.8092    0.3763    36.84    0.00749
+aa_m_frozen       14.5271  0.3621   14.9294    0.3663    38.98    0.00335
+aa_exp            14.1916  0.3679   14.9451    0.3671    39.77    0.00483
+aa_exp_mfrozen    14.3213  0.3598   15.0344    0.3594    38.86    0.00374
+```
+
+**Matched pair: `aa_exp` − `aa_exp_mfrozen` = −0.130 dB. Frozen wins.** Against
+a predicted +0.4 to +0.9 in the other direction, and past the stated
+falsification line by a wide margin. Frozen also takes lpips (0.3598 vs 0.3679,
+−2.2%) and coverage (0.00374 vs 0.00483).
+
+**The rule is falsified. Freeze the positions on both map sizes.** The freeze
+benefit is not merely same-signed but nearly the same size across a 3.9x
+difference in map size and a 4x difference in supervision density:
+
+```
+freeze benefit (with exposure, matched)   desk  +0.130 dB     360  +0.099 dB
+exposure tax   (matched)                  desk  -0.206 dB     360  -0.161 dB
+```
+
+Whatever the positional updates are doing wrong, **it is not overfitting caused
+by supervision starvation** — that was the mechanism behind both the rule and my
+own §17.3 framing, and desk was supposed to be the regime where it disappears.
+It does not. The remaining explanation consistent with everything measured is
+the one in §17.3's arithmetic: `lr_means = 1.6e-4 * extent` is simply far too
+large relative to the lattice pitch these maps are built on, independent of how
+much supervision there is. INRIA tuned that rate for a few hundred thousand
+points being actively re-seeded by densification, and it does not transfer to a
+metric-correct per-pixel lattice that nothing re-seeds.
+
+So the configuration table simplifies rather than branching by map size:
+
+```
+ALWAYS      --aa-sigma 0.5 --aa-hard-floor --lr-means 0 --cull-exact
+                                                  (+ --min-confidence 4.0 above ~4M)
+OFFLINE     add --exposure   (inert at online budgets, 17.12)
+```
+
+Every headline in §17 now replicates on a second sequence: the filter improves
+coverage (0.00749 -> 0.00335), freezing improves psnr and lpips, and the
+exposure tax is a constant. The one thing that does NOT replicate is the
+budget-dependence, which was never measured — it was inferred, by both of us,
+from a mechanism that turned out not to be the operative one.
+
+### 17.14 Freezing exactly the means is the optimum; opacity is the slow carrier
+
+Two follow-ups, both with predictions on record, both mostly falsified.
+
+**Pitch-scaled positional rate** (`--pitch-lr`): the parameter becomes a
+dimensionless residual, `mean = base + pitch * delta`, so one Adam step of `lr`
+displaces a Gaussian by that fraction of its OWN lattice spacing. Note this
+cannot be done by reweighting gradients — Adam's update is `lr * m /
+(sqrt(v)+eps)`, scale-invariant in the gradient, so only a reparameterization
+changes the step size.
+
+Kimi's invariant check first, because it is a real prediction: `lr/pitch` should
+be nearly constant across sequences (small scene -> small extent -> small lr,
+but near surfaces -> small pitch, cancelling), which would explain why the
+freeze benefit is the same size on both while supervision density differs 4x.
+
+```
+ seq    n_gauss  extent  lr=1.6e-4*ext  pitch med  lr/pitch
+desk  1,860,034   2.588       0.4141mm    2.315mm    0.179
+ 360  7,267,700   2.977       0.4763mm    3.870mm    0.123
+```
+
+Not equal (1.45x apart) but varying far less than the 4x in supervision density,
+**and the ordering matches**: desk has the higher `lr/pitch` and the larger
+freeze benefit (+0.130 vs +0.099). Weak confirmation at n=2, and it corrects the
+earlier back-of-envelope: the default rate is 12.3% of the lattice pitch per
+step on 360, not the 23% previously stated.
+
+```
+360, 300 steps      psnr     lpips   hp_alpha        360, 3000 steps
+init (tau .5)      11.8085  0.4962   0.00163
+aa300 (free)       12.3955  0.4982   0.01460         aa       13.5243 0.4381 0.00721
+pitch_15_300       12.6314  0.5031   0.01279
+pitch_05_300       12.3073  0.4714   0.01353
+pitch_02_300       12.1415  0.4565   0.01084         pitch_02 13.5618 0.4324 0.01193
+warm100_300        12.1491  0.4792   0.01517
+warm150p_300       12.1714  0.4601   0.01276
+frzop_300          12.0186  0.4722   0.00258
+frzall_300         11.8621  0.4775   0.00292
+aa_m_frozen300     12.0488  0.4500   0.00627         aa_m_frz 13.6497 0.4338 0.00729
+```
+
+**Pitch scaling is a better frontier but not a better point.** At matched psnr
+(12.31 vs 12.40) it gives lpips 0.4714 against 0.4982 — **5.4% better lpips for
+the same distortion** — and it holds both ends of the frontier (`pitch_15` takes
+the best psnr in the whole online table, 12.6314, at the worst lpips). So the
+parameterization is right and the naive extent-scaled rate is wrong. But every
+point on it is dominated on lpips by `lr = 0`. Kimi predicted constant-kappa at
++0.02 to +0.08 dB over frozen with neutral lpips; measured −0.088 dB at 3000
+steps, wrong sign.
+
+**The warm-up schedule is the worst option, and instructively so.** Free for 100
+steps then frozen: psnr +0.100 over always-frozen — exactly inside Kimi's
+predicted +0.05 to +0.12 — but lpips +6.5% *worse* against a predicted neutral,
+and `hp_alpha` 0.01517, **worse than never freezing at all**. The mechanism is
+clean: **warm-up takes the damage without the repair.** Early free motion
+scrambles the lattice, and freezing then locks the scrambled state in while
+removing the very channel that would have repaired it by 3000 steps (§17.6).
+
+**Opacity is the slow second carrier — confirmed.** §17.3 found `no-opacity`
+indistinguishable from `all` (0.01059 vs 0.01079), but that was measured with the
+means free, where their ~0.009 of lattice buries everything else. With the means
+frozen, freezing opacity too takes `hp_alpha` from 0.00627 to **0.00258**, within
+touching distance of the initial 0.00163. Both measurements are right; opacity is
+a real carrier roughly an order of magnitude slower than the means. Kimi's vote
+(opacity, then rotation) is correct.
+
+**But do not freeze it.** The lpips ordering at 300 steps is unambiguous:
+
+```
+aa_m_frozen  0.4500   <- means frozen, nothing else
+pitch_02     0.4565
+warm150p     0.4601
+frzop        0.4722   <- + opacity frozen
+frzall       0.4775   <- only colour free
+warm100      0.4792
+aa (free)    0.4982
+```
+
+**Freezing exactly one parameter group is the optimum. Freezing more hurts,
+freezing less hurts.** `frzall` — "bake the geometry, fit only appearance",
+architecturally the most self-consistent option for a trajectory-anchored map —
+lands at psnr 11.8621 against an initial 11.8085, i.e. 300 steps of optimization
+buy essentially nothing, and lpips 0.4775 against 0.4500. The scale/rotation/
+opacity channels carry real value even though opacity also carries lattice.
+
+So §17.13's configuration stands unchanged after four attempts to improve on it.
+```
+--aa-sigma 0.5 --aa-hard-floor --lr-means 0 --cull-exact
+```
+
+**The 3000-step pitch sweep, and a clean monotonic mechanism.**
+
+```
+360, 3000 steps    psnr     lpips   fit lpips   self    hp_alpha
+aa (free)         13.5243  0.4381    0.4335    41.90    0.00721
+pitch_02          13.5618  0.4324    0.4251    35.96    0.01193
+pitch_05          13.5237  0.4282    0.4227    39.00    0.00921
+pitch_15          13.5365  0.4407    0.4361    42.32    0.00610
+aa_m_frozen       13.6497  0.4338    0.4262    35.54    0.00729
+```
+
+**Coverage improves monotonically with more (properly scaled) positional motion**
+— hp_alpha 0.01193 -> 0.00921 -> 0.00610 across pitch 0.02 -> 0.05 -> 0.15, and
+`pitch_15` takes the best coverage and best self-consistency of any arm in the
+whole section. That is the §17.6 repair mechanism isolated cleanly: given enough
+steps, positional motion closes gaps, and scaling the rate by each Gaussian's own
+spacing makes the repair efficient rather than destructive.
+
+lpips is U-shaped over the same axis with its optimum at 0.05, where
+**`pitch_05` takes the best lpips of any 360 arm without exposure** (0.4282
+against frozen's 0.4338 and free's 0.4381).
+
+So the two regimes genuinely differ, and this is the one place in §17 where the
+budget does change the answer:
+
+```
+ONLINE   (~300 steps)   --lr-means 0            frozen wins lpips outright
+                                                 (0.4500 vs 0.4565 for the best
+                                                  pitch arm)
+OFFLINE  (3000 steps)   --pitch-lr --lr-means 0.05   for lpips (0.4282)
+                        --lr-means 0                 for psnr  (13.6497)
+```
+
+The reason the flip exists is now mechanical rather than mysterious: repair needs
+steps. At 300 steps positional motion has done its damage and not yet its repair,
+so freezing dominates; by 3000 the repair has arrived and a correctly scaled rate
+beats freezing on perception. **This also retires the "budget-dependent
+configuration" idea in its original form** — it is real, but it is about *repair
+time*, not about supervision saturation (§17.13), and it selects between two
+positional settings rather than between whole configurations.
+
+### 17.15 Authoritative summary — read this, not the earlier subsections
+
+The recommendation changed four times inside §17 as evidence arrived. Earlier
+subsections are kept because the falsifications are the record, but **this block
+supersedes every configuration statement above it.**
+
+```
+INJECTION (online, free)
+  --aa-sigma 0.5 --aa-hard-floor      band limit from the lattice pitch, held
+                                      as a constraint (17.2, 17.3)
+  --min-confidence 4.0                 for maps above ~4M Gaussians (16.9)
+
+REFINER
+  --cull-exact                         8-9x throughput, zero false negatives
+                                       (17.1, 17.10)
+  --lr-means 0                         online (~300 steps) AND the psnr optimum
+                                       at 3000 (17.12, 17.13, 17.14)
+  --pitch-lr --lr-means 0.05           offline only, if lpips is the target
+                                       (0.4282 vs 0.4338 frozen) (17.14)
+  --exposure                           offline only; inert at 300 steps (17.12)
+
+NOT RECOMMENDED
+  --exposure-recenter                  measured harmful twice (17.8)
+  --lr-means 1.6e-5 / 1.6e-6           worse than both endpoints (17.6)
+  --freeze-means-after N               damage without repair (17.14)
+  --ss-loss N                          structurally cannot work (17.5)
+  freezing opacity as well             best coverage, worse lpips (17.14)
+```
+
+Measured effect of the online configuration against the current default, 360,
+300 steps: **lpips 0.4982 -> 0.4500 (−9.7%), hp_alpha 0.01460 -> 0.00627 (2.3x
+less lattice), psnr 12.3955 -> 12.0488 (−0.35 dB).** Against the *initial map*,
+lpips goes from +0.4% worse to −9.3% better, which is the online lpips
+regression in `docs/online-eval-all-families.md` turned around.
+
+**Open, in priority order.**
+
+1. The per-view affine `--exposure` absorbs is unexplained: 11-12% per-frame std
+   against 4.1% measured source-image drift (17.6). Four candidates unseparated.
+2. The seams are geometric misregistration, re-diagnosed but not fixed (17.4).
+3. `--max-anisotropy` is built and never measured — the trailing streaks are the
+   one defect from the original report with no number against them.
+4. Everything here is one seed. The lpips gaps between top arms (0.4282-0.4500)
+   exceed the psnr noise floor but no lpips seed ensemble was run.
+5. Only 360 and desk. room, the other sequence with an lpips regression, is
+   untested against any of this.
+
+### 17.16 Answering the three defects left open in 17.15
+
+**(3) Trailing streaks: the anisotropy clamp is harmful at every setting.**
+`--max-anisotropy` shrinks each Gaussian's long axis to at most N times its
+short one, at injection. 360, 300 steps, on top of the recommended config:
+
+```
+                psnr     lpips   hp_alpha
+no clamp      12.0488   0.4500   0.00627
+N = 20        11.8146   0.4532   0.00656
+N = 10        11.7410   0.4540   0.00701
+N = 4         11.6925   0.4558   0.00801
+```
+
+Monotone in all three metrics: tighter is worse. Even the loosest setting costs
+0.23 dB and 0.7% lpips.
+
+**The design reasoning was wrong.** It was built on "clamped, never deleted, so
+no holes" — but clamping opens holes too. Shrinking the long axis shrinks the
+footprint, and the band limit only guarantees the *smallest* scale reaches the
+lattice pitch; it does not compensate for a shortened long axis. The
+monotonically worsening `hp_alpha` is that mechanism's signature. Read the other
+way: the elongated Gaussians are doing useful work, covering surface area
+efficiently. They *look* like streaks and they cost less than removing them.
+
+Verdict: **the trailing streaks are not fixable at injection by anisotropy.**
+The flag stays, defaulted off, with this table in its help text.
+
+**(1) The black is 90% the confidence filter, and it is recoverable — but the
+knob is the one §16.9 says to turn the other way.** §17.9 called the black
+"unmapped, not a defect". Half of that is wrong. Each injection filter relaxed
+alone, 360, 25 held-out views, alpha < 0.1:
+
+```
+                  black   vs deployed   gaussians
+deployed          7.15%       —          7,267,700
+no depth-pct      6.99%     -0.16%       7,362,852
+no confidence     4.11%     -3.04%       7,805,514
+no opacity        6.12%     -1.03%       8,092,969
+no max-scale      7.15%     -0.00%       7,267,700
+none              3.76%     -3.38%       9,043,968
+```
+
+**47.3% of the black is content a keyframe saw and the filters discarded**, and
+**90% of that is the confidence threshold alone**. The deal is better than it
+looks: +7.4% Gaussians removes 43% of the black, because the low-confidence
+predictions sit *exactly in the holes* rather than being spread uniformly.
+
+Case (b) — seen only by non-keyframes — is effectively empty: the nearest
+keyframe to a held-out viewpoint averages 0.057 m against 0.037 m for the
+nearest tracked frame, so the keyframes already cover wherever the camera went.
+The remaining 3.76% is genuinely never-observed and no injection policy recovers
+it. `max_scale=0.5` is not binding on this map at all (identical counts).
+
+The tension is explicit and unavoidable: §16.9 measured `min_confidence=4.0`
+(*removing* 38% more) as winning both metrics at matched wall clock. That was a
+throughput-constrained comparison, and exact culling has since relaxed the
+throughput constraint 8-9x, so the trade may have moved. Measured directly at
+300 steps (`conf0_300` / `conf40_300`) rather than argued from the old result.
+
+**(2) Seams: a per-keyframe depth scale is built** (`--kf-depth-lr`), one
+learnable log-scale per keyframe sliding its cluster along its own view rays —
+the smallest parameter that can correct the mechanism §17.4 diagnosed. It is
+deliberately not a per-keyframe pose: the pose gate is closed at fusion time
+(§13.12d), and scale along the view ray is a different quantity from the
+trajectory and does not feed back into it.
+
+The learned scales are themselves a test of the diagnosis, independent of any
+metric: **if the veil really is a cluster at the wrong depth, they must depart
+from 1.0; if they all sit at 1.000, the diagnosis in §17.4 is wrong too** and
+the seam mechanism is still unidentified.
+
+**(1) measured: the confidence filter is now net-harmful, reversing §16.9.**
+360, 300 steps, recommended config otherwise, matched STEPS:
+
+```
+                 psnr     lpips   hp_alpha   black   gaussians
+min_conf 0.0   12.4745   0.4535   0.00522   4.11%   7,805,514
+min_conf 1.5   12.0488   0.4500   0.00627   7.15%   7,267,700
+min_conf 4.0   10.1129   0.5159   0.00951     —     4,531,321
+```
+
+**Turning the filter off is +0.426 dB, 43% less black and better coverage, for
+0.8% of lpips. Turning it up to §16.9's recommended 4.0 costs 1.94 dB.**
+
+This does not contradict §16.9; **its premise expired.** That result was measured
+at *matched wall clock* while throughput was the binding constraint, where a
+sparser map bought enough extra steps to win. Exact culling (§17.1) removed that
+constraint: with the cull keeping ~8%, +7.4% Gaussians costs ~7% more per step,
+not the 38% that made the old trade work. Once steps are cheap, the map should
+be denser, not sparser — the opposite conclusion from the same trade.
+
+`min_confidence=4.0` should be withdrawn as the standing recommendation for
+large maps. It was right for a system without exact culling and is wrong for
+this one. The 1.94 dB is not subtle: at 300 steps a 4.53M map has no time to
+compensate for what it threw away.
+
+**(2) measured: the per-keyframe depth scale finds a real signal and buys
+nothing.**
+
+```
+                  psnr     lpips   hp_alpha
+no kf-depth     12.0488   0.4500   0.00627
+--kf-depth-lr   12.0514   0.4492   0.00601
+learned scales: mean 1.01417  std 0.01696  range [0.97979, 1.04689]
+```
+
+**The scales depart from 1.0 — std 1.7%, spanning −2.0% to +4.7%** — so §17.4's
+diagnosis survives its own independent test: the clusters really are placed at
+slightly wrong depths, and at 2 m a 2-5% error is 4-10 cm, easily enough to
+float a visible veil in front of a surface. The mean of 1.014 is a *global* bias:
+every cluster wants to sit 1.4% further out, which is a scale mismatch between
+the SLAM trajectory's Sim3 and Splatt3R's metric depth.
+
+But the photometric payoff is +0.003 dB — nothing. Two readings, not yet
+separated: the veil may be visually salient and photometrically negligible
+(a few percent of pixels at low alpha), or the misplacement may not be a pure
+per-cluster scale and one scalar cannot capture it. The parameter is cheap
+(46 scalars) and does no harm, so it stays available and off.
+
+**So the seams remain diagnosed but unfixed**, and the honest summary is that
+the mechanism is confirmed (misregistration, and now quantified at ±2-5% depth)
+while no lever tried moves the metric. The 3000-step arm is running.
+
+**Correction: the depth-scale test is one-sided, and it does not confirm §17.4.**
+
+At 3000 steps the same arm gives:
+
+```
+                  psnr     lpips   hp_alpha   learned scales
+no kf-depth     13.6497   0.4338   0.00729    —
+--kf-depth-lr   13.6129   0.4323   0.00775    mean 1.01267 std 0.03050
+                                              range [0.90102, 1.08542]
+```
+
+Still no metric movement (−0.037 dB, −0.3% lpips), and **the spread has widened
+from std 1.7% to 3.05%**, now spanning −10% to +8.5%. At 2 m that is a 20 cm
+range of per-cluster displacement bought for nothing.
+
+That widening is the tell. **A free parameter departs from its initialization
+whether or not the hypothesis behind it is true**, and one that keeps departing
+as steps accumulate, while the held-out metric does not move, is behaving like a
+nuisance degree of freedom absorbing training-view residual — not like a
+correction converging on a real geometric error.
+
+So the test stated when this was built was **one-sided, and it was overstated
+above**: had the scales stayed pinned at 1.000, §17.4's diagnosis would have been
+falsified. Their departing is weak evidence at best, and the trajectory of that
+departure argues against rather than for. §17.4's re-diagnosis of the seams still
+rests on what it originally rested on — the artifact is a veil with a rectangular
+silhouette, which a colour difference cannot produce, plus the 4% exposure
+measurement — and not on this.
+
+The right conclusion is narrower than the one written above: **the seams are
+diagnosed as misregistration on morphological grounds, no lever tried moves any
+metric, and the per-keyframe depth scale is not evidence either way.** It stays
+off.
+
+**Confidence, settled at both budgets: §16.9 is scoped, not retracted.**
+
+```
+360, matched STEPS, recommended config otherwise
+
+               300 steps                    3000 steps
+             psnr     lpips   black       psnr     lpips   hp_alpha
+conf 0.0   12.4745   0.4535   4.11%     13.6378   0.4345   0.00696
+conf 1.5   12.0488   0.4500   7.15%     13.6497   0.4338   0.00729
+conf 4.0   10.1129   0.5159     —       13.7647   0.4511   0.00664
+```
+
+The verdict inverts with budget, which is why the flat retraction drafted above
+was wrong and the measurement was worth taking:
+
+- **Online (300 steps): turn the filter OFF.** conf 0.0 is +0.426 dB over the
+  default with 43% less black, and §16.9's conf 4.0 is a **1.94 dB disaster** —
+  a 4.53M map has no time to compensate for what it discarded.
+- **Offline (3000 steps): conf 4.0 takes psnr** (+0.115 over default) **and
+  loses lpips by 4.0%.** conf 0.0 and 1.5 are within noise of each other on
+  psnr, with conf 0.0 holding better coverage.
+
+Two things to carry forward. First, §16.9's headline — that conf 4.0 wins *both*
+metrics — came from a **matched-wall-clock** comparison that handed it 3000 steps
+against 1817. At matched steps it wins psnr and loses lpips. Exact culling made
+matched-steps the right comparison, and under it the density trade is a
+perception-distortion trade like every other one in §17.
+
+Second, the lpips ordering is stable across every budget: **denser maps have
+better lpips, sparser maps have better psnr.** Kimi's reading is the natural one
+— psnr rewards filling a hole with anything, lpips would rather have black than
+blurred filler — and it predicts the 0.8% lpips tax on conf 0.0 at 300 steps
+should shrink by 3000, which it does (0.4535 -> 0.4345, now level with conf 1.5).
+
+### 17.17 Splatt3R's depth is 6% short, and the evaluation cannot see it
+
+Kimi's Q21 point: depth scaling (points pushed along their own rays) and
+translation scaling (the trajectory scaled) are **photometrically degenerate**
+under multi-view rendering — images cannot separate them. TUM is RGB-D, so the
+sensor can. Ratio of the network's predicted per-pixel camera-space depth to the
+sensor depth, per keyframe, no pose involved anywhere:
+
+```
+                          keyframes   median ratio   mean     std     range
+rgbd_dataset_fr1_360         46         0.94046     0.94653  0.09615  [0.732, 1.127]
+rgbd_dataset_fr1_desk        13         0.95242     0.97150  0.09667  [0.867, 1.224]
+```
+
+**Splatt3R places surfaces 5-6% NEARER than they are.** The comparison is
+network-vs-sensor in the keyframe's own camera frame, so this is the checkpoint's
+bias, not SLAM scale drift — the attribution Kimi asked for, decided. (Crop
+convention verified: `resize_img` scales TUM's 640x480 long side to 512 and the
+subsequent centre-crop is a no-op at 4:3, so the comparison is pixel-aligned.)
+
+Three independent numbers then close on each other:
+
+```
+network depth bias vs sensor            -6.0%
+recovered by --kf-depth-lr (17.16)      +1.4%
+residual                                 4.5%
+  its projected shear at a held-out viewpoint:
+  f * b * dd/d^2 = 517 * 0.057 * 0.09/4 = 0.66 px      <- sub-pixel
+```
+
+**The photometric loss recovers exactly the part of the depth error that is
+photometrically observable, and no more.** The +0.003 dB from `--kf-depth-lr` was
+not a disappointing result; it was the quantitative prediction of the parallax
+arithmetic, which nobody had done.
+
+#### The methodological consequence, which is larger than the finding
+
+Held-out views sit on the trajectory — the mean distance from a held-out
+viewpoint to the nearest keyframe is **0.057 m** (§17.16). At that baseline a 4.5%
+depth error moves a pixel by two thirds of a pixel. **The evaluation protocol is
+structurally blind to depth error**, in exactly the way §17.2 showed it is blind
+to the lattice (psnr moved 0.01 dB across a sweep that changed the visible
+artifact 13.6x).
+
+That reframes the two defects still marked unsolved. The seams (a veil from a
+misplaced cluster) and the trailing streaks are **novel-view phenomena**, while
+every number this project reports is sampled next to the supervision baseline.
+It is not that many fixes were tried and failed. **There is currently no metric
+that can see them, and under that condition success and failure are
+indistinguishable.** The lattice was fixed only because a metric for it was built
+first (self-consistency and `hp_alpha`), and then the fix followed in one pass.
+
+So the next step for the seams and the streaks is **not another fix**. It is the
+metric. Kimi's proposal, adopted as the design:
+
+- **Fly-through warp consistency (primary).** Render 5 frames on a +-5 cm dolly
+  around each held-out pose; warp frame t to t+1 using the rendered depth and the
+  known pose; report the patch-SSIM deficit. A veil's front layer carries the
+  back layer's texture at its own wrong depth, so the warp must fail there.
+  "Colour motion inconsistent with depth motion" is the defining signature of a
+  veil and needs no optical flow — the warp is enough. Sensitive to both static
+  seams and fly-through swim.
+- **Seam step (static supplement).** Render the per-pixel argmax-contributing
+  keyframe id (the renderer already computes what is needed); boundaries are
+  4-neighbour jumps in that id map, which is derived from the render and
+  therefore reliable, unlike extracting edges from the image. Keep boundary
+  pixels with rendered depth difference < 5 cm (excludes true occlusion edges)
+  and accumulated alpha > 0.8. Measure the brightness step across them,
+  normalized by local gradient energy. Null: shift every boundary 10 px and
+  report the ratio.
+
+Neither is built.
+
+#### Also usable immediately
+
+The −6% is a calibration number with downstream consumers. The lattice pitch is
+estimated from the Gaussian positions themselves, so it inherits the bias:
+**`Δx` is ~6% short everywhere**, which means the τ=0.5 selected in §17.2 is
+really τ≈0.53 against true metric spacing. Small, inside the flat part of the
+sweep, and worth knowing rather than rediscovering.
+
+### 17.18 The online A/B contradicts the offline proxy — investigation open
+
+Everything in §17.2-17.16 was measured with `scripts/refine_local.py` standing in
+for the online refiner: a fixed set of 50 supervision frames, a map built once,
+a fixed step count. The recommendation was then wired into `run_refiner` and a
+**matched pair of full online runs** was taken to confirm it. It did not confirm
+it.
+
+```
+online, refined map, scored by eval_map_quality (n=50)
+
+desk            psnr     lpips        room           psnr     lpips
+baked          10.7085  0.5588        baked        10.4264  0.5813
+old defaults   12.0971  0.5446        old          11.1298  0.5720
+NEW defaults    9.3865  0.7327        NEW           8.9339  0.7974
+```
+
+The controls are clean: both arms' *baked* maps score bit-identically
+(10.7085/0.5588 on desk, 10.4264/0.5813 on room), so SLAM was deterministic and
+the only variable is the refiner. The `old` arm is not a reproduction of the
+historical table — exact culling is on for both, so it is an "old quality
+settings, new throughput" control, which is the right control for the quality
+question and must not be quoted as reproducing §16's numbers.
+
+One-flag-at-a-time isolation on desk:
+
+```
+old (all off)              12.0971   0.5446
++ aa-sigma 0.5 only        12.0307   0.5629     -0.066 dB
++ freeze-means only        11.3756   0.5471     -0.722 dB
+all three                   9.3865   0.7327     -2.711 dB   <- not additive
+```
+
+**The levers do not add here, and the residual is large.** `min_confidence=0`
+and/or an interaction carries about −1.9 dB that neither of the other two
+explains.
+
+Two things the offline proxy got wrong, both now on record:
+
+1. **`min_confidence=0` was +0.426 dB offline at 300 steps (§17.16) and is
+   catastrophic online.**
+2. **Freezing the means was −9.7% lpips (better) offline on 360 at 300 steps and
+   is +0.5% lpips (worse) online on desk at 104 steps.** Not a small
+   disagreement — the sign flips.
+
+Two candidate causes, being separated rather than argued:
+
+- **Sequence.** All the offline 300-step work is on 360; desk was only ever run
+  at 3000. The offline desk 300-step cell was never measured and is running now.
+- **The online loop itself.** Supervision there is a recent ring plus a
+  reservoir over anchor-relative poses, sampled from a map that is still
+  *growing* — Gaussians injected late get very few of the ~104 steps, and early
+  ones are optimized against early frames and never revisited. The offline proxy
+  has a complete map and a fixed frame set from step 1. That difference is
+  structural and was never modelled.
+
+**Until this resolves, §17.15's configuration block is not validated online.**
+The offline results stand on their own terms; what does not stand is the
+inference from them to the deployed system. This is exactly the gap that the
+matched pair existed to test, and it is the reason to run it rather than ship on
+a proxy.
+
+**Isolation completed, and the online defaults are reverted.**
+
+```
+desk, online, refined map      psnr     lpips    d_psnr
+old (all three off)          12.0971   0.5446      —
++ aa-sigma 0.5 only          12.0307   0.5629    -0.066
++ min_confidence 0 only      11.5596   0.6054    -0.538
++ freeze-means only          11.3756   0.5471    -0.722
+all three                     9.3865   0.7327    -2.711
+```
+
+Sum of the individual effects is **−1.33 dB**; the measured joint effect is
+**−2.71 dB**. **No single flag explains it — there is a −1.4 dB interaction.**
+
+`run_refiner` and `main.py` now default `aa_sigma=0`, `freeze_means=False`,
+`min_confidence=1.5` — the configuration that measures best *in the system it
+ships in*. Exact culling stays on: it is a pure throughput change with zero
+false negatives and is untouched by any of this. The flags remain, so the
+offline settings are one argument away, and `--refiner-no-freeze-means` became
+`--refiner-freeze-means` so the default reads as what it is.
+
+**This is the honest engineering call, and it costs the headline.** §17.12's
+"the online lpips regression is fixed" does not survive its own system test.
+What survives is everything measured *about the offline refiner*, which is a
+real object this project also ships (`scripts/refine_local.py`), plus §17.1's
+throughput work, plus the diagnostics — §17.2's lattice mechanism, §17.4's seam
+re-diagnosis, §17.17's −6% depth bias and the parallax argument for why the
+protocol cannot see it. None of those depend on the online loop.
+
+**The leading hypothesis for the interaction, to test next**: the offline proxy
+has a complete map and a fixed frame set from step 1, while the online loop
+optimizes a map that is still *growing*. With ~104 in-sequence steps and
+keyframes arriving throughout, a Gaussian injected late gets almost no steps,
+and one injected early is fitted against early frames and never revisited. Every
+one of the three levers changes how much a Gaussian depends on being optimized
+at all — the band limit changes its initial footprint, freezing removes its
+ability to move, and `min_confidence=0` adds many Gaussians that most need
+optimizing. A lever that assumes "the optimizer will fix this" compounds badly
+when most Gaussians are barely optimized. That predicts the interaction should
+vanish if the refiner is run to convergence *after* the sequence ends
+(`--refiner-polish-secs`), which is a direct test and cheap.
+
+**The sequence is eliminated; it is the online loop.** The offline desk 300-step
+cell — never measured before, and the obvious confound since all the offline
+300-step work was on 360 — reproduces the *offline* verdict, not the online one:
+
+```
+desk offline, 300 steps      psnr     lpips    hp_alpha
+aa300      (free means)    14.1837   0.4298   0.00789
+aa_m_frozen300 (frozen)    13.8114   0.4199   0.00461     -0.372 dB, -2.3% lpips
+
+desk online, 104 steps
+old        (free means)    12.0971   0.5446
+iso_frz    (frozen)        11.3756   0.5471     -0.722 dB, +0.5% lpips
+```
+
+Same sequence, same lever, opposite sign on lpips. And the protocols match —
+`eval_map_quality` and `refine_local` both umeyama-align the estimate to ground
+truth and score held-out non-keyframes at mapped ground-truth poses, so that is
+not the explanation either.
+
+**What is left is the loop**: a map that grows while it is optimized, with
+supervision drawn from a recent ring plus a reservoir, against a fixed complete
+map and a fixed frame set in the proxy. `--refiner-polish-secs 900` is the
+direct test — it keeps the refiner running after the sequence ends, on a
+complete map, which is exactly the condition the proxy assumes. If the
+interaction is the growing map, polishing should recover most of the −2.71 dB.
+Running.
+
+### 17.19 The growing map was the cause — for psnr
+
+`--refiner-polish-secs 900` keeps the refiner optimizing after the sequence
+ends, on a complete map. Everything else stays online: the same loop, the same
+supervision store, the same anchor-relative poses. desk, all three levers on:
+
+```
+                                steps    psnr     lpips
+baked (unrefined)                 —    10.7085   0.5588
+old defaults, in-sequence        104   12.0971   0.5446
+NEW defaults, in-sequence        104    9.3865   0.7327
+NEW defaults + 900 s polish     1208   13.4039   0.6055
+```
+
+**The −2.71 dB is recovered and then some: +4.02 dB, and it becomes the best
+psnr of any online arm.** So the collapse was a step-budget and step-distribution
+artifact, not a property of the levers. §17.18's hypothesis is confirmed on psnr:
+a map that grows while it is optimized gives late Gaussians almost none of the
+~104 in-sequence steps, and all three levers assume an optimizer that will
+actually run.
+
+**lpips does not recover**: 0.7327 -> 0.6055, still 11.2% worse than `old` and
+worse than the *unrefined* baked map (0.5588). So with steps, the levers buy psnr
+and cost lpips online — the opposite sign to offline, where they bought lpips.
+That part of §17.18 stands unexplained.
+
+**The attribution is not yet made.** +1.31 dB over `old` could be the levers, or
+could be the polish alone; without `old + polish` there is no way to tell, and
+that control is running. Nothing above should be read as "the levers win with
+polish" until it lands.
+
+**Protocol note, to prevent a bad comparison later.** Offline and online absolute
+numbers are NOT comparable: the offline desk baked map scores 12.4416/0.5027 and
+the online one 10.7085/0.5588, because `main.py`'s viz bake path uses
+`max_scale=1.0, min_conf=1.5` while `refine_local` builds from the kfgauss dump
+with its own filters. Only within-protocol A/B is meaningful. Several apparent
+contradictions in §17.18 shrink once this is respected — but not the lpips sign
+flip, which is a within-protocol comparison on both sides.
+
+### 17.20 Method note: what the proxy cost, and what caught it
+
+§17.2-17.16 is roughly forty measured arms taken with `scripts/refine_local.py`
+standing in for the online refiner. The proxy was chosen because it is fast,
+deterministic and isolates one variable at a time — all true, and all still
+true. It also produced a recommendation that **degraded the deployed system by
+2.71 dB**, and nothing inside the proxy could have revealed that.
+
+What the proxy silently assumed, none of it stated at the time:
+
+1. **The map is complete from step 1.** Online it grows throughout, so a
+   Gaussian injected late receives almost none of the ~104 in-sequence steps.
+2. **Every Gaussian gets a comparable number of updates.** Online the
+   distribution is wildly uneven and correlated with injection time.
+3. **Supervision is uniform over the trajectory.** Online it is a recent ring
+   (30%) plus a reservoir, so the last frames are over-weighted — and that
+   weighting persists into the polish phase, where its original justification
+   (a reservoir that evicts on long sequences) no longer applies.
+
+Every one of the three levers assumes an optimizer that will actually run: the
+band limit changes an initial footprint, freezing removes the ability to move,
+`min_confidence=0` admits Gaussians that most need optimizing. Under assumption
+(1) and (2) those assumptions fail together, which is exactly why the levers were
+individually mild (−0.07, −0.54, −0.72) and jointly catastrophic (−2.71 against
+a −1.33 sum).
+
+**What caught it was running the thing itself, once, as a matched pair.** Not a
+better proxy, not more arms, not review — a single A/B in the deployed loop, with
+the baked maps scoring bit-identically as the control that proved SLAM was
+deterministic and the refiner was the only variable.
+
+Three rules this session earns:
+
+- **A proxy validates a mechanism, never a configuration.** §17.2's lattice
+  mechanism, §17.4's seam morphology and §17.17's depth bias all survive
+  untouched, because they are statements about the map. Every statement about
+  *what to set* had to be re-earned in the system.
+- **State the proxy's assumptions when the proxy is chosen**, not when it fails.
+  All three above were visible in `run_refiner`'s source the whole time.
+- **Interactions are where proxies break.** The individual effects transferred
+  in sign and roughly in size. Only the three-way term did not, and no amount of
+  one-factor-at-a-time work in the proxy would have produced it.
+
+The cost was real and should be stated plainly in any write-up: the online
+half of §17 was wrong for about a day, was published to the user in that state,
+and was corrected only because the confirmation run was taken rather than
+skipped.
+
+### 17.21 The control lands: it was the polish, not the levers
+
+```
+desk, online, refined map        steps    psnr     lpips
+baked (unrefined)                  —    10.7085   0.5588
+old defaults, in-sequence         104   12.0971   0.5446
+NEW defaults, in-sequence         104    9.3865   0.7327
+NEW defaults + 900 s polish      1208   13.4039   0.6055
+old defaults + 900 s polish      1581   14.0640   0.4247   <- best on both
+```
+
+**`old + polish` beats `new + polish` on both metrics** — +0.66 dB and lpips
+0.4247 against 0.6055, a 30% gap. Both arms got the same 900 seconds, so this is
+a matched-wall-clock comparison, which is the one a deployment decision needs.
+
+That retracts §17.19's reading. The +1.31 dB that `new + polish` showed over
+`old` in-sequence was **entirely the polish**; none of it was the levers. Given
+the same steps, the old settings win decisively. §17.19 said the attribution was
+not yet made and that nothing should be read as "the levers win with polish" —
+that caution was correct and the answer is that they lose.
+
+**Final verdict on the three quality levers: they work offline and do not
+transfer online.** Forty-odd offline arms could not have shown this; two online
+runs did.
+
+#### What the online work actually delivered
+
+Not a parameter change — a scheduling one:
+
+```
+old, in-sequence only    12.0971 / 0.5446
+old + 900 s polish       14.0640 / 0.4247      +1.97 dB, -22% lpips
+```
+
+**`--refiner-polish-secs` is the fix for the online lpips regression.** At 0.4247
+it is 24% better than the *unrefined* baked map (0.5588), and it is the only
+online configuration measured that improves lpips substantially at all. The
+regression recorded in `docs/online-eval-all-families.md` for room and 360 was
+never a parameter problem: **104 in-sequence steps on a 2.4M-Gaussian map is not
+enough optimization, and the answer is more steps, not different settings.**
+
+This also lands squarely on the project's actual goal. Real-time tracking with a
+short post-sequence polish is a more honest shape for "end-to-end real-time
+online reconstruction" than trying to force convergence inside the sequence:
+tracking stays real-time and untouched, and the map reaches a quality the
+in-sequence budget provably cannot buy. §16.11's arithmetic said the last 3-4x
+had to come from needing fewer steps rather than faster ones; this says the
+alternative is simply to take the steps afterwards.
+
+#### Caveats
+
+One sequence (desk), one seed, one polish duration. `new + polish` got 1208
+steps against `old + polish`'s 1581 because its map is 12% larger — matched in
+seconds, not in steps, which is the right axis for deployment but means the
+lever comparison also carries a step-count difference. The lpips gap (30%) is far
+larger than 31% more steps would plausibly explain, but that is an argument, not
+a measurement.
+
+### 17.22 Review of the self-refutation: a better mechanism, and four missed signals
+
+**A better explanation for the lpips half, and my hypothesis loses a control.**
+
+I proposed that the online recent-ring (30% of samples drawn from the last 64
+frames) over-fits the sequence tail during polish. Kimi's objection is a control
+I had in hand and did not use: **both arms run the identical `recent_frac=0.3`
+schedule, and `old + polish` improved lpips by 22% under it.** A schedule shared
+by both arms cannot by itself create the asymmetry.
+
+Its alternative: **freezing the geometry manufactures multi-view colour conflict,
+and L1's answer to conflict is the conditional mean — psnr-optimal and
+lpips-poison.** Gaussians whose geometry is wrong (junk tails, the −6%
+systematic bias of §17.17, streaks) land on different pixels in different
+supervision views and are asked to be different colours. With the means free
+that conflict is resolved by moving the Gaussian until it is view-consistent;
+with them frozen it is unresolvable, and L1 converges to the average of the
+observations — desaturated and texture-averaged.
+
+**The psnr/lpips decoupling is itself the signature.** `new + polish` recovering
+psnr to 13.40 (a per-pixel conditional mean is exactly MSE-optimal) while lpips
+stays pinned at 0.6055 (an averaged fake is exactly what lpips punishes) is what
+conflict-averaging predicts, and it explains why `old` escapes: free means make
+the geometry view-consistent and the conflict never forms.
+
+Tests, in Kimi's priority order:
+
+1. **Zero-cost**: decompose held-out lpips per frame along the trajectory. My
+   recent-ring hypothesis predicts damage concentrated at the tail; the
+   conflict-averaging one predicts it in hole/junk regions, time-independent.
+2. **Decisive arm**: `new + polish` but with the means UNFROZEN during the polish
+   phase only (keeping conf 0 and the band limit). Predicted lpips recovers to
+   <= 0.48, eating >= 60% of the 0.18 gap. Unchanged means the explanation is
+   falsified.
+3. My recent_frac=0 arm — worth one flag, predicted to recover <= 0.02-0.03.
+4. **The constructive version**: weight polish-phase supervision by
+   *under-training* (per-Gaussian update counts are trackable; late-injected
+   regions are under-trained) rather than by recency. If the diagnosis is step
+   allocation, medicate the allocation directly.
+
+#### Four signals that were visible when the proxy was chosen
+
+Beyond the one self-review found (the three assumptions are written plainly in
+`run_refiner`, read but never listed as a difference table):
+
+1. **The proxy's regime never overlapped the deployment regime on the binding
+   axis.** §16 established 86 in-sequence steps. Every offline arm ran >= 300.
+   A proxy that does not cover the deployment point on the tightest axis is not
+   a proxy, it is a different experiment — and that number was already ours.
+2. **The proxy was never asked to reproduce the one online fact on hand.** The
+   lpips regression (room +11.1%, 360 +20.6%) was a real online measurement.
+   A proxy that cannot reproduce a *known* online phenomenon has no standing to
+   predict new ones. **A cross-system paired calibration run should have been
+   experiment #1, not #41.** This is more actionable than "a proxy validates a
+   mechanism, never a configuration": *before any sweep, run one shared
+   configuration through both systems and pair them; if they do not pair, fix
+   the proxy first.*
+3. **Lever-category analysis, available by pure reasoning.** Every lever swept
+   acts on injection or parameterization, so its value is *by definition* a
+   function of what happens after injection — which is exactly what the proxy
+   abstracts away by starting with a complete map. The alignment between the
+   lever category and the proxy's blind spot was derivable without running
+   anything. Conversely a *scheduling* lever acts on a complete map and is
+   naturally robust to the gap, which is why the one that survived was polish.
+4. **Institutionalize the difference table.** Make "proxy vs target system
+   differences" a required field: each difference either argued irrelevant to
+   the quantity being measured, or priced with the cheapest test that would rule
+   it out. The budget of any single one of the forty arms would have paid for
+   the most expensive item on that list.
+
+#### The ordering this session actually established
+
+**Scheduling >> map content > parameterization.** Polish is worth +1.97 dB and
+−22% lpips; density (`min_confidence`) moves things by tenths of a dB with the
+sign depending on budget; the parameterization levers do not transfer online at
+all. And every reordering in this section was caused by the wall-clock
+constraint moving — exact culling's 9x is what made matched-steps the right
+comparison, which is what inverted §16.9, which is what made polish affordable
+enough to be the answer.
+
+### 17.23 Zero-cost discrimination: my hypothesis falsified, Kimi's survives
+
+Per-frame held-out lpips in trajectory order, quartile means, on the two
+already-archived polish maps — no new runs (`eval_map_quality --per-frame`):
+
+```
+desk            Q1 (earliest)   Q2       Q3      Q4 (latest)
+new + polish       0.5909     0.6626   0.6026    0.5717
+old + polish       0.3756     0.4634   0.4642    0.3998
+deficit           +0.2153    +0.1992  +0.1384   +0.1719
+```
+
+**My recent-ring hypothesis predicted the deficit concentrated at the tail. Q4
+has the smallest deficit and Q1 the largest — the opposite. Falsified.**
+
+Kimi's conflict-averaging hypothesis predicted a deficit uncorrelated with time.
+Measured: 0.138 to 0.215 across quartiles, no tail concentration. **Consistent —
+though consistent is not confirmed.**
+
+(Both arms share the same *shape*, Q2/Q3 worst and Q1/Q4 best. That is a property
+of the desk sequence, not of either configuration; only the deficit between them
+is attributable, and it is roughly flat.)
+
+This is what a zero-cost discriminator is worth: two competing explanations, one
+eliminated, on data already on disk. It should have been run before either
+explanation was written down.
+
+**The decisive arm is built** (`--refiner-unfreeze-in-polish`, with a shared
+`polish_flag` because the refiner is a separate process and cannot otherwise
+know the polish phase has begun). Pre-registered: Kimi predicts lpips recovers
+from 0.6055 to **<= 0.48**, eating >= 60% of the 0.18 gap. If it does not move,
+conflict-averaging is falsified and there is no third hypothesis on the table.
+
+### 17.24 360: the online lpips regression is fixed, on the sequence that had it
+
+Everything about polish so far was measured on desk, which never had the
+regression. 360 did. Same run, scored against its own baked map:
+
+```
+360, online                steps     psnr     lpips
+baked (this run)             —     11.5692   0.5021
++ 1800 s polish            3821    13.8664   0.4605     +2.30 dB, -8.3% lpips
+
+for comparison, docs/online-eval-all-families.md (in-sequence only):
+baked 11.9973 / 0.4841  ->  refined 12.1413 / 0.5838     +0.14 dB, +20.6% lpips
+```
+
+**The regression inverts: +20.6% worse becomes 8.3% better, and psnr goes from
++0.14 dB to +2.30 dB.** Measured on the sequence that had the defect, with no
+parameter change at all — the refiner ran default settings and was simply
+allowed to keep going after the sequence ended.
+
+The step counts say why: **3821 against 114 in-sequence, a factor of 33.**
+§16.11 computed that 3000 steps is what turns 360 net-positive and that
+in-sequence only buys 86, concluding the remaining 3-4x had to come from needing
+*fewer* steps. The answer turned out to be simpler: **those 3000 steps do not
+have to be taken during the sequence.** Tracking stays real-time and untouched;
+the map gets its budget afterwards.
+
+That also settles what the whole §17 online investigation delivered. Not the
+three quality levers, which do not transfer (§17.21). A scheduling change worth
++2.30 dB and −8.3% lpips on the hardest sequence, and +1.97 dB / −22% on desk.
+
+### 17.25 All three sequences, closed
+
+```
+              baked            + polish         steps    d_psnr   d_lpips
+desk     10.7085 / 0.5446   14.0640 / 0.4247    1581     +1.97    -22.0%
+360      11.5692 / 0.5021   13.8664 / 0.4605    3821     +2.30     -8.3%
+room     10.4264 / 0.5813   12.6417 / 0.4890    1856     +2.22    -15.9%
+
+historical, in-sequence only (docs/online-eval-all-families.md):
+360      11.9973 / 0.4841 -> 12.1413 / 0.5838            +0.14    +20.6%  (worse)
+room     11.1462 / 0.5418 -> 11.4506 / 0.6019            +0.30    +11.1%  (worse)
+```
+
+**Both sequences that regressed now improve, and by more than an order of
+magnitude on psnr.** No parameter was changed: the refiner runs its default
+settings and is simply allowed to continue after the sequence ends.
+
+This is the final answer to the question that opened §17. The visible defects
+split into three groups and each got a different verdict:
+
+- **The dot lattice** was a real representation defect, diagnosed with a metric
+  built for it (self-consistency, `hp_alpha`), fixed by a band limit read off
+  the Gaussian lattice — **offline**. It does not transfer online, and the
+  reason it does not is §17.21.
+- **The lpips regression** was never a parameter problem. It was **104 steps on
+  a multi-million-Gaussian map**, and the fix is scheduling.
+- **The seams and streaks** are novel-view phenomena that the evaluation
+  protocol is structurally blind to (§17.17), and no lever moved them because
+  no metric can see them. The metric, not another fix, is the next step.
+
+And the ordering, which is the transferable lesson: **scheduling >> map content
+> parameterization**, with every reordering caused by the wall-clock constraint
+moving.
+
+### 17.26 A metric that can see the veil, and two more falsified predictions
+
+`scripts/diag_flythrough.py`. Around each held-out pose, dolly the camera and
+backward-warp frame t into t+1 through t+1's *rendered* depth. A veil is two
+surfaces at different depths whose colour comes from the far one and whose
+geometry comes from the near one, so **colour motion inconsistent with depth
+motion** is its defining signature, and a warp finds it without optical flow.
+Needs no ground truth — a self-consistency measurement, like §17.2's 2x test.
+
+**Self-test first, before any use.** Sweeping the dolly:
+
+```
+dolly     disparity    warp     static-shift   ratio
++-1 cm      1.8 px    0.1330      0.0340       3.91
++-5 cm      8.2 px    0.4083      0.2254       1.81
++-15 cm    20.6 px    0.5375      0.4248       1.27
+```
+
+The ratio falls monotonically with disparity, which is the qualitative behaviour
+depth-informativeness must produce, so the metric is not broken. **But it carries
+a large instrument noise floor**: at 1.8 px a rigid shift is nearly the identity
+(0.034) while the warp costs 0.133. That floor is the alpha-weighted mean depth
+averaging across depth discontinuities, plus resampling — not the veil. So the
+absolute ratio means little; **the metric is a comparator between maps at a
+matched dolly**, where the floor cancels.
+
+As a comparator it resolves (desk, +-5 cm):
+
+```
+baked           1.3844
+new + polish    1.4090
+old + polish    1.8115
+```
+
+**It orders the maps opposite to psnr/lpips.** `old + polish` is the best map on
+both photometric metrics (14.0640 / 0.4247) and the worst on warp consistency;
+the *unrefined* baked map is the best. Two readings, not yet separated:
+
+- **(a) a finding**: photometric refinement improves held-out psnr/lpips while
+  degrading the map's geometric self-consistency, because the optimizer moves
+  Gaussians to fit supervision views in ways that are not physical. That would
+  explain the whole complaint that started §17 — numbers rising while the GUI
+  looks worse.
+- **(b) an artifact**: the noise floor may couple to geometric complexity, and a
+  more optimized map has more fine structure.
+
+**Do not adopt (a) yet.** When a new metric first produces a counter-intuitive
+ordering, the metric is the suspect. The discriminator is to re-run with TUM's
+*sensor* depth in place of the rendered depth: if the ordering flips, the depth
+render is at fault; if it survives, (a) stands.
+
+**Kimi's decisive prediction is falsified too.** `--refiner-unfreeze-in-polish`
+restores the positional rate once the map is complete:
+
+```
+                                  steps    psnr     lpips
+new + polish, frozen throughout    1208   13.4039   0.6055
+new + polish, unfrozen in polish   1371   13.6337   0.5713
+old + polish, never frozen         1581   14.0640   0.4247
+```
+
+Recovery is 0.0342 of the 0.1808 gap = **19%, against a pre-registered >= 60%**.
+Direction right, magnitude three times short. So conflict-averaging is part of
+the mechanism and not the main part.
+
+**Both hypotheses for the online lpips deficit have now failed**: mine (recent-ring
+over-fitting) was falsified by the quartile decomposition in §17.23, and Kimi's
+(conflict-averaging under frozen geometry) explains 19%. **81% of the deficit is
+something neither of us proposed**, and there is no third hypothesis on the
+table. That is the honest state, and it is worth more in the record than a
+plausible story would be.
+
+### 17.27 Is it unfixable? The distinction that settles it
+
+The question put to Kimi was whether the seams and streaks admit *any* method.
+Non-existence cannot be proved, so the deliverable was an exhaustive taxonomy
+with each branch either killed by a measurement or priced. The framing that came
+back is sharper than the taxonomy, and it decides the question:
+
+**Disagreement defects vs absence defects.**
+
+- **A seam/veil is a disagreement defect.** The map holds two mutually
+  contradictory measurements of one surface. Removing a contradiction requires
+  **no new information** — only a term that notices the contradiction. So it is
+  fixable in principle, and the reason nothing has worked is precise: *the signal
+  that would fix it is not in the loss we have been using.* Every lever tried so
+  far optimizes agreement with supervision views, and the supervision views
+  cannot see a 0.66 px disagreement (§17.17).
+- **A streak over single-coverage geometry, and unmapped black, are absence
+  defects.** The content is not in the map and not in the supervision signal, and
+  with densification off nothing will ever grow it. **That is missing
+  information, not an inadequate method.** No optimizer reaches it; only a prior
+  (network inpainting) or new data (sensor, re-observation) can.
+
+**Streaks therefore split in two**: those with correct coverage behind them are
+fixable by suppressing the front layer (untested, see below); those without are
+impossible in principle and only keyframe-selection prevention applies.
+
+#### Impossible in principle, under this architecture's three pillars
+
+Stated with the scoping that makes each precise rather than defeatist:
+
+1. **Repairing absence without a prior or new data.** Information is not there.
+2. **Learning inter-sample appearance from supervision at the trajectory's own
+   sampling rate.** A defect in the null-space intersection of the loss and the
+   parameterization is unreachable — a sampling-theorem argument, already
+   demonstrated twice (`--ss-loss` inert, psnr flat to +-0.01 dB across the tau
+   sweep). **Scoped**: impossible *with the existing data and existing
+   parameterization*. Adding a prior or changing the parameterization moves the
+   defect out of the null space, which is exactly why the consistency-loss
+   branch is not condemned by this — it is the reason that branch exists.
+3. **Photometric per-cluster geometric correction coexisting with free loop
+   closure.** Pose error and depth error are photometrically degenerate, so a
+   learned offset carries a pose component that gets re-applied after a
+   correction. **Scoped**: impossible *from photometry alone*; an external metric
+   reference (sensor depth) breaks the degeneracy — map-vs-sensor is network
+   error, sensor-vs-trajectory is pose error.
+4. **Making native psnr/lpips see either defect.** 0.66 px is structural. This is
+   not a repair candidate at all; it is the precondition for discussing repairs.
+
+#### Untested, with prices and predictions
+
+Kimi's ranked three, each with a falsification line:
+
+```
+1. sensor-depth injection (map side, tracking untouched)
+   new metrics: per-kf spread 9.6% -> <=2.5%, seam step -50..-70%,
+                warp deficit -40..-60%
+   old metrics: psnr +0.05..0.25, lpips +-1%
+   falsified if: spread falls 4x but seam step falls <30%
+                 -> seams are not depth-spread dominated, look at pose/alpha
+   (this is the discriminator AND the upper bound: it says how much of the seam
+    belongs to depth at all, whether or not the sensor route is ever adopted)
+
+2. cross-cluster consistency loss (colour + confidence-weighted alpha
+   competition; compatible with frozen means)
+   new metrics: seam step -40..-60%, warp deficit -20..-35%, hp_alpha +<10%
+   old metrics: +-0.05 dB / +-1% -- NOT MOVING IS THE WIN, it demonstrates this
+                class of repair is metric-neutral by construction
+   falsified if: pairwise colour residual narrows but seam step does not
+                 -> the seam-step metric is itself wrong
+
+3. streak opacity soft-deletion  o <- o * min(1, k*dx/s_ray),  k ~ 1.5
+   new metrics: edge-region warp deficit -20..-40%; black fraction +<0.5%
+   falsified if: black rises >1% -> "coverage behind" is false on our maps,
+                 fall back to keyframe baseline-threshold prevention
+```
+
+#### The answer to the question as asked
+
+**The only thing this architecture truly forbids is creating information.
+Everything else is engineering.** So:
+
+- **Seams: not unfixable.** The signal that would fix them is not in the loss
+  being used, and two untested branches address exactly that.
+- **Streaks: half unfixable in principle** (single-coverage — the information is
+  absent), **half simply untested** (multi-coverage — one injection-time line,
+  never run).
+- **Black: 47% already recovered and measured** (§17.16); the remaining 3.76% is
+  content the camera never observed, which is absence and therefore final.
+
+Declaring the seams unfixable today would be reporting the failure of a
+measurement as a property of the object — and §17.26 makes that concrete: the
+fly-through metric is one hour old and has already produced an ordering that
+psnr and lpips cannot see.
+
+### 17.28 The depth upper bound, and a confound caught before it was reported
+
+`scripts/diag_sensor_depth.py` rescales every Gaussian along its own view ray to
+match TUM's depth sensor, leaving direction, covariance, colour and opacity
+alone, so **the only quantity changed is depth**. Not deployable — the SLAM
+system is monocular — but it answers the one question tuning cannot: if every
+depth were right, how much veil would remain?
+
+A free cross-check first: the per-keyframe sensor/prediction ratio comes out at
+median **1.0500** on desk, against §17.17's independently measured −4.8% bias
+(1/0.952 = 1.050). Two different code paths, same number.
+
+**First run, and why it does not answer the question.**
+
+```
+             warp     static   ratio     psnr      lpips
+pred        0.3856   0.3056   1.2618   12.3544   0.5071
+sensor      0.3735   0.3356   1.1129   11.0903   0.5579
+```
+
+Warp deficit fell 3.1% against a pre-registered −40 to −60%, and psnr fell
+1.26 dB. Read naively that is a decisive falsification of the depth hypothesis.
+**It is not, because the arm has a confound larger than the effect it looks
+for.** The trajectory was estimated from the same pointmaps, so the poses and
+the predicted depths **share a scale and are mutually consistent**. Scaling the
+depths by 1.05 while leaving the poses alone breaks that consistency and
+displaces every cluster — which is what the −1.26 dB is.
+
+Seams are a **relative** misplacement between clusters, so the signal is the
+per-keyframe deviation from the median (std 9.4%), not the global factor; and
+evaluation's umeyama alignment absorbs the global part regardless. The corrected
+arm divides `GLOBAL_MED` out and applies only the relative correction.
+`--global-scale` keeps the confounded version as a control, with the −1.26 dB
+recorded in its help text.
+
+**This is the third instance of the same error this session**, and the pattern is
+worth naming because it is not obvious in the moment:
+
+- exposure re-centring: folding a render-space transform into per-Gaussian
+  colour is only equivalent where accumulated alpha is 1 (§17.8)
+- anisotropy clamping: shortening the long axis *is* shrinking the footprint,
+  and the band limit only floors the smallest scale (§17.16)
+- sensor depth: rescaling depth alone breaks a scale shared with the trajectory
+
+Each time an intervention was designed to change one physical quantity and
+silently changed a second one that dominated the measurement. **The missing
+habit is asking "what else does this change?" before running, not after a
+surprising number.** Cheap to institutionalize: for any intervention, write down
+the quantities it touches directly and the invariants it might break, and check
+whether any of them is coupled to the metric more strongly than the target.
+
+The corrected arm's verdict, whichever way it falls, is what §17.27's
+experiment #1 was for: it decides whether the next effort goes to depth
+consistency (a cross-cluster loss, fine-tuning the −6% bias) or to pose and
+alpha competition. Both directions are live; the point of the experiment is that
+psnr cannot distinguish them and this metric can.
+
+### 17.29 The depth upper bound is not measurable on TUM fr1
+
+Four independent parameterizations of "correct the depth toward the sensor",
+desk, all against the same `pred` baseline:
+
+```
+                     warp     ratio     psnr      lpips
+pred (unchanged)    0.3856   1.2618   12.3544   0.5071
+global scale        0.3735   1.1129   11.0903   0.5579
+relative per-pixel  0.3903   1.1101   11.0663   0.5725
+per-keyframe scalar 0.4218   1.2555   11.6556   0.5108
+global affine curve 0.4091   1.2859   11.5701   0.5743
+```
+
+**All four degrade both metric families.** The pre-registered falsification line
+— "spread collapses but warp deficit falls < 30% -> seams are not
+depth-dominated" — **cannot be applied**, because its premise was never
+established. Four arms demonstrate the depth was made *different*, not more
+correct, and every difference hurt.
+
+Why, and it is not subtle in hindsight: TUM fr1's depth comes from a
+structured-light sensor at a **different viewpoint from the RGB camera** (a
+registration offset), with substantial noise and missing returns; and the
+trajectory and the map were **co-estimated from the network's own pointmaps**, so
+the network's depth is *self-consistent* with everything else in the system in a
+way an external measurement is not. Importing an unregistered external
+measurement into a self-consistent system destroys more consistency than it
+repairs.
+
+**So the upper bound is not measurable on this dataset.** Kimi's experiment #1
+is off the table here — not because the answer came back negative, but because
+the instrument is inadequate. A valid version needs a depth reference that is
+registered to the RGB camera, low-noise, and consistent with the trajectory;
+TUM fr1 supplies none of the three.
+
+The premise-check that produced this is worth more than the arms:
+
+```
+corr(per-keyframe sensor/pred ratio, that keyframe's median scene depth) = +0.736
+54% of the ratio's variance is explained by scene depth alone
+std after removing a linear scene-depth trend: 0.0940 -> 0.0637
+```
+
+**Over half of §17.17's "9.6% per-keyframe spread" is a range-dependent bias, not
+per-cluster randomness.** That is a correction to §17.17, which used that spread
+to support the per-cluster-misplacement reading of the seams: **the support is
+substantially weaker than written**. It also explains all four failures at once —
+a per-keyframe correction driven by scene content scatters clusters instead of
+aligning them.
+
+#### What this does to the ranking
+
+It promotes Kimi's #2 and the reason is now stronger than when it was ranked.
+**The cross-cluster consistency loss needs no external truth at all.** It does
+not need to know the correct depth; it only needs to notice that two clusters
+covering one surface disagree. After four failed attempts to import external
+truth into a self-consistent system, an internal-consistency term is not merely
+the next option — it is the only branch that does not depend on something this
+dataset cannot supply.
+
+#### Method note
+
+Three of these four arms were run *because the previous one was invalid*, each
+time caught by asking what else the intervention changed:
+
+```
+arm 1  confounded by a scale shared with the trajectory
+arm 2  confounded by sensor shape noise and RGB-depth misregistration
+arm 3  confounded by a premise (the 9.4% spread) that had never been checked
+arm 4  valid in construction, and it revealed that the instrument itself is
+       the problem
+```
+
+Not one of the negatives was ever evidence about the seams. **Every negative
+result in this section was about the measurement, not the object** — which is
+precisely why "the seams are unfixable" could not have been concluded from any
+of them.
+
+### 17.30 The cross-cluster consistency loss, built and first-measured
+
+`cross_cluster_loss` in `refiner.py`. Voxel-hash the composed world positions;
+keep only voxels containing Gaussians from **two or more distinct keyframes**;
+penalize the within-voxel variance of position and colour. Gradient reaches
+`kf_log_depth` — sliding a whole cluster along its own view rays — and `means`
+if they are free.
+
+Three properties make this the branch that survived §17.29:
+
+- **No external truth.** It never asks what the correct depth is, only whether
+  two clusters covering one surface disagree. Four attempts to import sensor
+  depth into this self-consistent system all degraded it (§17.29).
+- **No new information.** A seam *is* a disagreement, and removing a
+  contradiction is free in the information sense (§17.27).
+- **It never looks through a camera.** The comparison is in 3D, which is the
+  only way past the structural blindness of a 0.057 m supervision baseline to a
+  0.66 px error (§17.17).
+
+It is also the signal `--kf-depth-lr` was missing. §17.16 measured that
+parameter finding a real signal and buying +0.003 dB, because photometry cannot
+tell it *which way* to slide.
+
+Explicitly not voxel dedup, which deleted 8% and changed nothing (§16.6):
+deleting picks one of two disagreeing measurements, this moves them toward each
+other.
+
+**First measurement, desk, 300 steps, scored by the fly-through metric:**
+
+```
+          psnr     lpips   self-psnr  hp_alpha   warp     ratio
+noc     13.8114   0.4199    37.64     0.00461   0.3846   1.4947
+cons    13.7014   0.4166    38.40     0.00445   0.3807   1.5059   w=0.1
+cons_hi 13.7452   0.4207    38.64     0.00463   0.3720   1.5068   w=1.0
+```
+
+Warp deficit −1.0% and −3.3% against a predicted −20 to −35%. The `kf_depth`
+scales do move (std 0.0146 with the term, against 0 without), so the gradient is
+real; the effect is not.
+
+**And the voxel size was chosen by the wrong scale argument.** The default 0.02 m
+was picked as "a few times the lattice pitch (~2 mm)". But the term compares two
+*disagreeing* clusters, and a veil sits **4-10 cm** in front of the true surface
+(§17.16's ±2-5% at 2 m). **At 2 cm the two layers fall in different voxels and
+are never compared.** The relevant scale is the disagreement scale, not the
+sampling scale.
+
+That is the fifth instance in this section of a parameter or an intervention
+chosen by a plausible-sounding argument about the wrong quantity (§17.28 lists
+the first four). A voxel sweep at 5/10/20 cm is running.
+
+**Status, stated precisely.** This route is neither confirmed nor refuted: its
+first arm was mis-parameterized, so its negative is about the experiment, like
+the four before it. What *has* changed is that the route is now **decidable** —
+the fly-through metric separates maps by 0.372-0.422, far above seed noise, so a
+null result at the right voxel scale would be **the first negative in this whole
+investigation that is about the object rather than the measurement.** Only then
+does "unfixable" become discussable, and even then the falsification line points
+at the next suspect rather than at a dead end: pose error and alpha competition
+between overlapping clusters, an entire branch never touched.
+
+### 17.31 Six negatives, one structure: name the failure mode
+
+The voxel sweep closed at −4.3% and saturating across a 10x range (0.02 -> 0.20 m),
+which looked like the first negative about the object. It is not. The loss
+penalized **total** within-voxel variance, and total = within + between. The
+within part is legitimate surface structure inside one cluster — texture,
+curvature — and it dominates, diluting the signal. **A seam is two clusters'
+MEANS disagreeing**, so the quantity is the per-(voxel, keyframe) mean and the
+loss is their spread. Fixed to a proper between-group variance; arms running.
+
+That is the **sixth** time in this section a negative result turned out to be
+about the experiment. The structure is identical every time, and worth naming
+because knowing it after the fact six times is not the same as having a step
+that catches it before:
+
+```
+                    nominal target              what it also changed
+exposure recentre   fold mean exposure back     only equivalent where alpha = 1
+anisotropy clamp    remove needle Gaussians     shrank the footprint
+sensor depth x3     make depth correct          broke self-consistency /
+                                                injected sensor shape noise /
+                                                applied a scene-content scale
+consistency voxel   find two clusters on one    sized off the sampling scale, so
+                    surface                     the two layers never co-occur
+consistency formula penalize cluster disagreement  penalized within-cluster
+                                                   surface structure
+```
+
+**An intervention nominally aimed at quantity A also moved quantity B, and B was
+more strongly coupled to the metric than A.** Every one is a single sentence in
+hindsight and none was asked in advance.
+
+The missing step is cheap and mechanical, and it goes in the protocol next to
+§17.22's difference table:
+
+> Before running an intervention, write down (1) the quantities it changes
+> directly, (2) the invariants it might break, (3) the scale at which the target
+> effect lives, and check whether (2) or a mismatch in (3) couples to the metric
+> more strongly than (1).
+
+Applied retroactively, that question catches all six in under a minute each.
+
+**And it bears directly on the question this whole line was asked to answer.**
+In an investigation whose experiment design has been defective six consecutive
+times, **no conclusion of the form "this defect is unfixable" can be about the
+defect.** That is not caution; it is what the record says. The parts that *are*
+settled were settled by arguments about information (§17.27's absence defects)
+and by arithmetic (§17.17's 0.66 px), never by an accumulation of failed arms.
+
+### 17.32 The streaks: a working lever, after two wrong forms
+
+The anisotropy clamp failed at every setting (§17.16) and the reason turned out
+to be the intervention's form, not the target: shortening the long axis *is*
+shrinking the footprint, and the band limit only floors the smallest scale.
+Kimi's alternative keeps the footprint and lowers the opacity instead, so the
+surface behind shows through:
+
+```
+o <- o * min(1, K * pitch / max_scale)
+```
+
+Two form choices that matter, both learned from earlier failures:
+
+- **Opacity, not scale.** Hiding a streak is free; shrinking it opens holes.
+- **Elongation measured against the LATTICE PITCH, not against the other axes.**
+  A Gaussian is a streak when it is long compared with the surface sampling it
+  belongs to (§17.2's quantity), which is not the same as being anisotropic.
+
+desk, 300 steps, on top of the recommended offline config:
+
+```
+K       lpips     psnr      black    d_black
+0      0.4199   13.8114    3.59%       —
+4.0    0.4193   13.8101    3.58%     -0.01
+1.5    0.4116   13.8108    3.69%     +0.10
+1.0    0.4062   13.7970    3.77%     +0.18
+0.5    0.3989   13.7493    3.90%     +0.31
+```
+
+**Monotone: −5.0% lpips at K=0.5, for −0.062 dB psnr and +0.31 pp of black.**
+That is the best perceptual result on desk offline in this whole section
+(0.3989 against a 0.4199 baseline and a previous best of 0.4155).
+
+**The pre-registered risk check passes.** Kimi predicted "black fraction
++<0.5%"; measured +0.31 pp, and the falsification line (>1%, meaning nothing is
+behind the streaks after all) is not approached. So on these sequences the
+"coverage behind" premise is **confirmed**, which is what makes hiding legitimate
+rather than a trade of one artifact for a worse one. That check was declared
+before the run and was worth declaring: −5.0% lpips is a large enough number to
+discourage looking for its price.
+
+Its predicted *mechanism* was wrong, though: "edge-region warp deficit −20 to
+−40%" did not appear (the whole-frame warp metric moved +1.6%, diluting a
+localized effect), while the lpips gain was not predicted at all. Right lever,
+wrong account of why.
+
+**Recommended: `--streak-opacity 0.5` in the offline configuration.** Not wired
+into `run_refiner`, because §17.21 established that offline quality levers do
+not transfer online and nothing here has been tested in that loop.
+
+#### The streak line, closed
+
+```
+absent-coverage streaks     impossible in principle -- information is not there,
+                            prevention (keyframe baseline threshold) only
+covered streaks             -5.0% lpips, measured, cheap, one injection line
+anisotropy clamping         harmful at every setting, do not revisit
+```
+
+### 17.33 The online table, extended (in progress)
+
+Post-sequence polish, default refiner settings, scored against each run's own
+baked map. Four of seven sequences:
+
+```
+seq     baked            + polish          steps   d_psnr   d_lpips
+desk  10.7085 / 0.5446  14.0640 / 0.4247   1581    +1.97    -22.0%
+360   11.5692 / 0.5021  13.8664 / 0.4605   3821    +2.30     -8.3%
+room  10.4264 / 0.5813  12.6417 / 0.4890   1856    +2.22    -15.9%
+xyz   12.7732 / 0.4311  14.8142 / 0.3050   2089    +2.04    -29.3%
+```
+
+**psnr improves by +2.0 to +2.3 dB on every sequence**, across maps differing by
+4x in size and trajectories as different as a desk pan and a full rotation. That
+consistency is the stronger evidence: it says polish is not fixing some
+sequence-specific pathology but a systematic under-optimization. lpips varies far
+more (8-29%) and is loosely anti-correlated with difficulty — 360, the hardest
+(7.27M Gaussians, rotation), gains least.
+
+**A scheduling observation worth more than the table.** The steps each sequence
+needs span **2.4x** (1581 to 3821), and that spread does not track map size:
+desk (1.86M) and room (7.3M) differ 3.9x in size but only 1.17x in steps, while
+360 needs 2.4x desk's. So **"budget by map size" is the wrong rule**, which is
+the case for the adaptive termination built as `--refiner-polish-tol` (default
+off, untested — after §17.21, nothing ships on an offline-looking argument).
+
+### 17.34 Seven sequences, and a correlation that predicts the gain
+
+All seven, post-sequence polish, default settings, each scored against its own
+baked map:
+
+```
+seq     baked            + polish          steps   d_psnr   d_lpips
+desk  10.7085 / 0.5446  14.0640 / 0.4247   1581    +1.97    -22.0%
+360   11.5692 / 0.5021  13.8664 / 0.4605   3821    +2.30     -8.3%
+room  10.4264 / 0.5813  12.6417 / 0.4890   1856    +2.22    -15.9%
+xyz   12.7732 / 0.4311  14.8142 / 0.3050   2089    +2.04    -29.3%
+rpy   10.0437 / 0.5719  11.1245 / 0.5230   2375    +1.08     -8.6%
+plant  9.8383 / 0.5919  12.6711 / 0.4954   1445    +2.83    -16.3%
+teddy 10.2469 / 0.6133  13.2735 / 0.5138   1945    +3.03    -16.2%
+mean                                               +2.21    -16.7%
+```
+
+**Seven of seven positive on both metrics.** No parameter changed; the refiner
+runs defaults and is allowed to continue after the sequence ends.
+
+#### The perceptual gain is determined by translational parallax
+
+Ordering the sequences by median inter-keyframe translation divided by median
+inter-keyframe rotation (m/deg):
+
+```
+seq    m/deg   d_psnr   d_lpips
+rpy    0.184   +1.08     -8.6%
+360    0.571   +2.30     -8.3%
+room   0.866   +2.22    -15.9%
+teddy  1.115   +3.03    -16.2%
+plant  1.126   +2.83    -16.3%
+desk   1.830   +1.97    -22.0%
+xyz    2.718   +2.04    -29.3%
+
+lpips gain vs m/deg      Spearman -0.964   Pearson -0.978
+psnr  gain vs m/deg      Spearman +0.071
+control: lpips gain vs baked lpips        +0.143
+control: baked lpips vs m/deg             -0.214
+```
+
+**The perceptual benefit of refinement is almost perfectly predicted by how much
+translational parallax the trajectory has, and psnr is blind to it.** The two
+controls rule out the obvious confounds: it is not "worse maps improve more", and
+low-parallax sequences do not start out worse. This is the third instance in §17
+of psnr and lpips decoupling, and the sharpest.
+
+#### The mechanism, and the literature's correction to it
+
+`tracker.py:29` — `keyframe = self.keyframes.last_keyframe()`, then
+`splatt3r_match_asymmetric(model, frame, keyframe)`. **Splatt3R is always fed
+(current frame, most recent keyframe)**, a temporally adjacent pair. Under
+rotation-dominated motion that pair has almost no translational baseline.
+
+The naive reading — "rotation breaks the system" — is wrong, and the literature
+says why. MASt3R-SfM handles pure rotation *better* than classical SfM for pose
+(COLMAP and VGGSfM fail outright; it reaches 100% on some scenes), and our own
+ATE on rpy/360 is fine. What actually degrades is **depth**: with a vanishing
+baseline triangulation is ill-defined, so depth falls back on the monocular
+prior, and prior-driven depth is systematically worse. Geometry is worse,
+photometric refinement improves the fit but not the perception. That is exactly
+the measured pattern.
+
+#### Where the field has gone, and what it implies
+
+- **Two-view is obsolete as a backbone.** DUSt3R/MASt3R-style pairwise
+  prediction has been superseded by N-view feed-forward models — VGGT, Fast3R,
+  Pi3, CUT3R, MUSt3R — that ingest all views in one pass, with VGGT-SLAM and
+  VGGT-SLAM++ already built on them. **Splatt3R's two-view backbone is the
+  architectural source of the correlation measured above.**
+- **Baseline-aware keyframe selection is already practice**, not a contribution:
+  MCGS-SLAM scores keyframes on covisibility + baseline span + motion stability
+  jointly. That makes the obvious intervention here low-risk and unoriginal,
+  which is useful to know before spending on it.
+- **`SparseSplat`'s pixel-unaligned prediction** targets the root of §17.2's
+  lattice defect architecturally — letting the network place Gaussians rather
+  than pinning one per pixel — where the band limit is a post-hoc patch.
+- **A tension worth resolving**: Flash-Mono reports a 10x speedup by *bypassing*
+  the per-frame optimization that GS-SLAM normally needs, while §17.25 measures
+  that optimization as worth +2.21 dB / −16.7% lpips. Either its multi-frame
+  feed-forward quality is high enough not to need it, or the comparison is not
+  like-for-like. Which it is decides whether polish is a contribution or a
+  workaround for a two-view backbone.
+
+Sources: VGGT/Fast3R/CUT3R/MUSt3R survey (arXiv 2508.11379, ScienceDirect
+S2096579626000203), VGGT-SLAM++ (arXiv 2604.06830), Flash-Mono (arXiv 2604.03092),
+SparseSplat (arXiv 2604.03069), MCGS-SLAM (arXiv 2509.14191), MASt3R-SfM
+(arXiv 2409.19152).
+
+### 17.35 The colour leg is independent: the unified hypothesis loses a third
+
+§17.34's low-parallax root suggested a unification: seams are clusters at wrong
+depth, streaks are the network's expression of depth uncertainty at low
+baseline, and the per-view affine that `--exposure` absorbs might be the
+photometric shadow of the same geometric defect — a render darkened by
+incomplete coverage, by an amount that varies per view.
+
+`scripts/diag_exposure_cause.py` decides it at zero cost: freeze the entire map
+and fit ONLY the per-frame affine, so the fitted gain is by construction that
+frame's best global affine, then correlate against that frame's rendered
+coverage.
+
+```
+                          desk              360
+learned gain        0.9300 +- 0.0454   0.9402 +- 0.0976
+per-view mean alpha 0.9475 +- 0.0587   0.9383 +- 0.0853
+corr(gain, 1/alpha)     -0.355            -0.349
+gain * mean_alpha        0.8822            0.8870
+residual std after dividing by 1/alpha
+                         0.0806            0.1463   (raw 0.0454 / 0.0976)
+```
+
+**Falsified three ways at once:**
+
+1. **The correlation has the wrong sign.** Coverage deficit predicts
+   `gain ~ 1/alpha`, i.e. positive. Measured −0.35 on both sequences: views with
+   *less* coverage want a *smaller* gain.
+2. **Conditioning on coverage makes it worse.** Residual std rises from 0.0454
+   to 0.0806 — the model explains negative variance.
+3. **The gain is below 1, so the render is too BRIGHT, not too dark.** The whole
+   argument rested on incomplete alpha darkening the render. With the map frozen
+   the best per-frame gain is 0.93.
+
+Point 3 also corrects a conflation of mine: §17.6's gain of 1.04 came from a run
+where the map and the exposure were optimized *jointly*, so it describes where
+that pair settled, not what the baked map needs. Those are different quantities
+and I had been treating them as one.
+
+**So the colour leg is independent of the low-parallax root.** The remaining
+candidates are the ones §17.6 listed and never separated: auto white balance,
+view-dependent illumination, the network's per-pair conditional bias. What is
+now excluded is coverage.
+
+The unified hypothesis survives as what Kimi called it — **a joint prior over
+three independent hypotheses, not one hypothesis.** The seam and streak legs
+carry their own evidence (§17.4's morphology, §17.32's measured lever) and are
+untouched by this. Only the third leg was speculative, and it is gone.
+
+**A general rule this produced, worth more than the colour verdict itself.**
+
+Kimi's framing, adopted: **a nuisance parameter fitted against a FROZEN map is a
+probe of the map; a nuisance parameter read out after JOINT optimization is a
+fossil of the optimization dynamics.** Both are legitimate quantities and they
+are never interchangeable. §17.6 read a joint-fit gain (1.04) and reasoned about
+it as though it described the map; §17.35's frozen-fit gain (0.93) is the
+quantity that actually does. The two even have opposite signs, which is how the
+conflation surfaced.
+
+This applies to every `--exposure` number reported anywhere in §17, and to the
+exposure arms of any future experiment: **state which of the two a gain is
+before interpreting it.**
+
+Three zero-cost discriminators remain for the colour leg, none of them on the
+critical path (all require the frozen-fit basis above, not the joint one):
+
+1. **Channel decoupling** — split (g_R, g_G, g_B) and look at the spread of the
+   channel *ratios* across frames. Ratios swinging while luminance holds still
+   means auto white balance; channels moving in lock-step rules it out.
+2. **Per-cluster ANOVA** — group supervision frames by their dominant visible
+   cluster and take between/within variance. A ratio >> 1 confirms the network's
+   per-pair conditional bias.
+3. **Temporal smoothness** — |g_{f+1} − g_f| against a shuffled null. Camera-side
+   drift (exposure, white balance) is smooth in time; view- or map-side bias
+   jumps. Note §17.4 already measured a 0.6% p90 step between neighbouring
+   keyframes, so a "smooth" answer here would itself be surprising.
+
+Kimi's stated bet: white balance contributes <= 2-3%, and the per-cluster ANOVA
+comes back > 2, making the network's per-pair conditional bias the principal
+cause. If that holds, the fix is not a per-frame affine at all (which can only
+absorb a visibility-weighted average) but **map-side per-cluster colour
+harmonization** — the online form of `scripts/color_harmonize.py`, evaluated on
+seam-step and tint rather than on psnr.
+
+### 17.36 The dose curve closes the network side, and re-attributes §17.34
+
+`scripts/diag_parallax_dose.py` runs Splatt3R on keyframe pairs already in the
+trajectory spanning rho = baseline / median_depth from 0.02 to 0.5, and scores
+the predicted depth against the RGB-D sensor. Two quantities, because they
+answer different questions: the **within-pair spread** (what §17.34's mechanism
+needed) and the **per-pair scale error** about the global scale (what seams
+need).
+
+```
+360, 80 pairs
+                          median   spearman(rho, .)   within high-overlap
+within-pair depth spread   ~3%         -0.085              -0.061
+per-pair scale error       9.10%       -0.047              -0.016
+spearman(overlap, spread)              -0.344
+spearman(rho, overlap)                 -0.101
+```
+
+**Both are flat in parallax**, and the confound Kimi warned about is absent:
+rho and overlap barely covary (−0.101), and the effect stays flat *within* the
+high-overlap half. Overlap does matter (−0.344; 2.28% spread above 0.7 overlap
+against ~4% below), but the production pairing is temporally adjacent and
+therefore already maximal on overlap — there is nothing to win by re-pairing.
+
+The 9.10% per-pair scale error also **cross-checks §17.17's 9.6%** by a
+completely different measurement path.
+
+**Experiment B (baseline-aware pairing) is cancelled**, including its revival
+route for seams specifically. The network side is closed.
+
+#### What that does to §17.34
+
+The −0.964 correlation between refinement's lpips gain and a sequence's
+translation/rotation ratio survives; **its attribution does not.** It was
+assigned to the network's input pairing (adjacent pairs have no baseline under
+rotation). The dose curve says depth quality does not depend on that baseline at
+all, so the mechanism has to move.
+
+The replacement, to be discriminated next: **it is the supervision, not the
+prediction.** Under rotation every supervision view of a surface sits at nearly
+the same position, so the photometric loss constrains the map along far fewer
+directions and refinement has less room to improve — which also explains the
+psnr/lpips split, since fitting survives low-parallax supervision and perceptual
+structure does not.
+
+**This re-attribution is the most instructive result of the section and belongs
+in the main text, not in a corrections log**: the intuitive answer was the
+backbone, and a dose curve said otherwise.
+
+#### A different unification than the one proposed
+
+§17.35 killed the low-parallax unification. What the flatness suggests instead is
+narrower and better supported: **Splatt3R's per-pair conditional bias is a single
+root for two of the three residual defects.** The per-cluster scale error is ~9%
+and independent of the pair's geometry, which is what a per-pair bias looks like;
+and Kimi's leading candidate for the colour leg (per-cluster ANOVA >> 1) is the
+same phenomenon in colour. Both jump per pair, neither depends on parallax.
+
+That makes the revised **experiment A the only remaining hard case for changing
+backbones**: an N-view model predicts jointly and by construction cannot have
+per-pair independent jitter. If VGGT's per-cluster spread is far below 9%, it
+targets the parent of both defects; if it is also ~9%, the bias is prior-bound
+and no backbone helps — which would be the strongest possible support for the
+information-boundary framing.
+
+### 17.37 The decider: it is the supervision, and it is an information boundary
+
+Two mechanisms survived §17.36 and they demanded opposite wordings. **M1/M3'**:
+the supervision itself is impoverished under rotation, an absence defect in
+§17.27's sense that no map-side work can reach. **M2**: rotation stacks more
+mutually-disagreeing clusters, a disagreement defect that cross-cluster
+consistency or pruning could fix. Calling it a boundary while M2 held would have
+been simply wrong.
+
+`scripts/diag_veil_band.py` measures the **veil-band fraction** — the share of
+covered pixels whose top two contributing clusters differ in depth by 0.5-20 cm,
+computed by rendering each cluster alone (K renders of 1/K of the map ≈ one full
+render). All seven sequences:
+
+```
+seq    m/deg   d_lpips   veil-band   layers/px
+rpy    0.184    -8.6%     0.7335       7.84
+360    0.571    -8.3%     0.7051       3.76
+room   0.866   -15.9%     0.7036       7.47
+teddy  1.115   -16.2%     0.6029       9.51
+plant  1.126   -16.3%     0.6379      11.30
+desk   1.830   -22.0%     0.7527       5.42
+xyz    2.718   -29.3%     0.7799       9.25
+
+M2 needs the veil fraction to track both parallax and the gain:
+  spearman(m/deg, veil)    = +0.321     weak, and the WRONG SIGN
+  spearman(veil,  d_lpips) = -0.357     weak
+
+THE DECIDER -- lpips gain vs parallax, controlling for the veil:
+  raw pearson(m/deg, d_lpips)      = -0.978
+  partial, veil regressed out      = -0.975
+  partial, layers regressed out    = -0.983
+```
+
+**Controlling for the veil removes nothing.** −0.978 becomes −0.975. And the veil
+fraction correlates with parallax in the *wrong* direction (+0.321: more
+parallax, more veil), so the M2 story fails even before the partial correlation.
+
+**M2 is dead. M1/M3' stands: the penalty is in the supervision.**
+
+That also explains a result that had no explanation: §17.30's cross-cluster
+consistency loss moved the warp deficit 2-4% in four configurations. **It was
+repairing something that was never the bottleneck.**
+
+#### The claim, in the form the evidence supports
+
+> **The perceptual quality of the final map is set by the supervision information
+> the trajectory supplies, independently of the feed-forward front end, and psnr
+> cannot see this bound.**
+
+Front-end independence is what makes it more than a bug report: the dose curve
+(§17.36) showed depth quality is flat in parallax, so this is not about Splatt3R,
+two-view prediction, or any backbone. It is a property of passive SLAM mapping
+under a given trajectory. Two limits are required and stated:
+
+- **Scoped to representations without generative completion.** A generative prior
+  can move content from "not in the trajectory" to "in the prior". That is a
+  different research programme and is explicitly out of scope.
+- **n = 7, and motion type covaries with scene type** (rpy/360 are room-scale
+  rotations; plant/teddy are object-centric translations). The within-sequence
+  segmentation analysis that would break that confound is designed and unrun.
+
+#### From limitation to instrument
+
+The translation/rotation ratio is computable **online, from the trajectory
+alone, with no map**. So the same result that bounds quality also predicts it
+before the map is built, and can steer an active mapper — *"this segment will
+produce a perceptually poor map; translate."* That turns the finding from an
+obituary into an instrument, and it is the form worth writing up.
+
+### 17.38 T1.1: the within-sequence test is weak, and §17.37 is demoted
+
+§17.37 framed the parallax result as an information boundary. That framing rests
+on a causal claim, and the confound it named — motion type covarying with scene
+type across the seven sequences — was never broken. `scripts/diag_within_seq.py`
+scores every held-out frame against both the baked and the polished map from the
+same run and correlates the per-frame gain with local parallax **inside** each
+sequence, where the scene is fixed by construction. No new runs.
+
+Two independent variables, the second on Kimi's advice after the first proved
+underpowered:
+
+```
+seq     local traj ratio (range)   supervision parallax (range)
+xyz       -0.151  (1.8x)             -0.289  (2.8x)
+rpy       -0.268  (3.1x)             -0.188  (2.6x)
+plant     -0.075  (1.4x)             -0.295  (2.5x)
+teddy     -0.107  (1.6x)             -0.093  (2.2x)
+360       -0.023  (1.5x)             +0.032  (2.0x)
+room      -0.138  (3.6x)             +0.364  (3.9x)
+desk      -0.333  (1.3x)             +0.123  (2.0x)
+```
+
+**The trajectory ratio reproduces in sign 7/7** (sign test p = 0.008) but with
+tiny magnitudes, mean −0.156 against the cross-sequence −0.978. That is at least
+partly structural: within a sequence the ratio spans only 1.3-3.6x, against 15x
+across sequences, so the test has almost no leverage. Kimi's Fisher-combined
+p ≈ 0.2 is the honest summary of that column.
+
+**The mediator makes it worse, not better.** Supervision parallax — the spread of
+the nearest keyframe positions over median depth — carries *more* dynamic range
+(2.0-3.9x) and yet gives 4 negative and 3 positive: **the sign is not
+consistent.** If supervision parallax were the mechanism, more range should have
+sharpened the effect, not dissolved it.
+
+Two readings, and they do not need separating to reach the verdict: either the
+mediator is a poor proxy (it weights the nearest keyframes by position, never by
+whether they actually see this frame's content), or the M1 mechanism is wrong.
+
+**Verdict: §17.37 is demoted.** What survives:
+
+- the cross-sequence correlation, −0.978 over seven sequences — measured;
+- M2's exclusion, partial r = −0.975 after controlling for the veil — measured;
+- **the causal claim that this is a boundary set by the trajectory's supervision
+  information — NOT supported.** The within-sequence evidence is weak in one form
+  and sign-inconsistent in the other.
+
+So the honest headline is **"a strong seven-sequence correlation whose scene
+confound is unbroken"**, not an information boundary. The stronger wording
+requires either a mediator that survives within-sequence, or the synthetic
+controlled-trajectory experiment Kimi proposed in round 8 (same scene, two
+scripted paths), which is the only design that removes the confound by
+construction.
+
+Recording this against the temptation it corrects: the boundary framing was the
+more publishable claim, it had a mechanism story, it survived one falsification
+(M2), and it is still not supported. **Surviving one discriminator is not the
+same as being established.**
+
+### 17.39 T1.2: there is no per-view appearance variation — and I read noise as signal first
+
+Three discriminators were run on the frozen-map fit (§17.35's probe, not the
+joint-fit fossil), then a noise floor, **in that order — which was the wrong
+order and cost a retraction.**
+
+```
+                        desk      360
+chroma/luma spread      1.32      0.92
+per-cluster ANOVA       0.82      0.48
+temporal smoothness     0.597     0.829
+```
+
+Reading these alone, I concluded per-cluster network bias was falsified (correct)
+and that white balance was supported (**wrong**). Kimi's leading bet — ANOVA > 2,
+per-pair conditional bias — is falsified. Its warning that the discriminators are
+unreadable without a floor is the part I acted on too late.
+
+**The floor, by split-half refit** — fitting the affine independently on the top
+and bottom halves of each frame, whose disagreement is fit noise by construction
+since a frame has one true exposure:
+
+```
+                desk                            360
+R/G    obs 0.0598  floor 0.0495  SNR 1.21    obs 0.0646  floor 0.0728  SNR 0.89
+B/G    obs 0.0129  floor 0.0452  SNR 0.29    obs 0.0894  floor 0.0704  SNR 1.27
+LUMA   obs 0.0454  floor 0.0444  SNR 1.02    obs 0.0976  floor 0.1162  SNR 0.84
+WB axis corr(R/G, B/G)     -0.214                          +0.318
+```
+
+**All six SNRs are at or below 1.** The entire per-frame spread — luminance and
+chroma alike — **is fit noise.** The white-balance axis test agrees
+independently: real colour-temperature drift is one-dimensional, so R/G and B/G
+must move oppositely; measured −0.21 and **+0.32**, the wrong sign on 360 against
+Kimi's predicted −0.4 to −0.7.
+
+So the chroma evidence I used to support white balance two messages earlier was
+measuring noise. Retracted.
+
+**What is real is the global offset**: mean gain 0.9300 / 0.9402, i.e. the map is
+6-7% brighter than the targets. With per-frame std 0.045 over 50 frames the
+standard error is 0.0064, so that is an 11-sigma effect, not noise.
+
+#### The conclusion, and the puzzle it resolves
+
+> **"Colour/lighting inconsistency" is not a per-view phenomenon.** There is no
+> per-view appearance variation above the noise floor. `--exposure` earns its
+> +0.45 dB fit psnr offline by absorbing a **global** bias, not by compensating
+> per-view differences, and the correct fix is one global colour correction
+> rather than six parameters per frame.
+
+This also settles a contradiction that had been sitting unexamined: §17.4
+measured 0.6% luminance drift between neighbouring source keyframes while §17.6
+reported an 11-12% per-frame gain std. The two never fit. They fit now — the
+11-12% was a joint-optimization fossil (§17.35), and the map's own per-frame
+spread is at the noise floor.
+
+#### What that implies about the defect the user actually saw
+
+The GUI inconsistency is real and the per-view statistics say it is not per-view.
+The only remaining possibility is that it is **spatial**: a colour step between
+two clusters *within one frame*, which a per-frame affine cannot see by
+construction, since it applies one transform to the whole image.
+
+**So the colour leg and the seam leg are the same measurement problem**, and the
+per-frame affine was never the right instrument for either. The instrument for
+both is the seam-step metric Kimi specified in round 5 — boundaries taken from a
+per-pixel argmax-contributing-cluster map derived from the renderer, filtered to
+rendered depth difference < 5 cm and alpha > 0.8, brightness step normalized by
+local gradient energy, with a 10 px boundary shift as the null. It has been
+designed since round 5 and never built. It is the next thing to build.
+
+### 17.40 The colour leg closes: an evaluation colour-space mismatch
+
+Chasing the global 6-7% offset to its source found a protocol bug that had been
+in every number this project has ever reported.
+
+**`normalize_exposure` is applied to the map's inputs and not to the evaluation
+targets.** `frame.py:124` calls it inside `create_frame`, so every keyframe fed
+to Splatt3R — and therefore every colour baked into the map — is in
+exposure-normalized space, rescaled so each frame's channel means match the
+first frame's. Every evaluation, here and in `eval_map_quality.py`, builds its
+target with a bare `ds.get_image(di)`. **Raw.**
+
+The size of the mismatch:
+
+```
+                normalize_exposure gain   per-frame std
+desk                  0.9567                 0.0892
+360                   1.1379                 0.1546
+```
+
+Evaluating the same map against normalized instead of raw targets, desk,
+old+polish:
+
+```
+raw target          psnr 14.0640   lpips 0.4247
+normalized target   psnr 14.1897   lpips 0.4220
+                         +0.126 dB      -0.6%
+```
+
+**+0.126 dB lands inside Kimi's pre-registered window of +0.08 to +0.15** for a
+pure global gain at psnr ≈ 14, and its decision rule reads: that magnitude means
+the effect is a clean global one, with no per-channel or spatial structure hiding
+behind it. Under +0.3, the colour leg closes.
+
+#### Three things this resolves at once
+
+1. **Why §17.39 found no per-view appearance variation.** There is none in the
+   map — `normalize_exposure` removes the per-frame exposure and white-balance
+   drift *on the input side*, which is exactly what its docstring says it is for.
+   The map is internally consistent. I spent this leg looking downstream for the
+   remains of a defect the system already fixes upstream.
+2. **Why the fitted per-frame gain still had some spread.** The map is
+   normalized, the targets are not, so the residual per-frame variation belongs
+   to the *targets*. The fitted std (0.0439 desk / 0.0836 on 360) is about half
+   the normalization gain's own std (0.0892 / 0.1546) — the same order, as it
+   should be.
+3. **Why the mean gain sat at 0.93-0.95.** It is largely the mean of that same
+   mismatch, not a property of the map.
+
+#### What it does and does not invalidate
+
+**Every A/B comparison in this record stands.** The mismatch is present in both
+arms of every pair, and it is a fixed function of the frame, so differences are
+unaffected. What is affected is **absolute** psnr/lpips: they are depressed by
+roughly 0.13 dB on desk, and by more on sequences with larger normalization
+drift (360's gain std is 0.155, so its bias is likely larger).
+
+The fix is one line — normalize the target the same way — and it makes the
+protocol self-consistent. It should be applied before any absolute number is
+published, and it changes no conclusion already drawn.
+
+#### The methodological point, which is the ninth of its kind
+
+The 6-7% offset was reported here as an 11-sigma effect. It was not wrong, but
+the sigma was computed over *frames* and the error was a property of the
+*pipeline*, so the error bar measured the wrong variation entirely. Kimi's gate
+("split-half measures stability, not systematic bias — a stably-wrong estimate
+also earns 11 sigma") is exactly right, and it is the same failure as §17.31's
+six: **a statistic that quantifies something other than the claim it is used to
+support.**
+
+### 17.41 The seam carries no colour step: it is purely geometric
+
+`scripts/diag_seam_step.py` builds the spatial instrument §17.39 argued was the
+only one left: per-pixel argmax-contributing-cluster map from per-cluster
+renders, mode-filtered 5x5 to kill the interleaving flicker, boundaries taken as
+4-neighbour id jumps, kept only where rendered depth agrees within 5 cm (a true
+occlusion edge should have a step) and both sides have alpha > 0.8, brightness
+step normalized by local gradient energy, against a null that displaces the
+boundary mask by 10 px.
+
+```
+seq     seam pixels   seam step   shifted null   ratio
+desk       3.91%        0.1729       0.1720      1.005
+360        1.27%        0.1998       0.1847      1.082
+room       9.40%        0.1887       0.1812      1.042
+```
+
+**Cluster borders carry essentially the same brightness step as ordinary
+positions** — +0.5% on desk, +8.2% at most on 360.
+
+So the colour reading of the seams is now falsified from both directions:
+
+- **per-view** (§17.39): no appearance variation above the noise floor;
+- **spatial** (here): no step where clusters meet.
+
+Both agree with §17.4's morphology, which said it in the first place: the
+artifact is a semi-transparent **veil**, and a colour difference cannot produce a
+veil.
+
+**The first attempt at this measurement got ratio 0.11 — the seam step eight
+times SMALLER than its null — which is what sent me to read the code.** The null
+was displacing the comparison rather than the location: real boundaries compared
+pixel x with x+1, the null compared x with x+11, and pixels 11 apart naturally
+differ more. A null must move *where you look*, never *how far apart you look*.
+
+That is the tenth instance of §17.31's failure mode and its third distinct form:
+
+```
+intervention   changed a quantity other than the target
+error bar      quantified a variation other than the claim's
+null           compared a quantity other than the signal's
+```
+
+All three are the same mistake — **supporting a claim with something that does
+not measure it** — and the only defence that has ever worked here is finding the
+number implausible and reading the code.
+
+#### Where that leaves the seams
+
+Fully diagnosed, and not fixable by anything tried:
+
+```
+cause        the network's per-pair scale error, ~9% (17.17, cross-checked
+             9.10% in 17.36), INDEPENDENT of the pair's geometry
+not          exposure (4% drift, 17.4) / colour step (this) / per-view
+             appearance (17.39) / layered veils carrying the parallax
+             penalty (17.37)
+levers tried per-cluster depth scale (+0.003 dB), cross-cluster consistency
+             (2-4% in four configurations), sensor depth (instrument
+             inadequate on this dataset, 17.29)
+remaining    the backbone. An N-view model predicts jointly and cannot have
+             per-pair independent jitter by construction -- experiment A's
+             revised question (17.36), and now the only live route.
+```
+
+### 17.42 T1.3: the streak lever transfers online, and transfers *better*
+
+§17.32 measured the lever offline and refused to recommend it online, because
+§17.21 had established that offline quality levers do not transfer. T1.3 is the
+paired online A/B that decides it: two full `main.py` runs on desk, identical
+but for `--refiner-streak-opacity`, each with the polish, evaluated on the same
+50 held-out frames.
+
+```
+online, desk        psnr      lpips     black (alpha<0.1)
+aa only (K=0)      14.0477   0.4382       0.49%
+streak K=0.5       13.9434   0.3926       0.57%
+delta              -0.104    -10.4%      +0.08 pp
+```
+
+**−10.4% lpips online against −5.0% offline.** This is the first lever in the
+whole section that is *stronger* in the online regime than in the offline one,
+and the reason is visible in §17.21's mechanism: the online map is polished from
+a baked state whose streaks have never been optimized away, so there is more
+streak left for the lever to hide. Offline, the 300-step refinement has already
+absorbed part of the same error into the surface.
+
+The pre-registered risk check passes again and by a wider margin: Kimi's
+falsification line was black +1 pp, the prediction was +<0.5 pp, measured
+**+0.08 pp**. (Absolute black is 0.49% online against 3.59% offline because the
+online map is the full-sequence one with far more coverage, not the head-only
+map §17.32 used -- the two absolute columns are not comparable, the deltas are.)
+
+**Verdict: T1.3 passes. `--streak-opacity 0.5` is validated online and is the
+recommended default in both regimes.** It stays a flag rather than a hard-coded
+constant, because K is a band-limit ratio and 0.5 is measured on one sequence.
+
+#### A correction to record
+
+Reporting this result before it was written up, I quoted the black-fraction cost
+as "+0.31 pp" -- **that is §17.32's offline number, carried across to an online
+claim it was never measured for.** The online value is +0.08 pp. The verdict is
+unchanged and the direction was right, but the number was borrowed, and this is
+the same family as §17.31/§17.41: *a quantity that does not measure the claim,
+used to support it*. It is worth noting that this one came from writing prose
+faster than the measurement, not from a design error -- a different entry point
+to the same failure, and one that only a write-up-before-report discipline
+catches.
+
+The first attempt at the measurement also failed outright: the script asked for
+`g["colors"]` when `decode_gaussians_from_ply` returns `rgb`. That is a loud
+failure (KeyError) and therefore harmless -- worth contrasting with the silent
+ones this section keeps collecting.
+
+### 17.43 Plan status against the three-track plan
+
+Where the tracks stand, so this is not re-derived:
+
+```
+T1.1  within-sequence segmentation    DONE  17.38  weak -> 17.37 demoted
+T1.2  three colour discriminators     DONE  17.39/17.40  both of Kimi's bets
+                                            missed; the target turned out not
+                                            to exist (evaluation colour space)
+T1.3  streak lever, online paired     DONE  17.42  -10.4% lpips, passes
+T2.1  experiment A (N-view scale)     DONE  17.44/17.45/17.46  GREEN, ratio
+                                            0.31, 7/7 -- and the cause is
+                                            context, not architecture
+M     aggregation dose-response       DONE  17.47  RED, rho = 0.35, capped
+T3.1  adaptive polish termination     DONE  17.51  NEGATIVE -- no plateau
+                                            exists inside any budget worth
+                                            spending; flag stays off
+T3.2  polish into the default pipeline + docs   DONE  README documents the
+                                            measured configuration and the
+                                            known limits; main.py fails fast
+                                            on the three bad flag combinations;
+                                            no default was changed
+R     VGGT as external scale referee  DONE  17.48  NEGATIVE -- geometry 6.4x
+                                            better, psnr -0.86 dB
+D     downstream link                 ANSWERED by R, in the negative: a large
+                                            geometric gain did NOT move the
+                                            rendered metrics, it hurt them
+B2    per-keyframe scale in the SLAM backend, with the referee as a prior
+                                      NEXT -- the only place left where poses
+                                            and scales are solved together
+```
+
+Cancelled and not to be revisited: experiment B, further cross-cluster
+consistency, sensor-depth injection, anisotropy clamping, **multi-partner
+aggregation (17.47)**, **any post-hoc per-cluster geometric correction
+(17.48)**, and any backbone change.
+
+### 17.44 T2.1 experiment A: the design, the control arm, and a pre-registration
+
+Written **before** the test arm exists, because §17.42 just recorded what
+happens when prose runs ahead of measurement.
+
+#### The instrument
+
+`scripts/diag_nview_scale.py` holds both arms in one file. Windows of 16 views
+at each sequence's real median keyframe spacing, 12 windows per sequence, seven
+sequences. Per view, `r_k = median_pixels(z_k / d_sensor,k)`.
+
+```
+scale spread    median_k |r_k / median(r) - 1|
+neighbour step  median_k |r_{k+1} / r_k - 1|      <- PRIMARY: what a seam sees
+within-view     median_k median_pix |ratio / r_k - 1|
+```
+
+Three properties that were designed in, not discovered afterwards:
+
+- **Pose-free.** Predicted depth in each view's own camera frame against that
+  view's own RGB-D frame. No trajectory, no Umeyama, no alignment — SLAM drift
+  cannot enter either arm. §17.29's arms died of exactly the confound this
+  removes by construction.
+- **Gauge-free.** Every statistic is normalized by the window median, which
+  deletes VGGT's unknown global scale and Splatt3R's −6% metric bias alike.
+- **Paired.** Both arms score the *same* windows of the *same* frames, so the
+  comparison is a paired test. Scene content dominates the absolute level of all
+  three statistics — §17.38's confound in another costume — and pairing removes
+  it rather than arguing about it.
+
+The arms: VGGT = one joint forward over the 16 views; Splatt3R = 16 forwards,
+each view paired with its temporal neighbour, which is what `tracker.py` feeds
+it in production. A third arm, **VGGT in pair mode**, runs the same model on the
+same adjacent pairs — the control that separates *joint context* from *different
+model*, without which a low VGGT number could be either.
+
+#### The control arm reproduces the known number by a third protocol
+
+```
+seq     scale spread   neighbour step   within-view   median ratio
+desk        8.02%          6.19%           2.68%         0.9973
+360         7.22%          7.02%           3.41%         0.9592
+room        4.50%          4.64%           3.58%         1.0153
+xyz         2.90%          4.49%           3.17%         1.0047
+rpy         4.75%          7.09%           5.67%         0.9622
+plant       3.49%          4.91%           4.48%         1.0377
+teddy       4.36%          4.71%           4.33%         0.9613
+```
+
+§17.17 measured 9.6% on a SLAM trajectory; §17.36 measured 9.10% on random pairs
+across a sequence; this is a third protocol — local windows, no trajectory at
+all — and **desk and 360, the two sequences those results used, are the two that
+come back at 7-8%**, with 360's median ratio 0.9592 landing on §17.17's 0.9405.
+Where the protocols overlap they agree.
+
+They also correct the headline: the other five sequences run at 2.9-4.8%, so
+**"~9%" was desk and 360, not Splatt3R.** The pooled median is 4.50%.
+
+A free byproduct: `step / spread` is 0.77 on desk but ~1.5 on xyz and rpy. For
+independent per-view errors that ratio is sqrt(2); so desk's error process is
+smooth (correlated, a drift) while xyz's is nearly white. That is the
+correlation length of the jitter, and it decides how much accumulates between
+two clusters that meet after a long detour.
+
+#### Kimi's pre-registration, before the numbers
+
+```
+                  pooled          desk        360
+scale spread      1.4%  (0.8-2.2) 2.2 (+-0.6) 2.0 (+-0.6)
+neighbour step    1.1%  (0.7-1.8) 1.7 (+-0.5) 1.6 (+-0.5)
+within-view       parity, 3-5% (sensor-noise dominated)
+step ratio        0.24  (0.15-0.40)
+VGGT pair mode    3.5%  (2.5-5.5) -- nearer Splatt3R than VGGT-16
+```
+
+Decision rule, sharpened from §17.36's:
+
+```
+green  step ratio <= 0.50, >=6/7 sequences, desk+360 absolute step <= 3%
+red    ratio >= 0.80, or <=4/7 sequences   -> prior-bound, close the thread
+yellow between                             -> aggregation before any backbone
+```
+
+#### Four corrections Kimi made to the design, all adopted
+
+1. **The primary endpoint is the neighbour step, not the spread.** The spread
+   also contains long-range wander, which accumulates differently depending on
+   whether the process is white or a random walk — and the two arms need not
+   share that structure. The step is what an adjacent-cluster seam sees.
+2. **The honest degrees of freedom is 7, not 84.** Twelve windows inside one
+   sequence are not independent. The window-level Wilcoxon is the power read;
+   the decision rests on the sequence-level sign test. `expA_summary.py` reports
+   both and the window overlap.
+3. **A global shift would silently distort every ratio in the file.** The median
+   normalization absorbs a global scale, not a shift. Added a shift probe: fit
+   `z = a*d + b` per view and report `b` as a fraction of median depth.
+4. **The sensor sets a floor.** Kinect error grows with incidence angle and
+   range (~1-3%), and that bias lives in the *reference*, so even a perfect
+   model shows per-view `r_k` variation. It is paired away in the comparison but
+   caps interpretation: **a VGGT result at 1-2% is "at the reference floor" and
+   differences below it must not be resolved.** Splatt3R's 7-8% on desk/360 is
+   far above any such floor, so the gap being tested is real.
+
+#### The one place my framing was wrong
+
+I expected the artifact to be that a shared gauge makes the joint arm look good
+for free. Kimi's answer: the window-median normalization removes exactly one
+degree of freedom, and per-view relative jitter survives it — nothing in the
+architecture *hard-constrains* 16 depth maps to share a scale, so a low joint
+number is real evidence.
+
+The artifact is the mirror image, and it is about deployment: **this instrument
+measures within-window consistency, but no N-view SLAM ever sees the window
+jointly.** It processes submaps and aligns them, and the jitter re-enters at the
+submap boundary through the alignment. The Splatt3R arm has an anchor for that
+gap — its local number reproduces the deployed 9.6%/9.10%. The VGGT arm has
+none. So a win here licenses "joint prediction kills per-view jitter within a
+window", and the deployed benefit is strictly smaller by an unmeasured amount.
+
+**Consequence for the decision:** a green result funds the *next-cheapest* step
+that captures it — windowed joint inference at keyframe creation, an offline map
+rebuild — not an online backbone swap.
+
+And a route that did not exist before this round: if VGGT wins jointly but its
+pair mode lands near Splatt3R, the win is **aggregation, not architecture**, and
+aggregation has a cheap implementation on the current backbone — predict each
+new keyframe against m well-overlapping partners, scale-align the m depth maps
+by their median ratio, average. Independent jitter falls as sqrt(m). That would
+be days of work with no new model, and it only becomes visible because the pair
+-mode control was built.
+
+### 17.45 T2.1 result: GREEN, and the cause is not the architecture
+
+The pre-registered rule (§17.44) was: primary endpoint the neighbour step,
+paired by window, ratio <= 0.50 with >= 6/7 sequences and desk+360 absolute
+step <= 3%.
+
+```
+sequence     n  splatt3r    vggt16   ratio  paired p
+360         12     7.02%     2.63%    0.37    0.0010
+desk        12     6.19%     1.14%    0.18    0.0005
+plant       12     4.91%     1.25%    0.26    0.0005
+room        12     4.64%     1.83%    0.39    0.0005
+rpy         12     7.09%     2.58%    0.36    0.0005
+teddy       12     4.71%     1.55%    0.33    0.0005
+xyz         12     4.49%     2.00%    0.45    0.0005
+POOLED      84     5.35%     1.68%    0.31  1.77e-15
+sequence level  7/7, sign test p = 0.0156, median ratio 0.36
+```
+
+Scale spread, same pairing: 4.63% -> 1.18%, ratio 0.25, 7/7. **Green on every
+clause**, and VGGT-16's absolute numbers (0.96-2.27%) sit at or below the 1-2%
+sensor reference floor of §17.44, so part of the residual is the Kinect's own
+view-dependent bias rather than the model's.
+
+#### The control arm is the result
+
+The same VGGT, run on the same adjacent pairs, one independent forward each --
+the arm that separates *joint context* from *different model*:
+
+```
+sequence     n  splatt3r     vggt2   ratio
+desk        12     6.19%    19.41%    3.14
+360         12     7.02%    11.73%    1.67
+room        12     4.64%    10.19%    2.20
+rpy         12     7.09%    16.37%    2.31
+teddy       12     4.71%    10.25%    2.18
+plant       12     4.91%     8.19%    1.67
+xyz         12     4.49%     7.01%    1.56
+POOLED      84     5.35%    10.82%    2.02   vggt2 lower in 0/7
+```
+
+So the 2x2 on the primary endpoint:
+
+```
+Splatt3R pairwise    5.35%    architecture A, 2 views
+VGGT     pairwise   10.82%    architecture B, 2 views    <- 2.0x WORSE
+VGGT     joint-16    1.68%    architecture B, 16 views   <- 6.4x better than
+                                                            the SAME model on
+                                                            the SAME pairs
+```
+
+**Changing the architecture makes it worse. Changing the context makes it 6.4x
+better.** VGGT is a worse two-view model than the MASt3R line -- unsurprising in
+hindsight, since its prior is trained for joint reasoning over many views and
+two views give it almost nothing to reason with.
+
+#### What that does to the seams
+
+The parent of the seams is **not the backbone**. It is the structural fact that
+**each cluster's scale is decided by one two-view prediction**, and neighbouring
+clusters are decided by different ones. §17.36 called the ~9% a "per-pair
+conditional bias"; this measures what removes it, and the answer is context, not
+capacity.
+
+The route this opens does not need a new backbone at all, and it is Kimi's
+round-16 fallback promoted to first choice: **at keyframe creation, predict the
+new frame against m well-overlapping partners, scale-align the m depth maps by
+their median ratio, and average.** Independent per-pair draws fall as sqrt(m).
+VGGT-16's 1.68% is the ceiling that route is aiming at.
+
+#### Independence check
+
+The windows above overlap 80-97% -- a 16-view window at keyframe spacing covers
+most of a TUM fr1 sequence. Repeated with 8-view windows tiled by exactly one
+span, so they are disjoint:
+
+```
+                    control   test    ratio   sequence level
+vggt8   (joint)      4.92%    1.53%   0.31    7/7,  p = 8.6e-08 (33 windows)
+vggt2n8 (pairwise)   4.92%    8.08%   1.64    1/7
+```
+
+Same ratios, disjoint windows. The overlap did not manufacture the result, and
+the honest sequence-level test carries it either way.
+
+#### Instrument checks
+
+- **Shift probe**: Splatt3R +18.5%, VGGT +29.9% of median depth. Both models
+  compress the depth range substantially -- a real property of both priors, and
+  worth its own entry later; it does not affect a ratio statistic normalized
+  per window, but it does mean `r_k` could in principle respond to how far away
+  a view's content happens to be.
+- That was checked rather than assumed: **Spearman(r_k, view median depth) =
+  -0.057** for VGGT. The spread is not a deterministic scene response.
+- VGGT's per-view depth-head output is used, never pointmap z; sensor resampled
+  NEAREST; masks identical across arms; every statistic gauge-free.
+
+#### A silent-output bug, caught by counting files
+
+Every `splatt3r` arm wrote its `.npz` nowhere. The arm `chdir`s into
+`splatt3r_core` to import the model, so a relative `--out` resolved into a
+directory that does not exist there -- and the `FileNotFoundError` fired *after*
+the summary was printed, so the console output of a run that saved nothing was
+indistinguishable from a successful one. Found only by listing `logs/expA` and
+finding seven files missing. Fixed by resolving `--out` to an absolute path
+before anything can `chdir`.
+
+Not the §17.31 family (nothing was wrongly claimed), but the same lesson from a
+different side: **the log said it succeeded and the filesystem said it did not,
+and only the filesystem was asked.**
+
+### 17.46 Round 17: coupling is not averaging, and Kimi scores his own miss
+
+#### The correction, which lands on my write-up and not on the data
+
+I reported §17.45 as "the win is provably context, so it can be harvested on the
+current backbone." **That sentence equates two different operations.** Kimi's
+lead point:
+
+> The 2x2 proves that *coupling* kills the jitter -- one joint forward, views
+> constrained to be mutually consistent. It does not prove that *averaging*
+> kills it. Joint attention can enforce cross-view consistency constraints
+> (effectively solving a mini SfM inside the window), while averaging only
+> cancels the *independent* part of the error.
+
+If a draw carries a component determined by the target view's own content --
+the same prior mistake whoever the partner is -- averaging saturates at that
+floor while coupling still reaches 1.68%. **The 2x2 contains no information
+about that correlation.** So the aggregation route is not "more attractive"; it
+is unchanged in status, a hypothesis with one named failure mode.
+
+#### What the 2x2 does say about the origin
+
+Kimi's reading, adopted: **per-cluster scale error is a per-forward gauge
+lottery.** Each independent forward draws an affine gauge -- scale *and* shift,
+both are in play per §17.45's probe -- from a model-specific distribution.
+Splatt3R draws at sigma ~ 5%, VGGT at sigma ~ 11%. The draw is not driven by
+scene content (Spearman -0.057), not by parallax (§17.36's flat dose curve), not
+by overlap. The map inherits whichever draw each cluster's birth pair happened
+to make, **and a seam is the difference between two draws.** Joint prediction
+does not improve the draws; it abolishes them.
+
+Two consequences worth the main text:
+
+- **Two-view accuracy and multi-view consistency are different capabilities.**
+  The better pair model is the one any pairwise benchmark would select, and it
+  is the one that loses 6.4x on the deployment-relevant statistic. Feed-forward
+  models for SLAM should be selected on windowed scale consistency, not pair
+  accuracy.
+- **A joint model that is worse than a pair model at N=2** has a depth head that
+  needs cross-view context even to anchor its gauge. That sharpens §17.37's
+  information story: the problem with prior-driven depth was never only the
+  bias (-6%), it is the per-draw **variance**, and context is the only thing in
+  the system that fixes variance.
+
+#### Kimi's self-scored miss
+
+He predicted VGGT pair-mode at 3.5%, "nearer Splatt3R than VGGT-16". Measured
+10.82%, 2x worse than Splatt3R -- wrong in magnitude by 3x pooled (5.5x on desk)
+and wrong in direction relative to the control. His two load-bearing
+assumptions:
+
+1. **that per-draw gauge variance is roughly constant across competent two-view
+   models.** False by 2x. He treated "~5% two-view consistency" as a property of
+   the task; it is a property of the training.
+2. **that joint architectures degrade gracefully to few views.** False. VGGT's
+   pair mode is not a weaker version of its window mode.
+
+And the part worth keeping: **the same assumption underwrites his aggregation
+fallback**, whose premise is that per-forward draws are well-behaved and
+independent. He flagged that himself -- the miss is evidence that the premise
+deserves a measurement rather than a sprint.
+
+#### What experiment A licenses -- for the write-up
+
+> Windowed joint prediction of 16 views reduces adjacent-view depth-scale
+> inconsistency from 5.35% to 1.68% (paired Wilcoxon over 84 windows; 7/7
+> sequences; disjoint-window replication ratio 0.31), reaching the RGB-D
+> sensor's own view-dependent bias floor, while the same model evaluated
+> pairwise is 2.0x worse than the incumbent two-view backbone (10.82% vs
+> 5.35%). This licenses two claims: (1) per-cluster scale jitter in
+> trajectory-anchored Gaussian maps originates from independent per-forward
+> gauge draws -- not from scene content, baseline geometry, or image overlap;
+> (2) coupling views at prediction time eliminates the jitter, and the benefit
+> is attributable to multi-view context rather than to a better two-view prior.
+> It does not license: (a) claims about streaming deployment, where windows are
+> processed causally and submap alignment reintroduces a gauge degree of freedom
+> this instrument does not measure; (b) claims that averaging independent
+> two-view predictions achieves the same reduction -- coupling is not averaging;
+> (c) direct claims about rendered-map quality -- propagation of the scale-step
+> reduction to seam-step and lpips metrics on a rebuilt map remains the open
+> downstream link.
+
+Note also that the measured ratio 0.31 is a **lower bound** on the improvement:
+VGGT-16 sits at or below the sensor's own bias floor, so its true jitter may be
+smaller than 1.68% and nothing below that floor should be resolved.
+
+### 17.47 Experiment M: averaging cannot reach what coupling reached
+
+`scripts/diag_aggregation.py`. Same windows, same sensor, same statistics as
+§17.45, but the target view's depth is now the per-pixel median of **m**
+two-view predictions, each with a different partner (the m nearest views,
+nearest first, so m=1 is exactly the production pairing and the curve is paired
+within window). Aggregation is **sensor-free** -- the sensor enters only the
+scoring, so this is an operation production could actually perform.
+
+```
+sequence     n      m=1      m=2      m=4      m=8    rho
+360         10    8.39%    5.92%    5.46%    4.76%  0.447
+desk        10    7.36%    7.05%    6.24%    5.83%  0.525
+plant       10    3.24%    3.01%    3.47%    2.92%  0.352
+room        10    4.53%    4.30%    4.18%    4.51%  0.297
+rpy         10    6.59%    4.87%    3.97%    3.01%  0.314
+teddy       10    3.85%    2.98%    3.24%    2.85%  0.405
+xyz          1    3.43%    2.11%    1.90%    2.54%  0.264
+
+POOLED      61    5.16%    4.07%    4.05%    3.76%
+sqrt(m)           5.16%    3.65%    2.58%    1.82%
+```
+
+**Pre-registered lines: m=4 <= 2.7% -> aggregation wins; > 3.5% -> capped.
+Measured 4.05%. RED.**
+
+The mechanism is the one Kimi named before the run. Decomposing
+`log r_{k,p} = mu + a_k + e_{k,p}`, the target view's own content effect carries
+
+```
+rho = Var(a) / (Var(a) + Var(e)) = 0.30 - 0.53, median 0.352
+```
+
+so **a third to a half of every forward's gauge error is the same mistake
+whoever the partner is**, and averaging cannot touch it. The implied floor is
+sqrt(0.352) = 0.59 of the m=1 spread, i.e. 3.06%; the measured m=8 value is
+3.76%, approaching that floor and nowhere near the 1.82% that independence
+would give. Two sequences (room, plant) are flat from m=2 onward, and desk and
+teddy *rise* at m=8 -- the eighth partner is four keyframes away and its lower
+overlap costs more than another draw is worth.
+
+```
+pairwise, m=1        5.16%
+aggregated, m=8      3.76%      averaging's practical floor
+rho-implied floor    3.06%      averaging's theoretical floor
+joint 16-view        1.68%      what coupling reaches
+```
+
+**Coupling is not averaging, and the gap is a factor of two below the best
+averaging can ever do.** This is the clean version of §17.45's claim: joint
+attention enforces cross-view consistency (it solves for the gauge), while
+averaging only cancels the independent half of a draw.
+
+#### What this closes and what it opens
+
+**Closed: the aggregation route.** Multi-partner prediction at keyframe creation
+buys at most 5.16 -> 3.06%, costs m forwards per keyframe, and does not reach
+the target. Do not build it. (It cost one afternoon to kill, against a route I
+had already described to the user as the recommended next move -- the cheapest
+retraction in this whole section.)
+
+**Open: VGGT as an external scale referee.** Run windowed joint inference
+offline, take the per-cluster scalar corrections it implies, and apply them to
+the existing map. This is §17.16's per-cluster depth-scale correction, which
+measured +0.003 dB -- but that arm was driven by the photometric loss, which
+§17.17 proved is structurally blind to depth error at this trajectory's
+baselines (4.5% depth error = 0.66 px at 0.057 m). The same lever driven by a
+reference that measures 1.68% on the same yardstick is a different experiment.
+Map-side, days, no online surgery, no head retraining.
+
+**Still the real verdict, still unrun: the downstream link.** Nothing here
+touches a rendered image. A scale-consistency improvement of X% should appear as
+roughly X% smaller seam steps on a rebuilt map (§17.41's metric). If it does
+not, the failure is in the map pipeline rather than the model -- and that would
+be the most valuable negative result of the thread.
+
+### 17.48 Route R: the map's geometry got 6.4x more accurate and the image got worse
+
+The referee: one joint VGGT forward over **all** of a map's keyframes, giving a
+per-cluster scalar correction `s_k`, normalized to median 1 so only the relative
+corrections are used and the map's global scale is untouched. Applied to the
+baked map by scaling each cluster's `means` and `scales`.
+
+```
+desk, 14 keyframes, one forward       baked psnr   lpips    polished 300
+base                                    12.354    0.5071   13.811 / 0.4199
+referee, ratio form                     11.496    0.5227   13.082 / 0.4702
+referee, slope form                     11.047    0.5252   13.012 / 0.4690
+referee, slope + pose compensation      11.208    0.5881   13.620 / 0.4725
+```
+
+Every form loses, the polish does not recover it, and the seam-step metric is
+1.02 against a base of 0.99 -- unchanged, as §17.41 predicted it would be, since
+that metric was already null at baseline.
+
+#### The audit that decides what this means
+
+Two explanations, opposite next moves: (A) the trajectory has absorbed the
+jitter, so the map is at a joint optimum that absolute accuracy does not
+describe; (B) the referee is incompetent at this operating point -- §17.45
+validated VGGT on 16 consecutive views a second apart, and a map's keyframes are
+SLAM-selected to be as *different* from each other as possible.
+
+`scripts/audit_referee.py` scores both the map and the referee against the RGB-D
+sensor, per keyframe, in the same gauge-free form as §17.45:
+
+```
+                    map     referee
+desk (13 kf)       6.48%      1.02%      6.35x
+360  (46 kf)       8.08%      3.74%      2.16x
+room (51 kf)       5.67%      2.48%      2.29x
+```
+
+Applying the referee composes `c_k * (v_k / c_k) = v_k`, so it **replaces the
+map's per-keyframe scale error with the referee's**. On desk that is a 6.35x
+improvement in absolute geometry.
+
+**Explanation B is refuted. The referee is right, and the picture still gets
+worse.** Absolute per-keyframe geometry improved 6.4x; held-out psnr fell
+0.86 dB and lpips rose 3%.
+
+#### What that establishes
+
+**In a trajectory-anchored map, rendered quality is not governed by absolute
+geometric accuracy.** SLAM fitted each keyframe's pose to that keyframe's own
+biased pointmap, so a large part of the per-cluster scale error is common-mode
+with the pose. Correcting the cluster alone converts an absorbed error into a
+*differential* displacement between overlapping clusters -- and while §17.17
+proved the photometric evaluation is blind to common-mode depth error (4.5% =
+0.66 px at this trajectory's 0.057 m baseline), it is not blind to two clusters
+disagreeing about where a surface is. That is the veil mechanism itself.
+
+This retroactively explains **§17.16's +0.003 dB**. That arm let the photometric
+loss fit per-keyframe depth scales and it barely moved. The reading at the time
+was that the lever was weak. The reading now is that the system was already at
+its joint optimum: measured here, the photometric fit asks for **0.8%** while
+the sensor says the map is **6.5%** wrong, and the two corrections do not even
+agree in rank (Spearman +0.06 between them on desk).
+
+```
+what the photometric loss wants     0.8%   (17.16's lever, re-measured)
+what the sensor says is wrong       6.5%
+agreement between them              Spearman +0.06
+```
+
+**Route R is dead as a map-side edit, and so is every other per-cluster
+geometric correction applied after the fact.** The jitter cannot be removed from
+the map alone because the map alone is not where it lives -- it is shared
+between the map and the trajectory. The only place it can be removed is where
+poses and per-keyframe scales are solved *together*, i.e. the SLAM backend,
+where each keyframe's Sim3 already carries a scale that the front end never
+constrains with an external reference.
+
+#### Two estimator lessons, both paid for
+
+- **The shift-cancelling slope was right algebra and a worse estimator.** VGGT
+  carries a +29.9% depth shift (§17.45), so `median(z_ref/z_map)` mixes the
+  cluster's scale error with how far away that view's content is, and the slope
+  of `z_ref` against `z_map` cancels it exactly. It also has far higher
+  variance: on the same keyframes the slope form scores the referee at 10.63%
+  where the ratio form scores it at 1.02%, and the slope arm did *more* damage
+  to the rendering. Cancelling a bias is not free.
+- **A correlation that had to be positive.** An earlier version of the audit
+  correlated "the correction the sensor says is needed" (`1/c_k`) with "the one
+  the referee proposes" (`v_k/c_k`) and reported +0.98. Both contain `1/c_k`;
+  the number was guaranteed and meant nothing. Caught by noticing that a 0.98
+  correlation was inconsistent with a 25% improvement. **Eleventh instance of
+  §17.31, and the same defence worked again: the number was too good, so read
+  the algebra.**
+
+### 17.49 B2 in the refiner: a monotone conflict, not a joint optimum
+
+§17.48 concluded that the per-cluster scale error is shared between the map and
+the trajectory, so it can only be removed where both are solved together. B2 is
+that, done in the cheapest place it can be done: free the keyframe translations
+(3 DoF each) alongside the existing per-cluster depth scale, and add the
+referee's corrections as a **prior** rather than an edit, so the photometric
+term is free to disagree.
+
+`--kf-pose-lr`, `--referee-scales`, `--referee-weight` in `refine_local.py`.
+
+```
+desk, 300 steps                     psnr     lpips    kf scale std
+base (poses and scales fixed)      13.811   0.4199        --
+depth scale free (17.16's lever)   13.683   0.4146      0.0144
++ poses free                       13.743   0.4452      0.0169
++ referee prior w=0.05             13.728   0.4494      0.0151
++ referee prior w=0.5              13.382   0.4561      0.0257
+referee asks for                                        0.0800
+```
+
+**Monotone in the prior weight, and monotone the wrong way.** Every step the
+scales take toward the referee costs image quality: psnr 13.73 -> 13.38, lpips
+0.4494 -> 0.4561. And even at w=0.5 the fitted spread is 2.6% against the
+referee's 8.0% -- the photometric term is still winning the argument, and
+forcing it further is what §17.48 already measured as harmful.
+
+Freeing the poses is separately negative: lpips 0.4199 -> 0.4452 with the scales
+otherwise untouched. That is §13.12b's co-adaptation result in another costume --
+the map was baked at the SLAM poses, so giving the poses back their freedom buys
+training-view fit and loses held-out perceptual quality.
+
+#### Why this arm could not have worked, stated properly
+
+The refiner's data term is the near-baseline photometric loss, and §17.17 proved
+that term is structurally blind to depth: 4.5% depth error moves a held-out
+pixel by 0.66 px at this trajectory's 0.057 m baseline. **Solving two variables
+"together" against blind data does not create information.** The only thing B2
+added was the referee's prior, and the photometric term simply outvoted it.
+
+So what B2-in-the-refiner actually measured is the conflict itself, cleanly:
+
+```
+what the photometric criterion wants     ~1.5-2.6% spread
+what absolute geometry wants (17.48)      8.0%, and it IS correct (6.4x
+                                          better against the sensor)
+agreement between them                    Spearman +0.06
+every step from one toward the other      costs psnr and lpips, monotonically
+```
+
+#### The conclusion this forces, which is larger than the seams
+
+**Absolute geometric accuracy and rendered novel-view quality are different
+objectives in a trajectory-anchored map, and on this data they conflict.** The
+best-looking map is one that is geometrically *wrong* in a way that is
+self-consistent with its own trajectory. §17.48 made the point once (geometry
+6.4x better, psnr -0.86 dB); §17.49 makes it as a dose-response curve.
+
+That reframes the seam thread end to end:
+
+```
+the seams are geometric                        17.41 (no colour step at borders)
+caused by per-pair scale jitter                17.36, 17.45 (9%, and 0.31x
+                                               under joint prediction)
+the jitter is co-adapted with the trajectory   17.48, 17.49
+removing it costs image quality, monotonically 17.49
+```
+
+**The seams are the visible price of a self-consistent-but-wrong map, and every
+map-side and refiner-side route to them is now closed by measurement.** What is
+left is a genuinely different intervention: the SLAM backend, where the data
+term is wide-baseline keyframe-to-keyframe point matching rather than
+near-baseline photometry, and where each keyframe's Sim3 already carries the
+scale parameter that would have to move. That is not a tweak to this codebase's
+refiner; it is a change to how the map is built.
+
+#### Replication
+
+Same protocol, referee prior at w=0.5 against a fixed-pose baseline:
+
+```
+seq     base psnr / lpips      B2 psnr / lpips       fitted std
+desk    13.811 / 0.4199        13.382 / 0.4561         0.0257
+360     12.049 / 0.4500        12.012 / 0.4647         0.0521
+room    11.238 / 0.5697        11.237 / 0.5702         0.0348
+```
+
+**3/3 sequences worse on lpips, 3/3 no better on psnr.** The magnitude tracks
+how hard the prior actually moved the scales: desk (0.0257 fitted against 0.0800
+asked) pays the most, room (0.0348) is a wash. Nothing recovers, nothing wins.
+
+#### The backend route, assessed rather than assumed
+
+§17.48 and the body of this entry both end at "the SLAM backend, where poses and
+scales are solved together". That claim needed checking against the code, and it
+comes back weaker than it went in. `splatt3r_slam/backend/src/gn_kernels.cu`
+runs Gauss-Newton on the **full Sim3**: `expSim3`/`retrSim3` carry a scale
+component, and `act_Sim3`'s Jacobian has the `dpc_ds` column. **Each keyframe's
+scale is already a free variable in the backend, and the jitter survives it.**
+
+So the problem is not an unmodelled degree of freedom. It is **observability**:
+the backend's residual is keyframe-to-keyframe point matching, and both sides of
+every edge come from the same network's prediction carrying the same bias. The
+two views agree with each other, so the residual is blind to the error they
+share. That is the same phenomenon §17.47 measured as rho = 0.35 -- the same
+target view draws the same mistake whoever it is paired with -- seen from the
+optimizer's side instead of the model's.
+
+Making it observable requires a constraint that does **not** come from the same
+network. Two candidates, both real work:
+
+```
+RGB-D depth as a backend residual   the instrument was already ruled
+                                    inadequate on TUM fr1 (17.29)
+referee scales as a GN prior term   requires editing the CUDA kernel; and
+                                    17.48/17.49 measured that pulling the map
+                                    toward those scales costs image quality
+```
+
+The second is the one that would have to be tried, and this section has already
+measured that its target is in conflict with the rendering objective. **That is
+the honest state: the seams are diagnosed completely and every route to them
+that this codebase can reach has been measured and closed.**
+
+Scope: three sequences, 300 steps, one prior weight for the replication.
+
+### 17.50 The evaluation was never as blind as §17.17 claimed
+
+Kimi's round-18 challenge to §17.48/§17.49: what was measured might not be "the
+objectives conflict" but "THIS evaluation cannot see the improvement and can see
+the disruption". His test, adopted: re-score the maps that already exist, with
+the held-out frames **stratified by baseline**.
+
+The stratifying variable matters and is not the obvious one. §17.16 measured
+0.057 m as the distance from a held-out viewpoint to its nearest keyframe. But
+what decides whether a per-cluster depth error is visible is the distance to the
+clusters that actually **paint** that frame, which the renderer can report:
+
+    baseline_f = sum_k alpha_k(f) * ||t_k - c_f|| / sum_k alpha_k(f)
+
+`scripts/eval_baseline_stratified.py`. Measured:
+
+```
+seq     wide frames    median baseline
+desk       40/40           0.777 m
+room       27/40           0.811 m
+360         0/40           0.182 m     (spins in place; cannot test this)
+```
+
+**desk's is 13.6x the 0.057 m figure**, and that changes the arithmetic §17.17
+built its central claim on:
+
+```
+17.17 said   f * b * dd/d^2 = 517 * 0.057 * 0.09 / 4 = 0.66 px   -> "blind"
+correctly    517 * 0.78  * 0.09 / 4 = 9.1 px                     -> not blind
+```
+
+**§17.17's "the evaluation is structurally blind to depth error" used the
+distance to the nearest keyframe where it needed the distance to the painting
+clusters.** The two answer different questions -- how much new information a
+held-out view carries, versus how visible a per-cluster depth error is -- and
+only the second is the one that argument needed. Demoted accordingly.
+
+#### And the verdict it was built to deliver
+
+```
+                    all psnr/lpips        WIDE baseline only
+desk   base        12.346 / 0.5071        12.346 / 0.5071
+       referee     11.443 / 0.5267        11.443 / 0.5267     -0.90 dB, +3.9%
+room   base        10.446 / 0.5966        10.293 / 0.6048
+       referee     10.278 / 0.5881        10.034 / 0.5943     -0.26 dB, -1.7%
+360    base        11.892 / 0.4934        (no wide frames)
+       referee     11.834 / 0.4931
+```
+
+Pre-registered: the corrected map wins the wide subset by >= 0.3 dB, or the
+conflict is real. **It does not win on any sequence**, and on desk -- where every
+frame is wide-baseline -- it loses by 0.90 dB with lpips 3.9% worse. room's
+small lpips gain does not generalize.
+
+So the conflict survives its best challenge, and it survives it **on stronger
+ground than it was first claimed**: the evaluation can resolve a ~9 px
+consequence, it is looking at exactly the regime where the correction should
+pay, and what it reports is that the metrically better map renders worse.
+
+Three claims in this section now need their baselines re-read: any inference
+from §17.17 that depends on 0.66 px, the framing of §17.48's "the evaluation
+cannot reward it", and my own repeated statement to the user that the loss is
+"structurally blind". The conclusions stand; the reason changed.
+
+#### A third meeting with the same trap
+
+The first run of the stratified evaluator scored 3.019 dB. `resize_img` returns
+[-1,1] and the rasterizer outputs [0,1] -- and `eval_map_quality.py` carries a
+comment saying, in as many words, that comparing the two spaces "scored 3.16 dB
+on a map that renders correctly". A new script hit the documented trap anyway.
+§17.40 was the same mismatch in the exposure normalization. **What caught it was
+the same thing that has caught every one of these: the number was absurd.**
+
+### 17.51 T3.1: there is no convergence to detect
+
+`--refiner-polish-tol` measured, on a budget where convergence could actually
+happen (duty 1.0, 900 s, against the 300 s / duty 0.25 runs that reach only
+525-695 steps and are nowhere near done).
+
+```
+seq   criterion            steps   psnr     lpips
+desk  full budget          3526   14.271   0.3864
+desk  tol 0.02, patience 1 1949   14.143   0.3988
+360   full budget          4219   13.931   0.4361
+360   tol 0.02, patience 1 1678   13.134   0.4535
+360   tol 0.02, patience 3 4368   13.909   0.4381   <- never fired
+```
+
+Two findings, and the second is the real one.
+
+**Patience 1 is a noise detector.** It saves 45-60% of the steps for 0.13-0.80 dB,
+and the stop reasons say why: desk stopped on a window whose mean loss had
+*risen* 1.8%, at 1949 steps, while the full-budget map at 3526 was better. A
+200-step window mean is still noise against a 3500-step trend.
+
+**Patience 3 never fires.** With the false triggers removed, the criterion runs
+the whole 900 s and lands on the full-budget result (13.909 vs 13.931, inside
+noise). The loss is still descending at 4368 steps.
+
+**So there is no plateau to detect inside any budget worth spending.** The
+premise of T3.1 -- that sequences need 2.4x different step counts and a
+convergence test is the only way to size the phase -- was wrong in its second
+half: they need different counts because they are all still improving when the
+clock stops, so the honest control is the clock, not a criterion.
+
+`--refiner-polish-tol` and `--refiner-polish-patience` stay in the code and stay
+**off by default**. Documented as measured-negative rather than removed, because
+the negative is the useful part: give the polish as much wall-clock as you can
+afford and do not expect it to stop on its own.
+
+### 17.52 The protocol effect, measured instead of argued
+
+§17.50 fixed the evaluation (targets are now exposure-normalized into the map's
+colour space) and I immediately started reasoning about what that did to the
+existing record. So did Kimi. Both of us were wrong, because we were reasoning
+about a quantity nobody had measured.
+
+`eval_map_quality.py --no-exposure` scores against raw targets, i.e. the old
+protocol. So the **same map** can be scored both ways and the protocol effect
+isolated from everything else. Seven maps, freshly built under the current
+defaults, scored twice:
+
+```
+seq     p1 d psnr  p2 d psnr   shift | p1 d lpips  p2 d lpips   shift
+desk       +3.48      +3.67    +0.19 |     -27.6%      -28.3%   -0.7pp
+360        +1.64      +1.86    +0.22 |     -10.5%      -11.3%   -0.7pp
+room       +1.74      +1.71    -0.04 |     -16.2%      -16.6%   -0.4pp
+rpy        +0.94      +1.11    +0.18 |      -9.1%      -10.2%   -1.0pp
+
+absolute level shift on the polished map (p2 - p1):
+  desk +0.053 dB    360 +1.128 dB    room +0.473 dB    rpy -0.104 dB
+```
+
+**Paired within-sequence deltas move by at most 0.22 dB and 1 pp.** Kimi's claim
+that the mismatch cancels in paired comparisons is confirmed quantitatively --
+every conclusion in this section built on an A/B within one sequence stands
+without re-measurement.
+
+**Absolute levels move differentially, by 1.23 dB across sequences, and rpy
+moves the wrong way** (-0.104 dB). So cross-sequence *absolute* comparisons
+under p1 were unreliable, which is the half Kimi got right.
+
+#### Three statements this killed, two of them mine
+
+1. **"The protocol fix is worth +2.36 dB on 360."** I said this twice, including
+   in the material I sent Kimi. It came from comparing an old run at ~12.0 dB
+   with a new run at 14.36 dB -- **two different configurations**. The controlled
+   number is **+1.128 dB**.
+2. **"The correlation changes come from the protocol (or from protocol plus
+   configuration, inseparably)."** They cannot: the protocol moves a delta by
+   <= 0.22 dB / 1 pp, nowhere near enough to move a rank correlation from -0.96
+   to -0.82 or +0.07 to +0.714. Those changes are **configuration**, and the
+   attribution is now clean rather than hedged.
+3. **Kimi's prediction that the fix would STRENGTHEN the -0.96 correlation**,
+   via "rotation sequences drift more, so their gains were more attenuated". The
+   measurement shows the protocol's effect on the gains is nearly uniform
+   (0.4-1.0 pp), with no such differential compression. It weakened instead --
+   for a different reason.
+
+#### The seven-sequence table, re-measured under p2 and the current defaults
+
+```
+seq      ratio   d psnr   d lpips
+xyz       15.0    +2.10    -27.1%
+desk       3.4    +3.67    -28.3%
+plant      2.6    +2.61    -12.7%
+teddy      2.2    +2.81    -13.8%
+room       1.9    +1.71    -16.6%
+360        1.1    +1.86    -11.3%
+rpy        0.6    +1.11    -10.2%
+
+pooled  +2.27 dB / -17.1%      (p1 recorded +2.21 dB / -16.7%)
+spearman(ratio, d lpips) = -0.821   (p1: -0.964)
+spearman(ratio, d psnr)  = +0.714   (p1: +0.07)
+```
+
+The headline reproduces to within 0.06 dB and 0.4 pp. **The polish result is
+protocol-robust.**
+
+The two correlations are not, and by the isolation above the cause is the
+configuration change, not the fix. **§17.34's supporting claim that "psnr is
+blind to this, +0.07 flat" does not survive the new defaults: psnr now tracks
+the motion ratio at +0.714.** Since §17.34/§17.36's argument leans on the
+psnr/lpips split, that leg needs re-analysis under the configuration that is
+now the default -- flagged, not resolved here.
+
+#### Method note
+
+The instrument that settled all of this is one flag and an afternoon. Before it,
+three people-hours of argument had produced three confident statements about the
+protocol's effect, and all three were wrong. The reason they were wrong is the
+same in each case: **a comparison in which more than one thing differed**, read
+as though only one had.
+
+That is the fourth distinct form of §17.31's failure mode, and the first that
+survived being *noticed* -- I flagged "config and protocol both changed, cannot
+separate" and then, two sentences later, attributed the change anyway.
+
+### 17.53 The streak lever is not a streak remover, and the images say so
+
+`--refiner-streak-opacity 0.5` became a default on a 3-sequence paired A/B
+(lpips -12.7% / -6.6% / -1.3% on desk / room / 360). The story attached to it --
+"it hides ray-elongated Gaussians at depth discontinuities, so the win tracks
+how many object boundaries a scene has" -- is wrong, and two instruments say so
+independently.
+
+#### The spatial test (Kimi's round-19 design)
+
+Build the map twice from ONE keyframe blob, fade off and on; the per-Gaussian
+fade factor is then the ratio of the two opacity vectors. Render the **fade
+deficit** (1 - fade, weighted by the unfaded opacities) and bin held-out pixels
+by it, scoring each bin with spatial LPIPS.
+
+```
+desk, fade deficit bin   pixels   mean lpips gain
+       0.00-0.02          8.3%       -0.00121
+       0.02-0.05          1.6%       +0.00036
+       0.05-0.10          1.9%       +0.00264
+       0.10-0.20          3.7%       +0.00244
+       0.20-1.01         84.6%       +0.01434
+```
+
+**The dose-response holds**: the gain rises with the deficit and is negative
+where nothing was faded. So the lever does act through the Gaussians it fades --
+that part of the mechanism is confirmed, with millions of pixels of power rather
+than a 3-point rank agreement.
+
+**But the coverage refutes the story:**
+
+```
+seq    fade coverage   mean deficit   top-bin pixels   top-bin gain   A/B gain
+desk      91.8%           0.529           84.6%         +0.01434      -12.7%
+360       63.6%           0.390           50.9%         +0.00532       -1.3%
+room      98.4%           0.651           81.5%         -0.00560       -6.6%
+```
+
+It fades **64-98% of all Gaussians** by 39-65% of their opacity. This is a
+near-global, gradient-weighted opacity reduction, not a sparse edge treatment.
+And coverage does not order the benefit: room fades the most and gains less than
+desk.
+
+#### The images, which is where the description actually broke
+
+`logs/streak_png/`, one held-out view, rendered from the baked map:
+
+- **The fade-deficit image is a broad wash, not an edge map.** If the mechanism
+  were elongated Gaussians at depth discontinuities, that image would be thin
+  bright structures along object boundaries. It is bright almost everywhere.
+- **Faded vs unfaded looks like de-hazing**: the keyboard's key array and the
+  mouse emerge from a white haze. That is what lowering foreground opacity to
+  let background structure through looks like, not what erasing a streak looks
+  like.
+- **And the baked map is not "slightly flawed" -- it is a smear.** At 10.5 dB
+  the desk render is black blobs and white haze against a ground truth of
+  monitors, keyboard and papers. The polish's +3.67 dB is the difference between
+  unrecognizable and recognizable. **I had been reasoning about "artifacts" on
+  an image I had never looked at.**
+
+**Corrected description, for the README and anywhere else it appears:** a
+global opacity reduction weighted by how long each Gaussian is relative to its
+local surface sampling; its effect is de-hazing. Keep the flag and the default
+(3/3 sign, cost <= 0.22 dB), drop the "trailing streak" framing.
+
+#### One open question, with a designed discriminator
+
+room's *immediate* gain in the high-fade region is negative (-0.0056) while its
+post-polish A/B gain is positive (-6.6% lpips). Those measure different things:
+the spatial test scores the baked map, the A/B scores after 300 s of
+refinement. So the benefit may be **mediated by the optimizer** -- fading gives
+refinement a less crowded starting point rather than removing an artifact
+directly. The discriminator is one paired online A/B with the polish disabled in
+both arms: if room degrades without polish and improves with it, mediation is
+established.
+
+### 17.54 Replica: a fifth family, and the recipe transfers at the same effect size
+
+New family end to end: `splatt3r_core/data/replica/replica.py` (adapter),
+registered in `FAMILIES`, coverage cached (8 scenes x 1700 train frames, ~3 min
+-- much faster than euroc/eth3d because rendered depth has no dropout to work
+around), and `ReplicaDataset` added to the SLAM-side loader so the pipeline can
+actually be run on it.
+
+Chosen over the alternatives for a methodological reason, not novelty: Replica
+is *rendered*, so poses are exact, depth is complete (99.8% of pixels valid
+against TUM's sensor dropout), and exposure is constant. It is the only family
+whose supervision carries no sensor noise.
+
+#### Head-only, 40 epochs, matched to the other families' budget
+
+```
+                 val/loss    mse     psnr     lpips
+base              0.0757   0.0390  18.8575   0.1466
+best              0.0557   0.0255  20.6995   0.1199
+best epoch          37       39       39       37
+delta             -26.4%   -34.6%  +1.84 dB  -18.2%
+```
+
+The last ten epochs sit in 0.0557-0.0570, so this one is on the plateau -- 6
+epochs was not (it reached +0.79 dB, and the script's own help text says the
+6-epoch default "was chosen to make a run take minutes; neither route had
+converged by then").
+
+#### The comparison that matters, with the denominator handled
+
+```
+                 psnr      lpips rel    lpips ABS
+tum 40 epoch    +1.77 dB    -10.2%      -0.0285
+replica 40 ep   +1.84 dB    -18.2%      -0.0267
+```
+
+**psnr gains are within noise of each other, and the absolute perceptual
+improvements are nearly identical -- TUM's is marginally larger.** The apparent
+"Replica improves lpips almost twice as much" is entirely the denominator:
+TUM's base lpips is 0.279 because it includes a sensor-noise floor, Replica's
+is 0.147 because rendered ground truth has none. Kimi's round-20 instruction to
+compute absolute deltas before choosing an explanation was correct and answered
+the question in one subtraction.
+
+**Verdict: the head-only recipe transfers to a new dataset family at the same
+effect size.** It does NOT do better there; saying so would be a denominator
+artifact.
+
+#### The images, which complicate the scalars
+
+`logs/render_replica_40/`, identical seeded samples, GT / base / head:
+
+- **head resolves structure that base smears**: the crane in the mural and the
+  door frame's wood grain appear only in the head render.
+- **head softens fine texture that base keeps**: the world-map coastlines are
+  fine white filigree in GT and in base, and blobby in head. Screen bezels,
+  rock texture and object outlines are all smoother.
+
+Both metrics reward that trade -- mse -34.6% is far more than sharpening could
+buy and is consistent with geometry being placed better, while LPIPS-AlexNet
+weights structure over speckle. **But it is a trade, and the scalars hide it.**
+The same tension is already on record for TUM's route B vs C ("LPIPS is a proxy
+for the blur complaint, not the complaint itself").
+
+Absolute levels are not comparable across families and the images show why:
+Replica's *base* render is already a recognizable photograph at 18.9 dB, while
+TUM's baked map at 10.5 dB is a smear. That is the rendering, not the model.
+
+### 17.55 A train/inference mismatch the val split could not see
+
+Registering Replica as a family, I copied tum's training resolution: (512, 384).
+Replica is 1200x680. The SLAM side's `resize_img` (long side 512, crop to a
+multiple of 16) therefore feeds the network **512x288**, while training
+centre-cropped to 4:3 and trained 40 epochs on **512x384** -- a different crop of
+a different aspect ratio.
+
+```
+                     val split          SLAM deployment (office0)
+head vs base       +1.84 dB / -18.2%    baked -4.0 dB, refined -0.57 dB / +35% lpips
+```
+
+Fixed to (512, 288) and retrained; the val gain rose to **+2.17 dB / -20.6%**,
+and the deployment A/B moved from -0.57 dB to **+0.08 dB**, with the baked
+regression shrinking from -4.0 dB to -0.97 dB. Diagnosis confirmed by the fix.
+
+**The val split is computed with the training-side preprocessing, so it is
+structurally blind to this entire class of error.** Same shape as §17.17 (the
+evaluation cannot see depth error) and §15's proxy-vs-online gap. Kimi's
+formulation, adopted as a standing rule:
+
+> Any evaluation that shares preprocessing with training is structurally blind
+> to input-pipeline errors. Every release gets one end-to-end check.
+
+`scripts/test_preprocess_roundtrip.py` is the cheap guard -- it compares what
+the SLAM path feeds the network against what the family trains on, per family.
+Kimi rejected my first proposal (assert the shape) on the grounds that
+crop-vs-letterbox-vs-squash, channel order, dtype range and the exposure flag
+are all shape-preserving or shape-adjacent and all in the same class; the test
+compares tensors, starting with shape. All four families with data on disk pass.
+
+#### The larger finding, which outlives the bug
+
+Even at the correct resolution:
+
+```
+                       replica office0
+val split            +2.17 dB / -20.6%
+deployment, baked    -0.97 dB / +23%
+deployment, refined  +0.08 dB /  -1.8%
+```
+
+**The head's val-split gain does not survive deployment.** Two causes, both
+worth carrying:
+
+1. **Refinement dominates.** Both arms run ~2400 polish steps and converge to
+   ~26.5 dB; the head's head start is worth 25x less than the val split implies.
+   That is the other face of §17.52's +2.27 dB: when the polish is worth 4.7 dB,
+   a 2 dB better initialization is largely absorbed.
+2. **The val split scores a different object.** It scores the decoder's render
+   of one two-view prediction. The SLAM bake accumulates many keyframes through
+   confidence gating, the band-limit floor and the thinning prior. "Better at
+   two-view rendering" is not "better after accumulation and gating".
+
+This applies to all four pre-existing families: **none of their heads has ever
+had a deployment A/B.** Their resolutions happen to be right, but that is not
+the same as verified. Per Kimi: one deployment A/B per family as a release gate,
+priority tum (the flagship claim), the rest guarded by the round-trip test.
+
+### 17.56 The streak lever is a thinning prior, and the selector is worse than nothing
+
+Two controls Kimi designed in round 21, both run.
+
+#### The uniform control: the elongation criterion earns nothing
+
+Same blob, three arms, offline refinement. `uniform` multiplies EVERY opacity by
+(1-D) with D matched to what the selector removes on average.
+
+```
+desk             iter 0    300     600     900    1200
+off              0.5071  0.4200  0.3952  0.3770  0.3723
+elongation       0.4979  0.3989  0.3842  0.3675  0.3639
+uniform D=.529   0.5058  0.4021  0.3855  0.3677  0.3644
+```
+
+elongation and uniform coincide at every step count; the endpoint gap is 0.0005,
+**0.14% relative against a measured 0.17% floor (§17.51)**. The selector's
+contribution is indistinguishable from zero.
+
+```
+room             iter 0    300     600     900    1200
+off              0.5964  0.5696  0.5309  0.5125  0.5018
+elongation       0.6030  0.5433  0.4999  0.4823  0.4746
+uniform D=.651   0.5950  0.5117  0.4765  0.4647  0.4604
+```
+
+On room the selector is not merely useless: **uniform beats it by 3.0%**, far
+above the floor. Aiming the fade by elongation puts it in the wrong places.
+
+**So the lever is a content-blind global thinning prior.** The baked map is
+systematically over-crowded and over-opaque, and simply removing ~50% of every
+Gaussian's opacity recovers most of the perceptual damage. `min(1, K*pitch/
+max_scale)` should be reported as unnecessary. Kimi's footnote, kept: at iter 0
+elongation does beat uniform on desk (0.4979 vs 0.5058), so a pre-polish
+advantage exists and is erased by 300 steps; its value at deeper fades is
+unmeasured.
+
+#### The mediation question, answered
+
+room's *immediate* effect was negative (§17.53) while its A/B gain was positive.
+The crossover in the table above is the answer: elongation starts **worse** than
+off (0.6030 vs 0.5964) and ends **better** (0.4746 vs 0.5018).
+
+**The benefit is produced by the refinement, not by the render.** Thinning gives
+the optimizer a less entangled starting point; it does not remove an artifact.
+That retires the "trailing streak" framing completely -- the name, the mechanism
+and the selector were all wrong, and only the effect was real.
+
+### 17.57 Cross-family transfer: the diagonal wins, and a bootstrap kills half a pattern
+
+5 families x 5 heads, one protocol (psnr/lpips):
+
+```
+family         base      tum-h    7scenes-h   euroc-h   eth3d-h  replica-h
+tum        15.09/.279  16.83/.251 15.47/.323 13.00/.413 13.45/.368 15.48/.263
+7-scenes   13.71/.282  14.80/.278 15.86/.257 13.79/.358 14.12/.333 13.94/.277
+euroc      11.44/.301  11.29/.447 11.74/.429 15.13/.251 10.90/.480 12.03/.313
+eth3d      10.85/.371  11.39/.383 11.91/.364 11.15/.452 14.00/.327 11.10/.365
+replica    18.86/.147  16.74/.324 17.51/.293 16.82/.277 14.43/.409 20.67/.120
+```
+
+**Every diagonal wins (+1.74 to +3.69 dB), and the off-diagonal mostly costs
+lpips** -- on replica every foreign head roughly doubles it against base. The
+headline is: head-only tuning is family-specific; do not cross-deploy a head.
+
+#### The exception, and what happened when it was measured properly
+
+The replica column looked like it improved psnr on 4/4 foreign families, which
+I was ready to call a signal. Kimi flagged two problems: that column used the
+**wrong-resolution head** (§17.55), and no cell had a floor. Recomputed with the
+fixed head, per-image, with bootstrap CIs over 2000 resamples:
+
+```
+family        n    base          replica288     d psnr [95% CI]        d lpips % [95% CI]
+tum         150  9.68/0.568    9.90/0.564    +0.22 [-0.18,+0.62]   -0.6 [-4.3,+3.3]
+7-scenes    175 10.88/0.548   11.44/0.534    +0.56 [+0.21,+0.88]   -2.5 [-5.2,+0.4]
+euroc       158  9.91/0.467   10.41/0.437    +0.50 [+0.14,+0.86]   -6.5 [-9.9,-2.9]
+eth3d       150  9.72/0.538    9.70/0.540    -0.02 [-0.44,+0.40]   +0.5 [-3.2,+4.3]
+replica     160 10.73/0.466   11.66/0.431    +0.93 [+0.48,+1.41]   -7.6 [-12.1,-2.7]
+```
+
+**2 of 4 significant, 1 null, 1 not significant** -- and only euroc's lpips
+clears zero. "4/4 transfer" was the wrong-resolution head plus the absence of a
+floor. **Without the bootstrap I would have written a claim that two cells do
+not support.**
+
+What survives is narrower and matches Kimi's more boring alternative: a head
+trained on noise-free, complete-depth supervision transfers *at the psnr level*
+to some families, most plausibly because dense valid depth teaches denser and
+more confident predictions rather than because clean supervision teaches
+transferable structure. Not a mechanism claim yet.
+
+(Absolute levels in the two tables differ -- different harness, val subset and
+masking. Each is internally consistent; neither is comparable to the other or to
+the training logs.)
+
+### 17.58 The base checkpoint's opacity output is collapsed, and that is the largest single map defect
+
+Chasing §17.55's baked regression produced the most explanatory finding in this
+section. Kimi proposed two causes in round 23; both are impossible by
+construction, and eliminating them found the real one.
+
+#### Both proposed causes are structurally impossible
+
+`head_params()` trains only `gaussian_dpt`. In the inference path `X` and `C`
+come from `r["pts3d"]` and `r["conf"]` -- the **frozen** pointmap head. The
+Gaussian head cannot change depth, confidence or density at all. Measured on
+Replica office0, base vs head, same windows:
+
+```
+                 scale spread  neighbour  within-view  median ratio  mean conf  gate
+base                4.68%       2.61%       1.03%        0.8189      11.614    99.4%
+head                4.68%       2.61%       1.03%        0.8189      11.614    99.4%
+```
+
+Identical to every digit. This also kills Kimi's round-22 mechanism for the
+cross-family transfer ("dense valid depth teaches denser/more confident
+predictions"): whatever transfers travels through **Gaussian shape and
+appearance only**.
+
+#### What the head actually changes
+
+```
+TUM      scale med   p90    max-axis med   opacity med   frac>0.9   frac<0.1
+base       2.102   6.239       2.791          1.0000      100.0%      0.0%
+head       1.347   7.330       2.851          0.5909        9.3%      7.5%
+
+Replica  scale med   p90    max-axis med   opacity med   frac>0.9   frac<0.1
+base       3.856   9.778       6.723          1.0000      100.0%      0.0%
+head       1.902  22.768      13.485          0.9993       99.8%      0.0%
+```
+
+**The base checkpoint predicts opacity 1.0 for essentially every Gaussian.** It
+never learned to use partial transparency. That reframes §17.56's thinning prior
+completely: it is not a heuristic patch, it **supplies an output the network's
+head collapsed on**.
+
+And the two heads differ in exactly the way the deployment results do:
+
+```
+              baked                    refined
+TUM base    10.52/0.5605            14.11/0.4065
+TUM head    12.11/0.5034  (+1.59)   14.16/0.3669  (-9.7% lpips)
+Replica base 21.80/0.2381           26.50/0.1004
+Replica head 20.83/0.2927  (-0.97)  26.58/0.0986  (-1.8% lpips)
+```
+
+The TUM head un-saturated itself and bakes better. The Replica head stayed
+saturated, inflated its scale tail instead (p90 +133%, max axis +100%), and
+bakes worse.
+
+#### The causal channel, corrected
+
+My first statement -- "Replica's exact complete depth removes the pressure to
+learn opacity" -- is wrong on the data path, and Kimi caught it: **that depth
+is never shown to the network.** The head's geometry comes from the frozen
+backbone; the dataset depth only builds the loss mask. Two of my three named
+drivers are therefore inert: sensor dropout never enters training at all, and
+exposure variation *cannot* teach opacity because opacity is view-independent
+and so cannot hedge per-view brightness.
+
+The surviving channel, in his words:
+
+> On clean rendered images the backbone's own geometry is confident, multi-view
+> photometric conflict is rare, and opacity saturation -- the head's default
+> collapse -- is never punished. On real images (blur, auto-exposure, weak
+> texture) the backbone's geometry is uncertain, conflicting evidence lands on
+> the same rays, and partial opacity is the only per-ray softness the model
+> class has.
+
+#### The 2x2: two defects, two stages
+
+On the head-baked Replica map, no retraining, cap set at the base head's p90:
+
+```
+                 iter 0 (baked)        iter 600 (refined)
+none          20.172 / 0.3311        25.351 / 0.1649
+thin (D=.45)  20.528 / 0.3247        26.404 / 0.1110
+cap           21.146 / 0.2631        25.901 / 0.1373
+thin + cap    21.511 / 0.2611        27.308 / 0.0765
+```
+
+- **The scale tail damages the render**: at bake the cap is worth -20.5% lpips
+  against thinning's -1.9%. Kimi's pre-registered ">=60% of the baked deficit"
+  call is confirmed.
+- **Saturation damages optimizability**: thinning is worth only -1.9% at bake
+  but -32.7% after 600 steps. Front layers at alpha~1 block the back layers'
+  gradient path, so the map cannot reassign content during refinement.
+
+The interaction is real but modest and gets one sentence: multiplicative null
+-43.9%, additive -49.4%, measured -53.6% -- better init times better dynamics
+compound. **The finding is the stage split; the interaction is its footnote.**
+
+#### The falsification test, which is what makes this causal
+
+Same code, same 2x2, same 600-step budget, on a **TUM-head** map. If these
+levers were generic map repairs they would buy the same on both heads.
+
+```
+                     iter 0            iter 600
+TUM head   none   12.354/0.5071      14.098/0.3952
+           thin   12.565/0.5057      14.011/0.3871   -2.0% lpips, -0.09 dB
+           cap    12.372/0.5037      13.938/0.3937   -0.4% lpips, -0.16 dB
+           both   12.634/0.5011      13.853/0.3878   -1.9% lpips, -0.25 dB
+```
+
+**-53.6% on the Replica head, -1.9% on the TUM head, with a psnr cost.** A
+factor of thirty, in the direction the mechanism predicts: **the external levers
+are worth exactly the work the head did not do.**
+
+And Kimi's load-time diagnostics separate the two families without reference to
+the answer:
+
+```
+p90 ratio (head/base)    Replica 2.33  -> arm the cap      TUM 1.17  -> do not
+saturation fraction      Replica 99.8% -> arm the thinning TUM  9.3% -> do not
+```
+
+#### What this licenses
+
+- **Uniform thinning ships as a default** (four contexts, never negative), but
+  the record should say what it is worth where: ~2% on a head that already
+  un-saturated, 30%+ on a saturated one.
+- **The scale cap ships conditional on the diagnostic**, not unconditionally: on
+  the flagship family it costs 0.16 dB psnr for 0.4% lpips.
+- **§17.55's "the head route has no deployment value" is retracted.** It was
+  measured on a saturated head. TUM's +1.59 dB baked / -9.7% refined makes the
+  value conditional, and the condition is now mechanistic: **a head earns its
+  keep iff it learns transparency.**
+- The unifying sentence, Kimi's: *the base head's opacity collapse is the single
+  largest map-quality defect in this system; thinning is the patch,
+  head-training on real data is the root fix, and Replica-style clean
+  supervision is contraindicated for learning exactly this.*
+
+Two claims deliberately NOT made yet: that thin+cap "beats every deployment
+number" (the 2x2 is offline/600-step and the deployment arms are online/2316 --
+crossing harnesses is the error §17.52 exists to prevent, and I made it once
+here before catching it), and that the collapse is best fixed at training time
+(the opacity-penalty retrain is running; if a trained-in un-saturation merely
+matches a one-line injection fade, the honest report is that the collapse is
+real and fixable in either place, and the injection fix is free).

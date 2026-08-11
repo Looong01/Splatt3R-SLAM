@@ -1,3 +1,4 @@
+import json
 import pathlib
 import re
 import cv2
@@ -145,6 +146,53 @@ class SevenScenesDataset(MonocularDataset):
         self.camera_intrinsics = Intrinsics.from_calib(
             self.img_size, 640, 480, [fx, fy, cx, cy]
         )
+
+
+class ReplicaDataset(MonocularDataset):
+    """Replica, NICE-SLAM rendered release.
+
+    The fifth training family (data/replica/replica.py) had no SLAM-side
+    loader, so a head could be trained for it but the pipeline could not be run
+    on it -- the head's val-split gain was measured while the deployment claim
+    stayed untested. This closes that.
+
+    Layout: <scene>/results/frame%06d.jpg + depth%06d.png, and traj.txt with one
+    row-major 4x4 camera-to-world per line. Intrinsics are one block in
+    cam_params.json shared by every scene (1200x680, fx=fy=600).
+
+    Ground truth is written next to the images as `groundtruth.txt` in TUM
+    format on first load, because every evaluation script in this repo reads
+    that file rather than traj.txt.
+    """
+
+    def __init__(self, dataset_path):
+        super().__init__()
+        self.dataset_path = pathlib.Path(dataset_path)
+        self.rgb_files = natsorted(
+            list((self.dataset_path / "results").glob("frame*.jpg")))
+        self.timestamps = np.arange(0, len(self.rgb_files)).astype(self.dtype)
+        cam = json.load(open(self.dataset_path.parent / "cam_params.json"))["camera"]
+        self.camera_intrinsics = Intrinsics.from_calib(
+            self.img_size, int(cam["w"]), int(cam["h"]),
+            [cam["fx"], cam["fy"], cam["cx"], cam["cy"]])
+        self._write_groundtruth()
+
+    def _write_groundtruth(self):
+        """traj.txt -> TUM-format groundtruth.txt, once."""
+        gt = self.dataset_path / "groundtruth.txt"
+        if gt.exists():
+            return
+        from scipy.spatial.transform import Rotation
+        traj = np.loadtxt(self.dataset_path / "traj.txt", dtype=np.float64)
+        if traj.ndim == 1:
+            traj = traj[None]
+        with open(gt, "w") as f:
+            for i, row in enumerate(traj[: len(self.rgb_files)]):
+                T = row.reshape(4, 4)
+                q = Rotation.from_matrix(T[:3, :3]).as_quat()  # x,y,z,w
+                f.write(f"{float(i):.6f} {T[0,3]:.6f} {T[1,3]:.6f} "
+                        f"{T[2,3]:.6f} {q[0]:.6f} {q[1]:.6f} {q[2]:.6f} "
+                        f"{q[3]:.6f}\n")
 
 
 class RealsenseDataset(MonocularDataset):
@@ -343,6 +391,8 @@ def load_dataset(dataset_path):
         return ETH3DDataset(dataset_path)
     if "7-scenes" in split_dataset_type:
         return SevenScenesDataset(dataset_path)
+    if "Replica" in split_dataset_type or "replica" in split_dataset_type:
+        return ReplicaDataset(dataset_path)
     if "realsense" in split_dataset_type:
         return RealsenseDataset()
     if "webcam" in split_dataset_type:

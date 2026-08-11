@@ -248,6 +248,11 @@ def prepare_gaussians_local(
     min_confidence=1.5,
     min_opacity=0.3,
     inflate_scales_for_stride=True,
+    aa_sigma_scale=0.0,
+    aa_compensate_opacity=False,
+    max_anisotropy=0.0,
+    streak_opacity=0.0,
+    return_pitch=False,
 ):
     """Transform ONE keyframe's camera-space Gaussians to world space.
 
@@ -304,7 +309,8 @@ def prepare_gaussians_local(
     s = max(1, int(spatial_stride))
 
     sh_dim = local["sh"].shape[-1]
-    means = local["means"].view(h, w, 3)[::s, ::s].reshape(-1, 3)
+    means_grid = local["means"].view(h, w, 3)[::s, ::s]
+    means = means_grid.reshape(-1, 3)
     scales = local["scales"].view(h, w, 3)[::s, ::s].reshape(-1, 3)
     rotations = local["rotations"].view(h, w, 4)[::s, ::s].reshape(-1, 4)
     sh = local["sh"].view(h, w, 3, sh_dim)[::s, ::s].reshape(-1, 3, sh_dim)
@@ -331,6 +337,34 @@ def prepare_gaussians_local(
     scale_max = scales.max(dim=-1).values
     valid = valid & (scale_max < max_scale)
 
+    # Lattice pitch: the 3D distance from each Gaussian to its nearest
+    # 4-neighbour on the SOURCE PIXEL GRID. Splatt3R emits one Gaussian per
+    # pixel and nothing here densifies, so this spacing is fixed at injection
+    # and is exactly the sampling rate the map can represent -- there is no
+    # need for Mip-Splatting's max-over-training-views proxy, the quantity it
+    # estimates is directly measurable here.
+    #
+    # MIN over the neighbours, not mean: across a depth discontinuity the
+    # neighbour is metres away, and a mean would inflate every silhouette
+    # Gaussian into a blob spanning the gap -- the "trailing streak" artifact,
+    # manufactured on purpose. The min takes the in-surface spacing.
+    if aa_sigma_scale > 0 or return_pitch:
+        hs, ws = means_grid.shape[0], means_grid.shape[1]
+        pitch = torch.full((hs, ws), float("inf"), device=device)
+        if ws > 1:
+            dx = (means_grid[:, 1:] - means_grid[:, :-1]).norm(dim=-1)
+            pitch[:, :-1] = torch.minimum(pitch[:, :-1], dx)
+            pitch[:, 1:] = torch.minimum(pitch[:, 1:], dx)
+        if hs > 1:
+            dy = (means_grid[1:, :] - means_grid[:-1, :]).norm(dim=-1)
+            pitch[:-1, :] = torch.minimum(pitch[:-1, :], dy)
+            pitch[1:, :] = torch.minimum(pitch[1:, :], dy)
+        pitch = pitch.reshape(-1)
+        pitch = torch.where(torch.isfinite(pitch), pitch,
+                            torch.zeros_like(pitch))
+    else:
+        pitch = None
+
     if conf is not None and min_confidence > 0:
         valid = valid & (conf >= min_confidence)
 
@@ -342,9 +376,87 @@ def prepare_gaussians_local(
     rotations = rotations[valid]
     sh = sh[valid]
     opas = opas[valid]
+    if pitch is not None:
+        pitch = pitch[valid]
 
     if means.shape[0] == 0:
         return None
+
+    # 3D smoothing filter (Mip-Splatting, Yu et al. CVPR 2024), with the
+    # band limit read off the lattice above instead of estimated from the
+    # cameras. Adding sigma^2 I to the covariance is exact in the
+    # scale/rotation parameterization: R diag(s^2) R^T + sigma^2 I
+    # = R (diag(s^2) + sigma^2 I) R^T, since R R^T = I. So the rotation is
+    # untouched and only the scales move.
+    #
+    # What this fixes: the network sizes each Gaussian to its own pixel
+    # footprint at the source view, which leaves the surface just barely
+    # covered there and visibly perforated from anywhere else -- the regular
+    # dot lattice and the moire that beats against the output pixel grid.
+    # No number of optimizer steps closes those gaps, because the supervision
+    # views are at the source sampling rate where the holes are invisible.
+    #
+    # sigma = aa_sigma_scale * pitch. At the midpoint between two neighbours
+    # the alpha ratio is exp(-0.5 (pitch/2 sigma)^2), so aa_sigma_scale = 0.5
+    # puts that midpoint at 1 sigma and is the natural starting point.
+    # Anisotropy clamp: shrink the long axis to at most `max_anisotropy` times
+    # the short one. This is the trailing-streak artifact -- at a depth
+    # discontinuity the two-view match is uncertain ALONG THE RAY and the head
+    # emits a needle pointing at the camera, which reads as a smeared comet
+    # tail from any other view. The existing max_scale=0.5 filter only catches
+    # the absolute size, so a 2 cm x 2 cm x 40 cm needle passes it untouched.
+    #
+    # Clamped, not deleted: dropping them would leave holes exactly at object
+    # silhouettes, which is where holes are most visible. Applied BEFORE the
+    # band limit below, so the floor still guarantees coverage afterwards.
+    # Computed unconditionally: the streak block below falls back to it when no
+    # lattice pitch is available, and gating it on max_anisotropy made
+    # --streak-opacity crash on every online run (aa_sigma defaults to 0 there,
+    # so pitch is None) while every offline test passed, because those always ran
+    # with the band limit on. A latent path the proxy never exercised.
+    s_min = scales.min(dim=-1, keepdim=True).values
+    if max_anisotropy > 0:
+        scales = torch.minimum(scales, s_min * max_anisotropy)
+
+    # Ray-elongated Gaussians, hidden rather than shrunk. Clamping the long axis
+    # was measured harmful at every setting (17.16): it shrinks the footprint,
+    # and the band limit only floors the SMALLEST scale, so it opens holes.
+    # Lowering opacity instead leaves the footprint intact and lets whatever is
+    # behind show through -- which on these sequences is almost always another
+    # keyframe's correct surface, since a held-out viewpoint sits 0.057 m from
+    # the nearest keyframe (17.16). Where nothing is behind, this trades a
+    # streak for a small hole, which is the risk to watch in the black fraction.
+    if streak_opacity > 0:
+        s_max = scales.max(dim=-1).values
+        if pitch is None and aa_sigma_scale <= 0:
+            pass  # handled below with a clear error
+        # Elongation measured against the lattice pitch, not against the other
+        # axes: a Gaussian is a streak when it is long compared with the surface
+        # sampling it belongs to, which is the quantity 17.2 established.
+        if pitch is None:
+            # The criterion is "long relative to the surface sampling it belongs
+            # to" (17.32) and the lattice pitch IS that quantity. Falling back to
+            # s_min silently turns it into the anisotropy ratio -- the thing
+            # 17.16 measured as harmful -- and crushes opacity ~15x globally
+            # (measured 0.07 mean on the first online attempt). Refuse rather
+            # than approximate.
+            raise ValueError(
+                "streak_opacity needs the lattice pitch: pass aa_sigma_scale > 0 "
+                "(or return_pitch) so it can be computed. Falling back to the "
+                "anisotropy ratio is a different, measured-harmful lever.")
+        opas = opas * torch.clamp(streak_opacity * pitch / s_max.clamp_min(1e-9),
+                                  max=1.0)
+
+    if pitch is not None and aa_sigma_scale > 0:
+        sigma = aa_sigma_scale * pitch
+        s_new = torch.sqrt(scales ** 2 + (sigma ** 2)[:, None])
+        if aa_compensate_opacity:
+            # Mip-Splatting's energy correction: the convolution lowers the
+            # peak, and sqrt(|Sigma| / |Sigma'|) restores the integral. Off by
+            # default because the perforation IS an alpha deficit at the
+            # midpoints, and compensating gives back exactly what closes it.
+            opas = opas * (scales.prod(-1) / s_new.prod(-1).clamp_min(1e-12))
+        scales = s_new
 
     # Compensate for spatial subsampling: dropping every s-th pixel
     # increases the spacing between *retained* Gaussians by ~s in each
@@ -394,6 +506,13 @@ def prepare_gaussians_local(
     # conversion is a true rotation regardless of the raw magnitude.
     rotations = rotations / rotations.norm(dim=-1, keepdim=True).clamp_min(1e-6)
 
+    if return_pitch:
+        # The lattice pitch, for callers that want to hold the band limit
+        # SEPARATELY from the learned scale rather than baked into it (the
+        # refiner: see LocalGaussianMap's scale_floor). Zero when the filter
+        # is off, which makes the floor a no-op there.
+        return means, scales, rotations, colors_rgb, opas, (
+            pitch if pitch is not None else torch.zeros_like(opas))
     return means, scales, rotations, colors_rgb, opas
 
 
@@ -410,6 +529,10 @@ def bake_gaussians_world(
     min_confidence=1.5,
     min_opacity=0.3,
     inflate_scales_for_stride=True,
+    aa_sigma_scale=0.0,
+    aa_compensate_opacity=False,
+    max_anisotropy=0.0,
+    streak_opacity=0.0,
 ):
     """Place ONE keyframe's Gaussians in world space using its CURRENT pose.
 
@@ -438,6 +561,10 @@ def bake_gaussians_world(
         min_confidence=min_confidence,
         min_opacity=min_opacity,
         inflate_scales_for_stride=inflate_scales_for_stride,
+        aa_sigma_scale=aa_sigma_scale,
+        aa_compensate_opacity=aa_compensate_opacity,
+        max_anisotropy=max_anisotropy,
+        streak_opacity=streak_opacity,
     )
     if prepared is None:
         return None

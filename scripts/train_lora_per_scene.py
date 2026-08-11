@@ -98,6 +98,7 @@ from data.data import DUST3RSplattingDataset
 from data.eth3d.eth3d import ETH3DData
 from data.euroc.euroc import EuRoCData
 from data.sevenscenes.sevenscenes import SevenScenesData
+from data.replica.replica import ReplicaData
 from data.tum.tum import TUMData
 from lora import MAST3RGaussiansLoRA, attach_lora
 from main import MAST3RGaussians
@@ -177,6 +178,22 @@ FAMILIES = {
     "7-scenes": (SevenScenesData, os.path.join(DATASETS_ROOT, "7-scenes"), {}, (512, 384)),
     "euroc": (EuRoCData, os.path.join(DATASETS_ROOT, "euroc"), {}, (512, 320)),
     "eth3d": (ETH3DData, os.path.join(DATASETS_ROOT, "eth3d"), {"max_scenes": 15}, (512, 304)),  # max_scenes matches precompute_pseudo_depth.py's MAX_ETH3D_SCENES
+    # Replica (NICE-SLAM rendered release): exact poses, exact complete depth,
+    # constant exposure. The only family here without sensor noise in the
+    # supervision, and the benchmark the recent Gaussian-SLAM literature
+    # reports on. 1200x680 source, so the same 4:3-ish 512x384 as tum.
+    # 512x288, NOT 512x384. Replica is 1200x680 (16:9), so the SLAM side's
+    # resize_img (long side 512, crop to a multiple of 16) feeds the network
+    # 512x288. Training at 512x384 centre-crops to 4:3 instead, i.e. a
+    # different crop of a different aspect -- measured cost of getting this
+    # wrong: +1.84 dB on the val split, -4.0 dB on the baked map in an actual
+    # SLAM run (17.55). euroc's (512,320) and eth3d's (512,304) are each their
+    # family's deployment shape for exactly this reason.
+    "replica": (ReplicaData, os.path.join(DATASETS_ROOT, "Replica"), {}, (512, 288)),
+    "replica-noisy": (ReplicaData, os.path.join(DATASETS_ROOT, "Replica"),
+                      {"degrade": "content"}, (512, 288)),
+    "replica-photo": (ReplicaData, os.path.join(DATASETS_ROOT, "Replica"),
+                      {"degrade": "photometry"}, (512, 288)),
 }
 
 # --- Training hyperparameters -------------------------------------------

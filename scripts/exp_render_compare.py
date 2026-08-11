@@ -68,8 +68,26 @@ def load_head(model, path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=6, help="how many samples to render")
+    ap.add_argument("--family", default="tum",
+                    choices=("tum", "7-scenes", "euroc", "eth3d", "replica"))
+    ap.add_argument("--head", default=None,
+                    help="a single head checkpoint to compare against base; "
+                         "overrides the tum-specific routeB/routeC/long40 set")
+    ap.add_argument("--out", default=None)
     args = ap.parse_args()
-    os.makedirs(OUT, exist_ok=True)
+    # The module's constants are tum's. Any other family needs its resolution
+    # and coverage caches rewired before build_loaders() is called, exactly as
+    # exp_head_only.main does.
+    if args.family != "tum":
+        E.configure_family(args.family, E.BATCH, None)
+    out_dir = args.out or (OUT if args.family == "tum" else OUT + "_" + args.family)
+    # anchor to the repo root: this module chdir()s into splatt3r_core at
+    # import, so a relative --out lands in splatt3r_core/logs/ instead
+    out_dir = out_dir if os.path.isabs(out_dir) else os.path.join(
+        E.REPO_ROOT, out_dir)
+    globals()["OUT"] = out_dir
+    OUT_ = out_dir
+    os.makedirs(OUT_, exist_ok=True)
 
     _, va = E.build_loaders()
 
@@ -91,10 +109,18 @@ def main():
     # Ground truth, written once.
     for i, batch in enumerate(batches):
         gt = batch["target"][0]["original_img"][0]
-        _imwrite(os.path.join(OUT, f"s{i}_gt.png"), to_png(gt))
+        _imwrite(os.path.join(OUT_, f"s{i}_gt.png"), to_png(gt))
 
-    variants = [("base", None), ("routeB", CKPT_B), ("routeC", CKPT_C)]
-    if os.path.exists(CKPT_LONG):
+    if args.head:
+        # absolute: this module chdir()s into splatt3r_core at import, so a
+        # relative --head resolves there. Third time today (17.45's .npz,
+        # 17.49's --referee-scales).
+        h = args.head if os.path.isabs(args.head) else os.path.join(
+            E.REPO_ROOT, args.head)
+        variants = [("base", None), ("head", h)]
+    else:
+        variants = [("base", None), ("routeB", CKPT_B), ("routeC", CKPT_C)]
+    if not args.head and os.path.exists(CKPT_LONG):
         # The 40-epoch run: +1.77 dB / -10.2% lpips vs base, against the
         # 6-epoch route B's +1.00 dB / -6.2%. This is the column that matters.
         variants.append(("long40", CKPT_LONG))
@@ -104,10 +130,10 @@ def main():
         model.eval()
         for i, batch in enumerate(batches):
             color = render(model, batch)
-            _imwrite(os.path.join(OUT, f"s{i}_{tag}.png"), to_png(color[0, 0]))
+            _imwrite(os.path.join(OUT_, f"s{i}_{tag}.png"), to_png(color[0, 0]))
         print(f"wrote {len(batches)} renders for {tag}", flush=True)
 
-    print(f"\noutput: {OUT}", flush=True)
+    print(f"\noutput: {OUT_}", flush=True)
 
 
 def _imwrite(path, arr):

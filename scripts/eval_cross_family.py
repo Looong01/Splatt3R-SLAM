@@ -54,13 +54,14 @@ def use_vgg_lpips(model):
     model.lpips_criterion = lpips_lib.LPIPS(net="vgg", spatial=True).to(E.DEV)
     return model
 
-FAMILIES = ("tum", "7-scenes", "euroc", "eth3d")
+FAMILIES = ("tum", "7-scenes", "euroc", "eth3d", "replica")
 HEADS = {
     "base": None,
     "tum-head": "checkpoints/head_only_long/tum/head_best.pt",
     "7-scenes-head": "checkpoints/head_only_long/7-scenes/head_best.pt",
     "euroc-head": "checkpoints/head_only_long/euroc/head_best.pt",
     "eth3d-head": "checkpoints/head_only_long/eth3d/head_best.pt",
+    "replica-head": "checkpoints/head_only_long/replica/head_best.pt",
 }
 
 

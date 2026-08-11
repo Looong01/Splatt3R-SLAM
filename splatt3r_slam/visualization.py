@@ -73,6 +73,10 @@ class Window(WindowEvents):
         max_scale=1.0,
         min_confidence=1.5,
         refined_snapshot=None,
+        keyframe_stride=1,
+        save_gs_view=None,
+        gs_view_stride=1,
+        gs_scale_inflate=1.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -116,6 +120,9 @@ class Window(WindowEvents):
         self.refined_snapshot = refined_snapshot
         self._refined_version = -1
         self._refined_gpu = None
+        # Bake only every Nth keyframe into the displayed map (matches
+        # evaluate.save_gaussian_map's keyframe_stride semantics).
+        self.gs_keyframe_stride = max(1, int(keyframe_stride))
 
         self.show_all = True
         self.show_keyframe_edges = True
@@ -150,6 +157,12 @@ class Window(WindowEvents):
         self.gs_render_img = Image()  # preview image for GUI panel
         self.gs_tex = None  # moderngl texture for fullscreen quad
         self.gs_resolution_scale = 1.0  # render at fraction of viewport size
+        # Uniform splat-size multiplier for DISPLAY only (cov *= inflate^2 at
+        # render time; never written into the map or the bake cache). Values
+        # slightly above 1 close the sub-pixel gaps that show as black
+        # speckle when the map is rendered above its native capture
+        # resolution, and low-pass the moiré that per-pixel splats produce.
+        self.gs_scale_inflate = gs_scale_inflate
 
         # Splash-artifact filters applied every time a keyframe is (re-)baked.
         self.gs_depth_max_percentile = depth_max_percentile
@@ -176,9 +189,15 @@ class Window(WindowEvents):
         # (scrot/xdotool) cannot see native GLFW/Wayland surfaces, so this
         # is how an agent (or anyone without eyes on the physical screen)
         # inspects what the accumulated world-space map actually looks
-        # like. Off by default; set SPLATT3R_GS_DUMP_DIR to enable.
-        self._gs_dump_dir = os.environ.get("SPLATT3R_GS_DUMP_DIR")
-        self._gs_dump_every = max(1, int(os.environ.get("SPLATT3R_GS_DUMP_EVERY", "30")))
+        # like. Enabled by the CLI flag --save-gs-view DIR (stride via
+        # --gs-view-stride N); the SPLATT3R_GS_DUMP_* env vars remain as a
+        # fallback when the CLI flag is absent.
+        self._gs_dump_dir = save_gs_view or os.environ.get("SPLATT3R_GS_DUMP_DIR")
+        self._gs_dump_every = max(
+            1,
+            int(gs_view_stride if save_gs_view
+                else os.environ.get("SPLATT3R_GS_DUMP_EVERY", "30")),
+        )
         self._gs_dump_counter = 0
         if self._gs_dump_dir:
             Path(self._gs_dump_dir).mkdir(parents=True, exist_ok=True)
@@ -401,6 +420,9 @@ class Window(WindowEvents):
                 _, self.gs_resolution_scale = imgui.slider_float(
                     "GS resolution", self.gs_resolution_scale, 0.1, 1.0
                 )
+                _, self.gs_scale_inflate = imgui.slider_float(
+                    "GS scale inflate", self.gs_scale_inflate, 1.0, 2.0
+                )
                 n_gs = sum(v[0].shape[0] for v in self._gs_world_cache.values())
                 imgui.text(f"Gaussians: {n_gs:,}")
         imgui.spacing()
@@ -522,7 +544,10 @@ class Window(WindowEvents):
 
         arr = (np.clip(gs_img_np, 0, 1) * 255).astype(np.uint8)
         out_path = Path(self._gs_dump_dir) / f"gs_map_{self._gs_dump_counter:08d}.png"
-        PILImage.fromarray(arr).save(out_path)
+        # Atomic write: a reader (or a kill) can never see a half-written PNG.
+        tmp_path = out_path.with_suffix(".tmp.png")
+        PILImage.fromarray(arr).save(tmp_path)
+        os.replace(tmp_path, out_path)
 
     @torch.inference_mode()
     def _read_refined(self):
@@ -594,7 +619,7 @@ class Window(WindowEvents):
 
         # Locked for the whole scan: T_WC reads must not tear against the
         # backend's concurrent update_T_WCs() writes.
-        live_idx = set(range(n_keyframes))
+        live_idx = set(range(0, n_keyframes, self.gs_keyframe_stride))
         with self.keyframes.lock:
             for kf_idx in live_idx:
                 T_WC_data = tuple(self.keyframes.T_WC[kf_idx, 0].tolist())
@@ -656,6 +681,10 @@ class Window(WindowEvents):
 
         try:
             means, cov_triu, colors, opacities = gs_data
+            if self.gs_scale_inflate != 1.0:
+                # Display-only gap closing: scale covariance by inflate^2
+                # (out-of-place; the bake cache is untouched).
+                cov_triu = cov_triu * (self.gs_scale_inflate ** 2)
 
             # --- Viewport size (scaled for performance) ---
             vp_w, vp_h = self.camera.viewport_size
@@ -838,6 +867,10 @@ def run_visualization(
     max_scale=1.0,
     min_confidence=1.5,
     refined_snapshot=None,
+    keyframe_stride=1,
+    save_gs_view=None,
+    gs_view_stride=1,
+    gs_scale_inflate=1.0,
 ) -> None:
     set_global_config(cfg)
 
@@ -873,6 +906,10 @@ def run_visualization(
         max_scale=max_scale,
         min_confidence=min_confidence,
         refined_snapshot=refined_snapshot,
+        keyframe_stride=keyframe_stride,
+        save_gs_view=save_gs_view,
+        gs_view_stride=gs_view_stride,
+        gs_scale_inflate=gs_scale_inflate,
         ctx=window.ctx,
         wnd=window,
         timer=timer,
