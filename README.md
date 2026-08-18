@@ -11,7 +11,18 @@
   <div align="center"></div>
 
 <p align="center">
-    <img src="./media/teaser.gif" alt="teaser" width="100%">
+    <img src="./media/teaser.gif" alt="Splatt3R-SLAM live online 3D Gaussian-Splat SLAM" width="100%">
+</p>
+
+<p align="center">
+  <em>Live online inference: every frame above is the system's own per-frame Gaussian
+  render produced while SLAM runs — not an offline re-render.</em>
+</p>
+
+<p align="center">
+  <img src="./media/demo_tumdesk.gif" alt="TUM freiburg1_desk" width="32%">
+  <img src="./media/demo_tumroom.gif" alt="TUM freiburg1_room" width="32%">
+  <img src="./media/demo_replica0.gif" alt="Replica office0" width="32%">
 </p>
 <br>
 
@@ -36,6 +47,81 @@ Splatt3R-SLAM integrates [Splatt3R](https://splatt3r.active.vision) (Zero-shot G
 | **Output** | Points + Descriptors | Points + Descriptors + Gaussians |
 | **Visualization** | OpenGL point cloud | Interactive Gaussian Splatting |
 | **View Synthesis** | Limited | Excellent |
+
+---
+
+## Benchmark Results
+
+All numbers below were **measured by us on one machine** (2x RTX A6000), with every
+baseline built from source and run locally. Nothing is copied from a paper.
+Rendering is scored under one protocol for every system: **held-out frames that are
+keyframes of no system**, ground-truth poses Sim3-aligned into each map's own frame,
+identical renderer and metric code. Full protocol and raw logs:
+[`docs/external-baselines.md`](docs/external-baselines.md).
+
+### Novel-view rendering — Replica, monocular (all 8 scenes)
+
+| Scene | Ours PSNR / LPIPS | Photo-SLAM PSNR / LPIPS | ΔPSNR |
+|---|---|---|---|
+| office0 | **26.30** / **0.104** | 22.23 / 0.209 | +4.08 |
+| office1 | **22.08** / **0.115** | 17.80 / 0.185 | +4.28 |
+| office2 | **20.97** / 0.151 | 20.24 / **0.129** | +0.73 |
+| office3 | **20.18** / **0.144** | 19.36 / 0.155 | +0.81 |
+| office4 | **23.65** / 0.156 | 16.46 / **0.125** | +7.18 |
+| room0 | **25.44** / **0.110** | 17.92 / 0.152 | +7.53 |
+| room1 | **21.91** / **0.140** | 21.88 / 0.175 | +0.03 |
+| room2 | **23.62** / 0.160 | 20.75 / **0.116** | +2.87 |
+| **Mean** | **23.02** / **0.135** | 19.58 / 0.156 | **+3.44** |
+
+We lead PSNR on 8/8 scenes but **LPIPS on only 5/8** — Photo-SLAM is perceptually
+better on office2, office4 and room2. MonoGS is absent because it ships RGB-D-only
+Replica configs; scoring its depth-input map against our monocular one would not be
+a fair comparison.
+
+### Trajectory accuracy — TUM freiburg1, ATE RMSE (m)
+
+| Sequence | Ours | MASt3R-SLAM | VGGT-SLAM | Photo-SLAM | MonoGS |
+|---|---|---|---|---|---|
+| 360 | 0.0421 | 0.0482 | 0.0496 | **0.0347** | 0.1773 |
+| desk | 0.0170 | 0.0161 | 0.0254 | **0.0149** | 0.0358 |
+| desk2 | **0.0277** | 0.0235 | 0.0291 | 0.4385 | 0.8439 |
+| floor | 0.0272 | 0.0250 | 0.0991 | **0.0133** | 0.5392 |
+| plant | **0.0154** | 0.0196 | 0.0245 | 0.0461 | 0.0714 |
+| room | **0.0590** | 0.0613 | 0.0638 | 0.5098 | 0.7911 |
+| rpy | 0.0216 | 0.0231 | 0.0258 | 0.0566 | **0.0407** |
+| teddy | **0.0476** | 0.0451 | 0.0361 | 0.3049 | 0.1230 |
+| xyz | 0.0089 | 0.0089 | 0.0138 | **0.0097** | 0.0172 |
+| **Mean** | **0.0296** | 0.0301 | 0.0408 | 0.1609 | 0.2933 |
+
+The story here is **robustness, not precision**: Photo-SLAM and MonoGS each diverge
+on several sequences (0.30–0.84 m = tracking failure), which is what wrecks their
+means; where they do track, Photo-SLAM is often the most accurate. Our tracking is
+**inherited unchanged from MASt3R-SLAM** — the parity with it is expected, and this
+column is not a contribution of this project.
+
+### System cost — TUM fr1_desk, same GPU, same sampler
+
+| System | Wall clock | Peak GPU memory |
+|---|---|---|
+| Ours | 70 s | **21,035 MiB** |
+| Photo-SLAM | **28 s** | **1,286 MiB** |
+| MonoGS | 555 s | 2,389 MiB |
+| VGGT-SLAM | 24 s | 9,436 MiB |
+
+### Known limitations (please read before comparing)
+
+- **Our maps are 25–100x larger.** ~2–3M Gaussians vs ~23–90K for the GS-SLAM
+  baselines, and 8–16x their peak GPU memory.
+- **That size is load-bearing, not padding.** Pruned to Photo-SLAM's own budget
+  (~83K Gaussians, highest-opacity kept, no re-optimisation) our quality collapses
+  to 8.7–10.3 dB *below* it. The quality/compactness trade-off is real.
+- **Published GS-SLAM numbers are not comparable to these.** Running Photo-SLAM
+  ourselves gives 22.2 dB on Replica office0 where the literature reports ~30.9 dB
+  for the same system — an ~8.7 dB protocol offset, independently reproduced as an
+  8.8 dB gap between rendering a map from its own estimated poses vs ground-truth
+  poses. Compare only numbers produced under one protocol.
+- Rendering comparison on TUM is n=1 (fr1_desk) and cannot be extended, because
+  MonoGS's tracking diverges on the other sequences.
 
 ---
 

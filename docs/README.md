@@ -1,17 +1,23 @@
-# Splatt3R-SLAM 研究工作总览(2026-07-20 → 2026-08-03)
+# Splatt3R-SLAM 研究工作总览(2026-07-20 → 2026-08-18)
 
-本目录是这一时期全部研究工作的汇总索引。四份分报告:
+本目录是全部研究工作的汇总索引。六份分报告:
 
 | 文档 | 内容 |
 |---|---|
+| **[external-baselines.md](external-baselines.md)** | **外部基准对比(Photo-SLAM / MonoGS / MASt3R-SLAM / VGGT-SLAM):统一评测协议、Replica 全 8 场景与 TUM 全 9 序列结果、紧凑性曲线、系统开销、各 baseline 构建记录、可站得住的论文表述** |
 | [chronicle-logs-git.md](chronicle-logs-git.md) | 按日编年史、checkpoints 产物对照、logs/ 十大产物 |
 | [finetuning-experiments-part1.md](finetuning-experiments-part1.md) | 微调实验全史(Route A/B/C、协议、SLAM 验证、3DGS 细化、可部署性论证) |
 | [online-refinement-campaign.md](online-refinement-campaign.md) | 在线精修战役((f)(g)(b′)(e) 判定、refiner 集成、双卡部署、科学闭环) |
 | [skills-digest-four.md](skills-digest-four.md) | 四份专题 skill:重影修复、颜色一致性、检索子系统、LoRA 工程考古 |
 | [online-eval-all-families.md](online-eval-all-families.md) | 全数据集实机评估(GUI 在线,四大家族 9 序列,ATE/地图质量/延迟/VRAM 全指标) |
 
-原始权威记录:`.claude/skills/` 五份 skill(共 ~5600 行),其中
-`splatt3r-finetuning-experiments` §16 是论文素材汇总(9 条 claim + 天花板 + 方法学陷阱)。
+> **对外报告数字前必读** `external-baselines.md` 第一节:我们实测发现 GS-SLAM 文献的
+> 渲染指标与本文协议之间存在约 **8.7 dB 的系统性协议偏移**(两个系统独立复现),因此
+> 文献数字**不可**与本文数字并列成表。
+
+原始权威记录:`.claude/skills/` 六份 skill(`splatt3r-finetuning-experiments`
+已逾 14000 行)。其中论文素材集中在:§16(9 条 claim + 天花板 + 方法学陷阱)、
+§17.93(外部 baseline 全过程)、§17.94(六张成稿数据表)、§17.95(图表清单与选帧规则)。
 
 ---
 
