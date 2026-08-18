@@ -253,6 +253,7 @@ def prepare_gaussians_local(
     max_anisotropy=0.0,
     streak_opacity=0.0,
     return_pitch=False,
+    return_conf=False,
 ):
     """Transform ONE keyframe's camera-space Gaussians to world space.
 
@@ -506,14 +507,23 @@ def prepare_gaussians_local(
     # conversion is a true rotation regardless of the raw magnitude.
     rotations = rotations / rotations.norm(dim=-1, keepdim=True).clamp_min(1e-6)
 
+    out = (means, scales, rotations, colors_rgb, opas)
     if return_pitch:
         # The lattice pitch, for callers that want to hold the band limit
         # SEPARATELY from the learned scale rather than baked into it (the
         # refiner: see LocalGaussianMap's scale_floor). Zero when the filter
         # is off, which makes the floor a no-op there.
-        return means, scales, rotations, colors_rgb, opas, (
-            pitch if pitch is not None else torch.zeros_like(opas))
-    return means, scales, rotations, colors_rgb, opas
+        out = out + (pitch if pitch is not None else torch.zeros_like(opas),)
+    if return_conf:
+        # Surviving per-Gaussian backbone confidence, for callers conditioning
+        # a prior on it (17.66.4's confidence-weighted fade). It has to be
+        # returned from here rather than recomputed by the caller because the
+        # `valid` mask above is what decides which Gaussians exist -- a caller
+        # re-deriving it would be reimplementing four filters and would drift
+        # from them silently. Ones when conf is unavailable, so the weight
+        # degenerates to the uniform prior rather than to zero.
+        out = out + (conf[valid] if conf is not None else torch.ones_like(opas),)
+    return out
 
 
 def bake_gaussians_world(

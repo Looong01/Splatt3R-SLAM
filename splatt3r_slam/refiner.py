@@ -482,7 +482,7 @@ def gaussians_from_keyframe(local, img_tensor, h, w, kf_idx, device,
                             max_scale=0.5, min_confidence=1.5, min_opacity=0.3,
                             aa_sigma_scale=0.0, aa_compensate_opacity=False,
                             max_anisotropy=0.0, streak_opacity=0.0,
-                            hard_floor=False):
+                            hard_floor=False, want_conf=False):
     """Camera-space Gaussians for one keyframe, ready to become parameters.
 
     Delegates to splatt3r_utils.prepare_gaussians_local so the refiner starts
@@ -511,19 +511,23 @@ def gaussians_from_keyframe(local, img_tensor, h, w, kf_idx, device,
         max_anisotropy=max_anisotropy,
         streak_opacity=streak_opacity,
         return_pitch=hard_floor,
+        return_conf=want_conf,
     )
     if prepared is None:
         return None
-    if hard_floor:
-        means, scales, rotations, rgb, opas, pitch = prepared
-    else:
-        means, scales, rotations, rgb, opas = prepared
-        pitch = None
+    means, scales, rotations, rgb, opas = prepared[:5]
+    rest = list(prepared[5:])
+    pitch = rest.pop(0) if hard_floor else None
+    conf = rest.pop(0) if want_conf else None
     kf_id = torch.full((means.shape[0],), kf_idx, dtype=torch.long, device=device)
+    out = (means, scales, rotations, rgb, opas, kf_id)
     if hard_floor:
-        return (means, scales, rotations, rgb, opas, kf_id,
-                aa_sigma_scale * pitch)
-    return means, scales, rotations, rgb, opas, kf_id
+        out = out + (aa_sigma_scale * pitch,)
+    if want_conf:
+        # appended LAST so the existing index contract (got[6] is the band
+        # limit) is untouched for every caller that does not ask for conf
+        out = out + (conf,)
+    return out
 
 
 class SupervisionFrames:
@@ -925,7 +929,8 @@ def run_refiner(cfg, states, keyframes, sup_frames, K, save_path=None,
                 snapshot=None, aa_sigma=0.0, freeze_means=False, cull=True,
                 min_confidence=1.5, polish_flag=None, unfreeze_in_polish=False,
                 polish_done=None, polish_tol=0.0, polish_patience=3,
-                streak_opacity=0.0, uniform_fade=0.0, scale_cap=0.0):
+                streak_opacity=0.0, uniform_fade=0.0, scale_cap=0.0,
+                conf_fade=0.0):
     """Refiner process: optimize the map while SLAM keeps running.
 
     Holds the map in keyframe-LOCAL parameters and re-reads keyframe poses on
@@ -1061,18 +1066,32 @@ def run_refiner(cfg, states, keyframes, sup_frames, K, save_path=None,
                     local, kf.img, h, w, k, data_device,
                     min_confidence=min_confidence,
                     aa_sigma_scale=aa_sigma, hard_floor=aa_sigma > 0,
-                    streak_opacity=streak_opacity)
-                if got is not None and (uniform_fade > 0 or scale_cap > 0):
-                    # 17.58/17.59: the base checkpoint predicts opacity 1.0
-                    # almost everywhere and head training inflates the scale
-                    # tail. These are the two injection-time corrections, and
-                    # they are deliberately applied HERE rather than baked into
-                    # the checkpoint so the diagnostics can arm them per map.
+                    streak_opacity=streak_opacity,
+                    want_conf=conf_fade > 0)
+                if got is not None and (uniform_fade > 0 or scale_cap > 0
+                                        or conf_fade > 0):
+                    # 17.58: the base checkpoint predicts opacity 1.0 almost
+                    # everywhere and head training inflates the scale tail.
+                    # These are the injection-time corrections, applied HERE
+                    # rather than baked into the checkpoint so they can be armed
+                    # per map.
                     got = list(got)
                     if scale_cap > 0:
                         got[1] = got[1].clamp(max=scale_cap)
                     if uniform_fade > 0:
                         got[4] = got[4] * (1.0 - uniform_fade)
+                    if conf_fade > 0:
+                        # 17.66.7: same mean dose as uniform_fade, allocated by
+                        # the backbone's own confidence. Rank-normalized WITHIN
+                        # the keyframe because the confidence head is not
+                        # calibrated across frames. Floored at 0.1 so that
+                        # D >= 0.5 stays a thinning prior rather than becoming a
+                        # deletion prior (17.66.6).
+                        conf = got.pop()
+                        r = torch.argsort(torch.argsort(conf)).float()
+                        cn = r / max(len(r) - 1, 1)
+                        got[4] = got[4] * (
+                            1.0 - conf_fade * 2.0 * (1.0 - cn)).clamp(0.1, 1.0)
                     got = tuple(got)
                 if got is not None:
                     parts.append(tuple(t.to(device) for t in got))

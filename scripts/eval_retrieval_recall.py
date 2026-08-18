@@ -68,12 +68,20 @@ OLD_CODEBOOK_PKL = os.path.join(
 OUT_DIR = os.path.join(REPO_ROOT, "logs", "retrieval_recall")
 
 SEQUENCES = ["rgbd_dataset_freiburg1_room", "rgbd_dataset_freiburg1_360",
-             "rgbd_dataset_freiburg1_desk"]
+             "rgbd_dataset_freiburg1_desk", "rgbd_dataset_freiburg1_desk2",
+             "rgbd_dataset_freiburg1_floor", "rgbd_dataset_freiburg1_plant",
+             "rgbd_dataset_freiburg1_rpy", "rgbd_dataset_freiburg1_teddy",
+             "rgbd_dataset_freiburg1_xyz"]
 NFEAT = 300          # ckpt['args'].nfeat
 POS_DIST_M = 0.5     # GT translation threshold for a positive
 MIN_KF_GAP = 5       # exclude temporally adjacent hits
 GT_TOL_S = 0.02      # timestamp matching tolerance
-NEW_CB_SIZES = [2048, 8192]
+# 2026-08-17: corpus expanded from 3 to all 9 available freiburg1 sequences
+# specifically to power this sweep -- the original 3-sequence corpus (33k
+# descriptors) was sample-starved against 8192 (retrieval-refit skill 8.,
+# recommended >=319k). 8k/16k/32k is the skill's own recommended sweep
+# (stage 1 design note); 2048 kept as the small-end reference point.
+NEW_CB_SIZES = [2048, 8192, 16384, 32768]
 
 
 # ---------------------------------------------------------------------------
@@ -92,16 +100,27 @@ def load_sequence(seq):
 
 
 def load_gt_poses(seq, timestamps):
-    """Match each keyframe timestamp to the nearest TUM groundtruth position."""
+    """Match each keyframe timestamp to the nearest TUM groundtruth position.
+
+    Returns (pos, keep_mask): keep_mask is False for keyframes whose nearest
+    GT pose is farther than GT_TOL_S away (real gaps in some sequences' GT
+    logging, e.g. freiburg1_floor) -- excluded rather than a hard assert, so
+    one sequence's dropout doesn't abort the whole corpus's evaluation.
+    """
     gt = np.loadtxt(os.path.join(TUM_ROOT, seq, "groundtruth.txt"),
                     comments="#")
     gt_t, gt_xyz = gt[:, 0], gt[:, 1:4]
     pos = np.empty((len(timestamps), 3))
+    keep = np.ones(len(timestamps), dtype=bool)
     for i, ts in enumerate(timestamps):
         j = np.argmin(np.abs(gt_t - ts))
-        assert abs(gt_t[j] - ts) <= GT_TOL_S, (seq, i, ts, gt_t[j])
+        dt = abs(gt_t[j] - ts)
+        if dt > GT_TOL_S:
+            print(f"  [{seq}] kf {i}: nearest GT is {dt*1000:.0f} ms away "
+                  f"(> {GT_TOL_S*1000:.0f} ms tol) -- excluding this keyframe")
+            keep[i] = False
         pos[i] = gt_xyz[j]
-    return pos
+    return pos, keep
 
 
 def compute_positives(pos, kf_idxs):
@@ -216,10 +235,13 @@ def main():
     data = {}
     for seq in SEQUENCES:
         feats, kf_idxs, ts = load_sequence(seq)
-        pos = load_gt_poses(seq, ts)
+        pos, keep = load_gt_poses(seq, ts)
+        if not keep.all():
+            feats, kf_idxs, ts, pos = feats[keep], kf_idxs[keep], ts[keep], pos[keep]
         data[seq] = dict(feats=feats, kf_idxs=kf_idxs, pos=pos,
                          positives=compute_positives(pos, kf_idxs))
-        print(f"{seq}: {len(feats)} keyframes loaded")
+        print(f"{seq}: {len(feats)} keyframes loaded"
+              f"{'' if keep.all() else f' ({(~keep).sum()} excluded, GT gap)'}")
 
     # --- whitening ---
     ckpt = torch.load(RETRIEVAL_PTH, 'cpu', weights_only=False)

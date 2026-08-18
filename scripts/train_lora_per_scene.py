@@ -175,6 +175,14 @@ COVERAGE_CACHE_ROOT = os.path.join(REPO_ROOT, "checkpoints", "lora_coverage_cach
 # requested resolution against it directly.
 FAMILIES = {
     "tum": (TUMData, os.path.join(DATASETS_ROOT, "tum"), {}, (512, 384)),
+    # Causal test for the depth-source question (17.85.11): same family, same
+    # scenes, same recipe as "tum" -- only depth_source moved from real sensor
+    # to the model's own self-predicted pseudo-depth (scripts/
+    # precompute_pseudo_depth_tum.py must be run first). Every other family
+    # difference (content, motion, training-set size) stays fixed by
+    # construction, which no cross-family comparison in 17.85 could do.
+    "tum-pseudo": (TUMData, os.path.join(DATASETS_ROOT, "tum"),
+                  {"depth_source": "pseudo"}, (512, 384)),
     "7-scenes": (SevenScenesData, os.path.join(DATASETS_ROOT, "7-scenes"), {}, (512, 384)),
     "euroc": (EuRoCData, os.path.join(DATASETS_ROOT, "euroc"), {}, (512, 320)),
     "eth3d": (ETH3DData, os.path.join(DATASETS_ROOT, "eth3d"), {"max_scenes": 15}, (512, 304)),  # max_scenes matches precompute_pseudo_depth.py's MAX_ETH3D_SCENES
@@ -194,6 +202,12 @@ FAMILIES = {
                       {"degrade": "content"}, (512, 288)),
     "replica-photo": (ReplicaData, os.path.join(DATASETS_ROOT, "Replica"),
                       {"degrade": "photometry"}, (512, 288)),
+    "replica-photo-spatial": (ReplicaData, os.path.join(DATASETS_ROOT, "Replica"),
+                      {"degrade": "photometry-spatial"}, (512, 288)),
+    # Round 37: missing cell of the dissociation 2x2 (content-only,
+    # photometry-spatial-only, neither already run; this is both at once).
+    "replica-mixed": (ReplicaData, os.path.join(DATASETS_ROOT, "Replica"),
+                      {"degrade": "mixed"}, (512, 288)),
 }
 
 # --- Training hyperparameters -------------------------------------------

@@ -214,7 +214,17 @@ def step_loss(model, batch):
             o = p["opacities"] if "opacities" in p else p.get("opacity")
             if o is not None:
                 pen = pen + torch.relu(o - OPACITY_TARGET).mean()
-        out = (out[0] + OPACITY_PENALTY * pen,) + tuple(out[1:])
+        # The penalty goes into the TRAINING objective only. Scoring the
+        # verdict on the penalized loss compares the base checkpoint -- which
+        # predicts opacity 1.0 almost everywhere and therefore eats the maximum
+        # possible penalty -- against a head that was trained to avoid it, and
+        # reports the gap as a quality win. That is how the o-0.6 run came to
+        # print "BEATS base by 94.1%" while its val psnr was actually 0.13 dB
+        # WORSE than the plain head's (17.69.1-17.69.2). Keep the render-loss
+        # component separate so the verdict can be scored on it.
+        out = (out[0] + OPACITY_PENALTY * pen, ) + tuple(out[1:]) + (out[0],)
+    else:
+        out = tuple(out) + (out[0],)
     return out
 
 
@@ -264,11 +274,12 @@ def evaluate(model, loader, tag):
 @torch.no_grad()
 def _evaluate_seeded(model, loader, tag):
     model.eval()
-    tl = tm = tp = 0.0
+    tl = tm = tp = tr = 0.0
     n = 0
     for batch in loader:
-        loss, mse, lp = step_loss(model, batch)
-        tl += loss.item(); tm += mse.item(); tp += lp.item(); n += 1
+        loss, mse, lp, render_only = step_loss(model, batch)[:4]
+        tl += loss.item(); tm += mse.item(); tp += lp.item()
+        tr += render_only.item(); n += 1
     mse_avg = tm / n
     # calculate_loss's mse sums squared error over all 3 colour channels but
     # divides by mask.sum(), which counts PIXELS -- so its "mse" is 3x the
@@ -283,7 +294,9 @@ def _evaluate_seeded(model, loader, tag):
     psnr = -10 * math.log10(mse_avg / 3.0)
     print(f"  {tag:>16} | val/loss={tl/n:.4f}  mse={mse_avg:.4f}  "
           f"psnr={psnr:.4f}  lpips={tp/n:.4f}  (n={n})", flush=True)
-    return tl / n
+    # Second return value is the RENDER loss with any penalty term excluded --
+    # the only one comparable across runs with different penalty settings.
+    return tl / n, tr / n
 
 
 def build_loaders():
@@ -326,7 +339,9 @@ def main():
                     help="checkpoint dir; override so a long run does not "
                          "overwrite the 6-epoch result it is compared against")
     ap.add_argument("--family", default=FAMILY,
-                    choices=("tum", "7-scenes", "euroc", "eth3d", "replica", "replica-noisy", "replica-photo"))
+                    choices=("tum", "tum-pseudo", "7-scenes", "euroc", "eth3d", "replica",
+                             "replica-noisy", "replica-photo", "replica-photo-spatial",
+                             "replica-mixed"))
     ap.add_argument("--batch", type=int, default=BATCH,
                     help="batch>2 buys at most 12%% throughput (measured, see "
                          "exp_batch_scan.py) and changes the optimization, so "
@@ -388,12 +403,13 @@ def main():
           f"({100*n_tr/n_all:.2f}%)\n", flush=True)
 
     print("=== baseline: untouched base checkpoint ===", flush=True)
-    base_loss = evaluate(model, va, "BASE")
+    base_loss, base_render = evaluate(model, va, "BASE")
     if args.eval_only:
         return
 
     opt = torch.optim.AdamW(head_params(model), lr=LR, weight_decay=0.05)
     best = base_loss
+    best_render = base_render
     print(f"\n=== training (target to beat: {base_loss:.4f}) ===", flush=True)
 
     gstep = 0
@@ -415,7 +431,7 @@ def main():
                     g["lr"] = LR
             gstep += 1
 
-            loss, _, _ = step_loss(model, batch)
+            loss = step_loss(model, batch)[0]
 
             # Skip the update on a non-finite loss instead of letting it reach
             # the weights. One poisoned step is unrecoverable: NaN parameters
@@ -448,7 +464,7 @@ def main():
                 print(f"  ep{ep} step{i}/{len(tr)} loss={loss.item():.4f} "
                       f"gnorm={float(gnorm):.3f} max={max_gnorm:.3f} "
                       f"peak_mem={mem:.1f}GiB", flush=True)
-        vl = evaluate(model, va, f"epoch {ep}")
+        vl, vr = evaluate(model, va, f"epoch {ep}")
         if n_skipped:
             print(f"  ep{ep} skipped {n_skipped} non-finite steps in total",
                   flush=True)
@@ -456,18 +472,25 @@ def main():
               f"({'BETTER' if vl < base_loss else 'worse'} than base)", flush=True)
         if vl < best:
             best = vl
+            best_render = vr
             torch.save(head_state_dict(model), os.path.join(OUT_DIR, "head_best.pt"))
             print(f"  -> new best {vl:.4f}, saved", flush=True)
 
     print(f"\n=== VERDICT ===")
     print(f"  skipped steps  : {n_skipped}  (max grad norm seen {max_gnorm:.3f})")
-    print(f"  base           : {base_loss:.4f}")
-    print(f"  head-only best : {best:.4f}")
-    if best < base_loss:
-        print(f"  => head-only BEATS base by {(base_loss-best)/base_loss*100:.1f}%")
+    # Scored on the RENDER loss with penalty terms excluded (17.69.2). The
+    # penalized loss is what training optimizes, but comparing it across runs
+    # with different penalty settings is meaningless: the base checkpoint is
+    # maximally saturated and so eats the largest possible penalty, which shows
+    # up as a spurious quality win for any penalty run.
+    print(f"  base   (render): {base_render:.4f}")
+    print(f"  head-only best : {best_render:.4f}   (train objective {best:.4f})")
+    if best_render < base_render:
+        print(f"  => head-only BEATS base by "
+              f"{(base_render-best_render)/base_render*100:.1f}%")
     else:
         print(f"  => head-only does NOT beat base "
-              f"({(best-base_loss)/base_loss*100:.1f}% worse)")
+              f"({(best_render-base_render)/base_render*100:.1f}% worse)")
 
 
 if __name__ == "__main__":

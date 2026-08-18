@@ -47,7 +47,27 @@ class TUMData:
     `self.sequences` entry per sequence directory.
     """
 
-    def __init__(self, family_root, stage, val_fraction=0.15, max_time_diff=0.02):
+    def __init__(self, family_root, stage, val_fraction=0.15, max_time_diff=0.02,
+                 depth_source="sensor"):
+        """depth_source: "sensor" (default, real structured-light depth) or
+        "pseudo" (round 34/35's causal test). "pseudo" requires
+        scripts/precompute_pseudo_depth.py to have been run for TUM first --
+        see pseudo_depth_path() below, same pattern as ETH3DData/EuRoCData.
+
+        Why this experiment exists: five rounds of correlational analysis
+        (17.85) tried to explain why eth3d/euroc -- the two pseudo-depth
+        families -- show the largest head-training deployment gains. Four
+        candidate mechanisms (scale-frame consistency, supervision coverage,
+        opacity un-saturation, base deficit) were each pre-registered and
+        killed by direct measurement. This is the one CAUSAL test: same
+        family, same scenes, same recipe, ONLY the depth source moved. If a
+        TUM head trained on pseudo-depth deploys the same as the real-depth
+        TUM head, depth source is dead, permanently, by a controlled negative
+        rather than an exhausted correlation list.
+        """
+        assert depth_source in ("sensor", "pseudo")
+        self.depth_source = depth_source
+        self.pseudo_depth_root = family_root
         self.stage = stage
         self.png_depth_scale = TUM_PNG_DEPTH_SCALE
 
@@ -113,14 +133,28 @@ class TUMData:
         rgb_path = self.color_paths[sequence][view_idx]
         return cv2.cvtColor(cv2.imread(rgb_path), cv2.COLOR_BGR2RGB)
 
+    def pseudo_depth_path(self, sequence, view_idx):
+        color_path = self.color_paths[sequence][view_idx]
+        stem = os.path.splitext(os.path.basename(color_path))[0]
+        return os.path.join(self.pseudo_depth_root, sequence, "pseudo_depth", f"{stem}.npy")
+
     def get_view(self, sequence, view_idx, resolution):
         rgb_image = self._load_color(sequence, view_idx)
         if NORMALIZE_EXPOSURE:
             rgb_image = self.exposure_lock.apply(rgb_image, sequence)
 
-        depth_path = self.depth_paths[sequence][view_idx]
-        depthmap = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED).astype(np.float32)
-        depthmap = depthmap / self.png_depth_scale
+        if self.depth_source == "pseudo":
+            depth_path = self.pseudo_depth_path(sequence, view_idx)
+            if not os.path.exists(depth_path):
+                raise FileNotFoundError(
+                    f"No cached pseudo-depth at {depth_path}. Run the TUM "
+                    f"branch of scripts/precompute_pseudo_depth.py first "
+                    f"(round 34/35's causal test, skill 17.85.11).")
+            depthmap = np.load(depth_path).astype(np.float32)
+        else:
+            depth_path = self.depth_paths[sequence][view_idx]
+            depthmap = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED).astype(np.float32)
+            depthmap = depthmap / self.png_depth_scale
 
         c2w = self.c2ws[sequence][view_idx]
         intrinsics = self.intrinsics[sequence]
@@ -137,7 +171,10 @@ class TUMData:
             "dataset": "tum",
             "label": f"tum/{sequence}",
             "instance": f"{view_idx}",
-            "is_metric_scale": True,
+            # True for real sensor depth; pseudo-depth is the model's own
+            # scale, not real metres -- matching ETH3DData/EuRoCData's
+            # convention. Inert in the head-only path either way (17.85.1).
+            "is_metric_scale": self.depth_source == "sensor",
             "sky_mask": depthmap <= 0.0,
         }
 

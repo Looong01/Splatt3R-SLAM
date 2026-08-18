@@ -1,6 +1,6 @@
 ---
 name: splatt3r-retrieval-refit
-description: De-MASt3R-ification of the loop-closure retrieval subsystem — refitting the PCA whitening and rebuilding the ASMK codebook on dumped Splatt3R encoder features, per dataset family, with threshold recalibration and an accept/reject decision framework. Read before touching splatt3r_slam/retrieval_database.py, splatt3r_slam/retrieval_dump.py, main.py's --no-loop-closure / --dump-retrieval-features flags, scripts/eval_retrieval_ab.sh, anything under checkpoints/retrieval/, or the vendored mast3r/retrieval/ + thirdparty/asmk/ fitting code. Stage 0 (feature dump + A/B baseline) is implemented; stages 1-3 are designs.
+description: De-MASt3R-ification of the loop-closure retrieval subsystem — refitting the PCA whitening and rebuilding the ASMK codebook on dumped Splatt3R encoder features, per dataset family, with threshold recalibration and an accept/reject decision framework. Read before touching splatt3r_slam/retrieval_database.py, splatt3r_slam/retrieval_dump.py, main.py's --no-loop-closure / --dump-retrieval-features / --retriever-path flags, scripts/eval_retrieval_ab.sh, anything under checkpoints/retrieval/, or the vendored mast3r/retrieval/ + thirdparty/asmk/ fitting code. CLOSED (§9, 2026-08-17): offline Recall@k favored a refit codebook once the corpus was properly powered, but real SLAM ATE A/B caught a catastrophic regression on one of three sequences that the offline proxy missed — final verdict NO-GO, keep the original MASt3R assets permanently, stages 2-3 moot.
 metadata:
   type: reference
 ---
@@ -360,10 +360,123 @@ every ASMK config on fr1_360 (R@1 0.63 vs 0.50), so the ASMK quantization
 stage itself may be the retrieval bottleneck -- worth revisiting if
 retrieval quality ever becomes the priority.
 
-**Not started / disposition:** stage 1 base-feature refit — REJECTED by
-the Recall verdict above (keep MASt3R assets; fitting scripts exist in
-`scripts/eval_retrieval_recall.py` and can be reused). Stage 2 (threshold
-sweep + `checkpoints/retrieval/` layout + loader wiring) — deferred, only
-meaningful together with a stage-3 refit. Stage 3 (LoRA-feature refit) —
-blocked on adapters; when one lands, re-dump features with `--lora` and
-rerun the same Recall protocol before any SLAM-level integration.
+**Superseded by §9 below (2026-08-17): corpus expanded, offline verdict
+flipped, then online SLAM ATE caught what offline missed. Final: NO-GO,
+keep MASt3R assets, permanently — see §9 for why this closes stage 3 too
+(the LoRA route stage 3 was blocked on no longer exists; see §9.4).**
+
+## 9. Closed (2026-08-17): corpus expanded, offline flipped, online caught a regression offline missed -- final verdict NO-GO
+
+Triggered by a user request to push this line to full closure. The
+33k-descriptor corpus above was always flagged as sample-starved for the
+codebook comparison specifically (whitening-only was conclusive already);
+this section removes that caveat with real data, then adds the online check
+the original screening protocol (§4) always called for but this line never
+actually ran.
+
+### 9.1 Corpus expansion: 3 -> 9 TUM sequences, 33k -> 214k/84k descriptors
+
+`--dump-retrieval-features` re-run on all 6 remaining freiburg1 sequences
+(`desk2`, `floor`, `plant`, `rpy`, `teddy`, `xyz`) alongside the original 3
+(`room`, `360`, `desk`). 279 keyframes total (up from 111): 214,272 raw
+per-keyframe descriptors (768 tokens/kf, used for whitening) / ~84k top-300
+attention-selected descriptors (used for codebook training) -- still short
+of the >=319k "recommended" full-power threshold for 8192 clusters, but a
+2.5x improvement, and `eval_retrieval_recall.py` (`SEQUENCES` extended,
+`NEW_CB_SIZES` extended to `[2048, 8192, 16384, 32768]`) now flags the
+under-powered sizes explicitly at cluster time (asmk's own "please provide
+at least N training points" warning fired exactly as predicted for
+16384/32768 -- those two sizes are directional only, not trusted).
+
+Real bug hit and fixed en route: `load_gt_poses`'s hard `assert` on
+GT-timestamp association tolerance (20 ms) crashed the whole 9-sequence run
+on one `freiburg1_floor` frame with an 81 ms real gap in that sequence's GT
+log. Changed to exclude the offending keyframe (with a printed warning)
+rather than abort the entire evaluation over one sequence's data gap.
+
+### 9.2 Offline Recall@k, re-run on the expanded corpus: verdict FLIPS from the 33k-descriptor test
+
+Weighted by valid-query count per sequence (`teddy`'s n_valid=2 is near-
+degenerate and excluded from the weighted read, though its raw numbers are
+in `logs/retrieval_recall/results.json`):
+
+```
+config                        weighted R@1   weighted R@5
+a_old_white_old_cb64k (MASt3R)   0.314          0.762
+c_new_white_new_cb2048           0.376          0.795
+c_new_white_new_cb8192           0.338          0.786
+```
+
+**cb2048 beats the original MASt3R assets by +20% relative R@1, +4%
+relative R@5, weighted across 8 sequences (teddy excluded).** This reverses
+the original 33k-descriptor verdict ("refit whitening on base features is
+NOT better") specifically because that test was underpowered for the
+codebook comparison, exactly as flagged at the time. Per this skill's own
+screening protocol (§4): an offline win proceeds to full SLAM ATE before
+shipping -- never ships on Recall@k alone.
+
+### 9.3 Real SLAM ATE A/B: the online check catches a regression the offline proxy missed
+
+Assets saved in deployable form (`checkpoints/retrieval/tum/tum_refit_{trainingfree.pth,codebook.pkl}`,
+`scratchpad/save_retrieval_assets.py`) and wired through a new `--retriever-path`
+CLI flag (`main.py`, `load_retriever(model, retriever_path=cfg.get("retriever_path"))`
+in `run_backend`, propagated through the global config dict the same way
+`no_loop_closure` already was). Real bug hit and fixed here too: the codebook
+cache was trained with `size=2048` (a plain int, `eval_retrieval_recall.py`'s
+`NEW_CB_SIZES`) but the saved deploy `args.nclusters` was written as the
+string `'2k'` -- numerically identical after `Codebook`'s own parsing, but
+`asmk_method.train_codebook`'s cache-validity check does exact dict equality
+on the PRE-parse value (`cdb.params == step_params['codebook']`), so `'2k'
+!= 2048` failed the check and silently killed the backend subprocess (visible
+only as `main.py`: "backend process died unexpectedly" at the driving-script
+level; the real `AssertionError` was buried in the per-sequence log). Fixed
+by keeping `args.nclusters` as the same int type the codebook was actually
+trained with. Confirmed with a 25s smoke run before committing to the full
+A/B.
+
+```
+sequence   old ATE RMSE   new (cb2048) ATE RMSE   change
+room        0.0590          0.0542                 -8.2%  (better)
+360         0.0421          0.0522                +24.1%  (worse)
+desk        0.0170          0.0711                +318.8% (catastrophic)
+```
+
+**desk's new-assets RMSE (0.0711) matches almost exactly the historical
+`--no-loop-closure` baseline for the same sequence (0.0711, §8's stage-0
+table) -- the refit assets are producing loop-closure edges on desk that are
+functionally as useless as having no loop closure at all**, despite desk
+contributing keyframes to the SAME fitting corpus as every other sequence.
+One win (room), one loss (360), one collapse (desk): not a close call, and
+not explained by corpus coverage (desk was IN the fitting corpus, at 14
+keyframes -- the smallest single contribution, but that's a fitting-time
+property, irrelevant to a shared cross-sequence asset's later use at
+inference time on desk specifically).
+
+### 9.4 Final verdict: NO-GO, permanently -- keep the MASt3R retrieval assets
+
+Per this skill's own decision table (§2): "Keeping the existing MASt3R
+assets is a legitimate outcome. If the refit doesn't beat them, revert and
+document." One catastrophic regression out of three sequences fails that
+bar even though the offline proxy and one of three online sequences favored
+the refit. This is the same lesson this project's OTHER line
+(splatt3r-finetuning-experiments) has hit repeatedly and independently:
+**an offline metric win is a hypothesis, not a result; only the online
+SLAM-level check is load-bearing.** The refit assets are not deleted
+(`checkpoints/retrieval/tum/`) in case a future, larger corpus or a
+different codebook-training protocol is worth revisiting, but they are not
+wired in as a default and `--retriever-path` defaults to `None` (original
+MASt3R assets) exactly as before this work started.
+
+**This closes stage 1 with a real, online-confirmed answer (not a sample-
+starved inconclusive one), which makes stage 2 (threshold recalibration)
+moot -- there is no shipped asset change to recalibrate thresholds around.
+Stage 3 (LoRA-feature refit) is doubly moot: its blocking premise (a LoRA
+adapter that changes encoder weights) no longer exists in this project at
+all -- encoder-LoRA was measured catastrophically negative and dropped from
+all planning this session (splatt3r-lora-finetuning skill), and head-only
+training (the surviving, shipped fine-tuning route) never touches the
+encoder, so there is no future scenario in this project where retrieval
+features drift from what the original MASt3R assets were fit on.**
+`--retriever-path` and the asset-saving script remain as reusable
+infrastructure (e.g. for a future, much larger real-world corpus), but the
+retrieval-refit line itself is closed, not paused.

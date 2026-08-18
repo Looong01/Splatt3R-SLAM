@@ -248,6 +248,16 @@ def main():
                          "of its own spacing. Adam is scale-invariant in the "
                          "gradient, so this cannot be done by reweighting "
                          "gradients. Requires --aa-sigma/--aa-hard-floor.")
+    ap.add_argument("--dither", type=float, default=0.0, metavar="K",
+                    help="jitter each Gaussian by K*pitch IN THE PLANE "
+                         "perpendicular to its own view ray. Kimi round 27's "
+                         "third arm against the transparency lattice: the "
+                         "artifact is a coherent modulation of the weight "
+                         "field, so breaking the centres' lattice coherence "
+                         "should scatter it into incoherent grain. It is "
+                         "explicitly NOT judged by hp_alpha (which measures "
+                         "energy, not coherence) -- it passes or fails on "
+                         "stress-view images.")
     ap.add_argument("--scale-cap", type=float, default=0.0, metavar="M",
                     help="clamp every Gaussian scale to at most M metres. The "
                          "other half of Kimi's round-24 decomposition: the "
@@ -263,6 +273,36 @@ def main():
                          "with D matched to the selector's mean deficit. If "
                          "uniform ~= selected, the lever is a global thinning "
                          "prior and the elongation framing is wrong.")
+    ap.add_argument("--conf-fade", type=float, default=0.0, metavar="D",
+                    help="17.66.4's confidence-weighted thinning, the arm for "
+                         "--uniform-fade. Same mean thinning, but SPENT WHERE "
+                         "IT IS EARNED: opacity *= 1 - D*2*(1-conf_norm), with "
+                         "conf_norm the per-keyframe rank of the backbone's own "
+                         "confidence in [0,1]. Motivated by 17.66: on the TUM "
+                         "head, opacity's strongest surviving predictor is that "
+                         "confidence (+0.213 partial on depth), so a trained "
+                         "head already encodes this and an untrained one (base, "
+                         "Replica) does not. The factor 2 makes the MEAN "
+                         "multiplier (1-D), matching --uniform-fade D, so the "
+                         "two arms differ in allocation and not in dose -- "
+                         "without that they would not be comparable at all.")
+    ap.add_argument("--crowd-fade", type=float, default=0.0, metavar="T",
+                    help="crowding-weighted thinning: target T units of "
+                         "accumulated alpha per occupied voxel, "
+                         "opacity *= clamp(T/sum(opacity in voxel), 0.1, 1). "
+                         "Kimi's round-32 lever, and the sharpest consequence "
+                         "of the account in 17.71.7 -- if two thirds of "
+                         "conf-fade's value is reaching a lower alpha budget, "
+                         "then confidence is a PROXY and this targets the map "
+                         "property directly. Absolute units, no rank "
+                         "normalization: crowding is geometric and comparable "
+                         "across keyframes, unlike the confidence head. "
+                         "Combinable with --conf-fade to test whether "
+                         "confidence carries anything beyond geometry.")
+    ap.add_argument("--crowd-voxel", type=float, default=0.0, metavar="M",
+                    help="voxel edge in metres for --crowd-fade. 0 (default) "
+                         "picks 4x the median Gaussian extent, so a voxel holds "
+                         "the Gaussians that genuinely overlap.")
     ap.add_argument("--streak-opacity", type=float, default=0.0, metavar="K",
                     help="hide ray-elongated Gaussians instead of shrinking "
                          "them: opacity *= min(1, K*pitch/max_scale). Clamping "
@@ -443,7 +483,18 @@ def main():
                                       aa_compensate_opacity=args.aa_compensate_opacity,
                                       max_anisotropy=args.max_anisotropy,
                                       streak_opacity=args.streak_opacity,
-                                      hard_floor=args.aa_hard_floor)
+                                      hard_floor=args.aa_hard_floor,
+                                      want_conf=args.conf_fade > 0)
+        if got is not None and args.dither > 0 and len(got) > 6:
+            got = list(got)
+            m = got[0]
+            pitch = got[6] / max(args.aa_sigma, 1e-9)
+            ray = m / m.norm(dim=1, keepdim=True).clamp_min(1e-9)
+            r = torch.randn_like(m)
+            r = r - (r * ray).sum(1, keepdim=True) * ray      # project out the ray
+            r = r / r.norm(dim=1, keepdim=True).clamp_min(1e-9)
+            got[0] = m + r * (args.dither * pitch)[:, None]
+            got = tuple(got)
         if got is not None and args.scale_cap > 0:
             got = list(got)
             got[1] = got[1].clamp(max=args.scale_cap)
@@ -452,11 +503,88 @@ def main():
             got = list(got)
             got[4] = got[4] * (1.0 - args.uniform_fade)
             got = tuple(got)
+        if got is not None and args.conf_fade > 0:
+            got = list(got)
+            conf = got[-1]
+            # Rank-normalize WITHIN the keyframe. The raw confidence head is
+            # not calibrated across frames -- its scale drifts with texture and
+            # exposure -- so a global threshold would thin whole keyframes
+            # rather than the uncertain parts of each, which is a different
+            # (and unintended) intervention. Ranking makes conf_norm uniform on
+            # [0,1] per keyframe by construction, which is also what makes the
+            # mean multiplier exactly (1-D) and the dose comparable to
+            # --uniform-fade.
+            r = torch.argsort(torch.argsort(conf)).float()
+            conf_norm = r / max(len(r) - 1, 1)
+            # Floor at 0.1, Kimi's round-29 guard. The multiplier at
+            # conf_norm=0 is 1-2D, which reaches ZERO at D=0.5 -- and a
+            # multiplier of zero is deletion, not thinning, which is the round-5
+            # failure re-entering silently through the extreme tail. The floor
+            # keeps this a thinning prior at every D. At the D=0.45 used for the
+            # 17.66.4 arms the untruncated minimum is exactly 0.1, so the floor
+            # is a no-op there and does not disturb those measurements.
+            mult = (1.0 - args.conf_fade * 2.0 * (1.0 - conf_norm)).clamp(0.1, 1.0)
+            got[4] = got[4] * mult
+            got = tuple(got[:-1])
         if got is None:
             continue
         parts.append(got)
         kf_pose_data.append(kf["T_WC"].to(dev))
     kf_mats = sim3_to_mat(torch.stack([p.reshape(-1) for p in kf_pose_data]))
+
+    if args.crowd_fade > 0:
+        # CROWDING-WEIGHTED FADE (Kimi round 32). If 2/3 of conf-fade's value is
+        # "reach a lower accumulated alpha for the same dose" (17.71.7), then
+        # confidence is only a PROXY for crowding and the direct variable should
+        # do better. This targets the map property itself.
+        #
+        # Applied HERE, after assembly, and not per-keyframe like the other two
+        # fades -- and that placement is the whole point. Within one keyframe
+        # there is exactly one Gaussian per pixel, so there is no stack to
+        # measure; crowding only exists once several keyframes' Gaussians land
+        # on the same surface. It is a map-level property and the head never
+        # sees a map (17.70.8), which is also why no training-time penalty
+        # could ever have priced it.
+        #
+        # NO rank normalization, unlike --conf-fade. Rank-per-keyframe forces
+        # every keyframe to give up the same fraction regardless of how crowded
+        # it actually is -- a defensible compromise for an uncalibrated
+        # confidence head, but a bug for crowding, which is a geometric quantity
+        # in absolute units and comparable across keyframes by construction.
+        #
+        # The multiplier targets a fixed alpha budget per occupied voxel:
+        #   mult = clamp(T / sum(opacity in voxel), 0.1, 1)
+        # so a voxel already at or below the target is untouched and one at 4x
+        # the target is thinned 4x. Floored at 0.1 for the same reason as
+        # --conf-fade: a zero multiplier is deletion, not thinning.
+        means_w = torch.cat([
+            (kf_mats[i, :3, :3] @ p[0].T).T + kf_mats[i, :3, 3]
+            for i, p in enumerate(parts)])
+        opas_all = torch.cat([p[4].reshape(-1) for p in parts])
+        vox = args.crowd_voxel
+        if vox <= 0:
+            # default: 4x the median Gaussian extent, so a voxel holds the
+            # Gaussians that genuinely overlap rather than an arbitrary volume
+            vox = 4.0 * float(torch.cat([p[1] for p in parts]).median())
+        keys = torch.floor(means_w / vox).to(torch.int64)
+        keys = keys - keys.min(0).values
+        span = keys.max(0).values + 1
+        flat = (keys[:, 0] * span[1] + keys[:, 1]) * span[2] + keys[:, 2]
+        uniq, inv = torch.unique(flat, return_inverse=True)
+        vox_alpha = torch.zeros(len(uniq), device=dev, dtype=opas_all.dtype)
+        vox_alpha.index_add_(0, inv, opas_all)
+        mult_all = (args.crowd_fade / vox_alpha.clamp_min(1e-6))[inv].clamp(0.1, 1.0)
+        print(f"  crowd-fade: voxel={vox*100:.2f} cm  occupied={len(uniq):,}  "
+              f"alpha/voxel median={float(vox_alpha.median()):.2f}  "
+              f"mult mean={float(mult_all.mean()):.3f} "
+              f"min={float(mult_all.min()):.3f}", flush=True)
+        off = 0
+        for i, p in enumerate(parts):
+            n = p[4].shape[0]
+            p = list(p)
+            p[4] = p[4] * mult_all[off:off + n]
+            parts[i] = tuple(p)
+            off += n
 
     if args.reanchor == "gt":
         # THE value proposition of a trajectory-anchored map, in one number.
@@ -779,7 +907,7 @@ def main():
         ones = torch.ones_like(rgb_)
         K2 = torch.as_tensor(K, dtype=torch.float32, device=dev).clone()
         K2[:2] *= 2
-        selfp, hpa = [], []
+        selfp, hpa, blackf, accum, culled = [], [], [], [], []
         for c2w, tgt in held_frames[::5]:
             h, w = tgt.shape[-2:]
             r1 = render(mw, cw, rgb_, op_, c2w, K, (h, w), dev).clamp(0, 1)
@@ -797,8 +925,62 @@ def main():
             n = m.sum().clamp_min(1)
             mu = (hp * m).sum() / n
             hpa.append(float((((hp - mu) ** 2 * m).sum() / n) ** 0.5))
+            # Black fraction: pixels the map fails to cover at all. This is the
+            # FIRST thing to check for any opacity-reducing lever (Kimi,
+            # round 29) -- it was the measured signature of the 17.5 removal
+            # failure, and a thinning prior that has quietly become a deletion
+            # prior shows up here before it shows up in psnr. The help text for
+            # --streak-opacity has told the reader to watch it since 17.16
+            # while nothing in this script computed it.
+            blackf.append(float((a1.mean(1) < 0.02).float().mean()))
+            # Accumulated alpha (total alpha MASS per pixel, sum_k alpha_k),
+            # which 17.64 established as the operational target for the
+            # thinning levers and which until now was only ever measured ad
+            # hoc. It is not `a1`: composited alpha saturates at 1 and cannot
+            # exceed it, while the quantity that ordered the four maps
+            # (6.17/6.66/4.45/3.16) is the uncapped sum.
+            #
+            # Recovered by rendering at opacity eps*alpha and inverting the
+            # compositing law EXACTLY rather than to first order:
+            #
+            #   A = 1 - prod_k (1 - eps*a_k)   =>   sum_k a_k = -ln(1-A)/eps
+            #
+            # (exact whenever each individual eps*a_k is small, which the eps
+            # below guarantees; it does NOT require eps*sum(a) to be small,
+            # which is what the first-order form needed and what made it
+            # inaccurate on crowded maps).
+            #
+            # eps=0.05, NOT 0.01. The rasterizer culls Gaussians whose alpha
+            # falls below ~1/255, so on a THINNED map (median opacity 0.25
+            # after a D=0.55 fade) eps=0.01 puts every Gaussian at 0.0025 --
+            # under the cutoff -- and the render comes back exactly zero. That
+            # is not a small bias: it silently reported acc_alpha=0.00 for the
+            # injected map while the same map measured 3.49 after optimization
+            # raised the opacities back over the threshold, and it biased
+            # exactly the arms this metric was built to compare, since conf-fade
+            # and uniform-fade differ precisely in how many Gaussians they push
+            # into the low-alpha tail.
+            eps = 0.05
+            aeps = render(mw, cw, ones, op_ * eps, c2w, K, (h, w), dev).clamp(0, 1)
+            # native-resolution coverage; `cov` above is the 2x grid used for
+            # the lattice statistic and has the wrong shape to index this
+            covn = a1.mean(1) > 0.1
+            if bool(covn.any()):
+                A = aeps.mean(1)[covn].clamp(max=1 - 1e-6)
+                accum.append(float((-torch.log1p(-A) / eps).mean()))
+            else:
+                accum.append(float("nan"))
+            # Guard: report the share of Gaussians still under the cull
+            # threshold, because when it is large the number above is an
+            # underestimate and must not be compared across arms.
+            culled.append(float((op_ * eps < 1.0 / 255).float().mean()))
         print(f"  lattice[{label}]: self-psnr={sum(selfp) / len(selfp):6.2f} dB  "
-              f"hp_alpha={sum(hpa) / len(hpa):.5f}", flush=True)
+              f"hp_alpha={sum(hpa) / len(hpa):.5f}  "
+              f"black={100 * sum(blackf) / len(blackf):.2f}%  "
+              f"acc_alpha={sum(accum) / len(accum):.2f}"
+              + (f"  [UNRELIABLE: {100 * sum(culled) / len(culled):.0f}% of "
+                 f"gaussians under the rasterizer cull threshold]"
+                 if sum(culled) / len(culled) > 0.02 else ""), flush=True)
 
     perturb_iters = [args.perturb_kf_at + i * max(1, args.iters // (args.n_perturb + 2))
                      for i in range(args.n_perturb)]

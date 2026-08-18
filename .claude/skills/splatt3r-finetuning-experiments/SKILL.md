@@ -8269,3 +8269,5996 @@ here before catching it), and that the collapse is best fixed at training time
 (the opacity-penalty retrain is running; if a trained-in un-saturation merely
 matches a one-line injection fade, the honest report is that the collapse is
 real and fixable in either place, and the injection fix is free).
+
+### 17.59 The dot lattice has two production paths, and the floor guards only one
+
+Kimi's round-25 safety check on the thin+cap combination: the lpips numbers were
+large enough to be suspicious, and both levers REMOVE material. His prediction
+was holes (black fraction). It is not holes.
+
+```
+Replica head map      final self-psnr   final hp_alpha   lpips@300
+none                     46.50 dB         0.00075         0.2234
+thin (D=0.45)            42.53 dB         0.00403         0.1524
+cap (base p90)           45.73 dB         0.00096         0.1903
+thin + cap               40.47 dB         0.00584         0.1105
+```
+
+**The thinning re-introduces the dot lattice**: 5.4x on its own, 7.8x combined,
+with 4-6 dB of self-consistency lost. **The cap is clean** (0.00096 against
+none's 0.00075). And the band limit was ON in all four arms.
+
+Kimi's mechanism, sharpened from mine and adopted verbatim as the record:
+
+> **Saturation was masking the lattice.** With alpha ~ 1 the front blob alone
+> caps the accumulated alpha everywhere, so the lattice-frequency modulation of
+> the weight field never reaches the image; at alpha ~ 0.55 the cap releases and
+> the G-sum's lattice harmonic shows up in A. The floor was never bypassed -- it
+> guards the scale path; this is the alpha path, and nothing guarded it.
+
+**The recordable sentence: the dot lattice has two production paths, and each
+needs its own guard.** §17.2 built the guard for the sampling path and this is
+the first time the other one has been seen.
+
+Neither headline metric can see it (§17.2: psnr moved 0.01 dB across a sweep
+that changed hp_alpha 13.6x), so the -31.8% lpips gain does not contain this
+cost. Threshold, bracketed from §17.2's own calibration rather than invented:
+hp_alpha 0.009 was visibly dotty, 0.0026 read clean, so 0.004 is **marginal --
+probably faintly visible at GUI magnification on flat regions, invisible at
+native resolution.** Stress-view images are the only way to settle it and are
+owed.
+
+#### Which reverses the shipping call we had agreed
+
+Two rounds earlier Kimi and I had settled on "thin ships as default, cap
+conditional". The measurements say the opposite on both counts:
+
+- **cap** carries no lattice cost and its defect is present on 4 of 5 heads
+  (tail ratio > 2);
+- **thin** carries a 5.4x lattice cost invisible to both headline metrics.
+
+Revised, with his amendment that both calls still rest on n=1 in the direction
+that matters:
+
+- **cap: conditional-by-diagnostic, pending confirmation on the other armed
+  heads.** Tail ratio > 2 says the defect is present, not that capping helps --
+  §17.16's clamp was a defect on one map and load-bearing coverage on another.
+  Three offline runs (7-scenes, euroc, eth3d), cap on/off, are the price of a
+  default-level claim.
+- **thin: conditional, and the condition is crowding, not saturation** (§17.60).
+  Its lattice cost is recorded next to its lpips gain.
+
+### 17.60 Two levels: head saturation is not map crowding
+
+room's head map is un-saturated (10.4% of Gaussians above 0.9) and thinning
+still bought -8.2% there, against desk's -2.1%. That is a counterexample to
+§17.58's diagnostic as stated, and the resolution is a level confusion:
+**saturation is a per-Gaussian property, crowding is a map property.** Ten
+layers at opacity 0.64 still accumulate to alpha ~ 1.
+
+Measured directly -- per-cluster alpha renders, counting clusters above 0.1 at
+each pixel:
+
+```
+map            gaussians  layers/px  acc alpha   thinning benefit   head frac>0.9
+desk-base      2,396,900     6.32       6.17        -13.6%            100.0%
+room-head      8,774,161     6.89       6.66         -8.2%             10.4%
+desk-head      1,860,034     4.84       4.45         -2.1%             12.5%
+360-head       7,267,700     3.41       3.16         -0.4%             ~10%
+```
+
+**Crowding orders most of it** (3.16 -> 4.45 -> 6.17/6.66 against -0.4% ->
+-2.1% -> -13.6%/-8.2%), and **saturation explains the remaining swap**:
+desk-base and room-head have nearly equal accumulated alpha (6.17 vs 6.66) but
+desk-base benefits 1.7x more, and it is the saturated one.
+
+So the load-time diagnostic needs two numbers, not one:
+
+```
+accumulated alpha (map)      how much haze is there to remove
+frac(opacity > 0.9) (head)   how much of it the head already removed
+p90 ratio vs base (head)     whether the tail needs capping (independent axis)
+```
+
+This also retires the explanation I had given for 360's null. I had said it was
+"few depth discontinuities because the camera spins in place", which was built
+on the already-falsified streak framing. **The measured reason is that 360's map
+is the least crowded of the four (3.16).**
+
+### 17.61 The missing control, and a pre-registration I made with the wrong metric
+
+#### The provenance error
+
+`logs/frames_head/` is baked with `checkpoints/head_only_long/tum/head_best.pt`
+-- the run log says so in one line. **Every offline thinning sweep in §17.53 and
+§17.56 therefore ran on TUM-HEAD maps, not base maps**, and I had been reading
+them as base. Kimi caught it from a four-digit coincidence: round 22's desk
+iter-0 (12.3544/0.5071) is identical to the TUM-head 2x2's none arm.
+
+Third provenance error in this session, and the only one with no internal
+warning at all:
+
+```
+logs/online_new/         had no polish phase          numbers absurd, self-alarming
+logs/online_polish_new/  two arms, identity unclear   lpips reversed, weak alarm
+logs/frames_head/        the "head" in the name is    NO alarm -- every number
+                         literal                      plausible
+```
+
+**Rule: before reusing any artifact across sessions, grep its generating log for
+the configuration. The directory name is not evidence.**
+
+The missing measurement, run:
+
+```
+TUM base map (saturated)   psnr    lpips    self-psnr  hp_alpha
+none                      14.075   0.4759    44.81      0.00104
+thin                      14.132   0.4110    40.87      0.00168   -13.6%
+cap                       13.964   0.4654    44.08      0.00119    -2.2%
+thin+cap                  14.059   0.3998    39.92      0.00208   -16.0%
+
+TUM head map (un-saturated), same sequence, same budget
+none                      14.098   0.3952
+thin                      14.011   0.3871                          -2.0%
+```
+
+**Same sequence, same code, same 600 steps; the only variable is whether the
+head un-saturated: -13.6% against -2.0%, a factor of 6.8.** The claim no longer
+rests on a cross-family comparison in which the dataset, the rendering and the
+head all differed at once.
+
+#### The falsification, and my own error inside it
+
+The opacity-penalty head (`relu(o - 0.9)`, W=1.0) came back **un-saturated by
+the agreed metric**: frac>0.9 99.8% -> **0.0%**. Its scale tail deflated with it
+(p90 ratio 2.33 -> 1.20), which refutes Kimi's prediction that the penalty
+"doesn't touch scales" -- opacity and scale are coupled through the coverage
+task, since a head that may use transparency no longer needs giant blobs.
+
+His pre-registration: on such a head, thinning's value collapses to <= 2%.
+
+```
+penalty head map      iter 0            iter 600
+none               21.788/0.2801      27.102/0.0959
+thin               22.179/0.2742      27.494/0.0758   -21.0%
+cap                21.856/0.2490      27.344/0.0799   -16.7%
+thin+cap           22.276/0.2478      27.703/0.0665   -30.7%
+```
+
+**-21.0%, not <= 2%.** So "the external levers are worth exactly the work the
+head did not do" is false as stated.
+
+Why: `relu(o - 0.9)` penalises only above the knee, so the head parked just
+under it -- **median opacity 0.84**, against the TUM head's 0.66 reached with no
+penalty at all. The >0.9 fraction said "un-saturated"; the accumulated alpha did
+not.
+
+**And I had derived the correct metric one section earlier.** §17.60 exists
+because room falsified the saturation-only diagnostic; I wrote that down and
+then made the next pre-registration with the metric it had just replaced. The
+falsified prediction is not the lesson. **Deriving a better instrument and then
+not using it is.**
+
+#### What stands
+
+```
+none-arm of the penalty head's map   0.0959    (plain Replica head: 0.1649, -42%)
+
+deployment A/B, Replica office0
+base            26.8580 / 0.1000
+penalty head    27.0589 / 0.0848    +0.20 dB / -15.2% lpips
+plain head      26.5843 / 0.0986    +0.08 dB /  -1.8%
+```
+
+**Training with an opacity-saturation penalty turned a marginal head into a
+clearly positive one in deployment.** Kimi's "simultaneously the evidence and
+the fix" framing pays off on the fix side.
+
+Revised account: three interventions that are **partially complementary, not
+substitutes**, all lowering the same quantity:
+
+```
+training-time penalty   1.00 -> 0.84 median      -42% on the map's none arm
+injection-time thinning x0.55 -> ~0.46 effective -21% on top of that
+scale cap               independent axis         -17%
+```
+
+The target is **accumulated alpha in the baked map**; which lever lowers it is
+an engineering choice. A properly dosed penalty (`relu(o - 0.6)`, aimed at the
+level the TUM head reached unaided) is running as the sharp version of Kimi's
+prediction: if thinning finally collapses on THAT head, training can substitute
+for injection; if it does not, injection-time thinning is unconditional.
+
+### 17.62 Deployment numbers, and a floor that turned out to be free
+
+```
+thin+cap, Replica office0, online       refined psnr / lpips
+plain head                              26.5679 / 0.1000
+thin+cap                                26.5445 / 0.0812   -18.8% lpips, -0.02 dB
+```
+
+Kimi pre-registered 26.9-27.2 dB / 0.082-0.090: **lpips almost exactly right,
+psnr outside his range.** And my earlier claim that the offline 27.308/0.0765
+"beats every deployment number" was a cross-harness comparison -- the error
+§17.52 exists to prevent, made three sections after writing it. The online
+number is 26.54/0.0812; the offline map is genuinely better, as he predicted,
+because the online loop adds its own damage.
+
+#### The whole-pipeline floor
+
+§17.51's floor covers refiner stochasticity under a **fixed bake**. Kimi's
+round-20 point was that it therefore licenses nothing about absolute numbers,
+and asked for three fresh SLAM runs. Bought:
+
+```
+run 1  14.2103 / 0.4000    bake md5 1efe21e4ca18
+run 2  14.2098 / 0.4003    bake md5 1efe21e4ca18
+run 3  14.2120 / 0.4000    bake md5 1efe21e4ca18
+```
+
+**The bakes are byte-identical across independent runs**: tracking, backend,
+keyframe selection and baking are fully deterministic. So the whole-pipeline
+floor equals the refiner floor, and §17.51's 2-sigma bounds (psnr 0.031 dB,
+lpips 0.17%) now cover absolute claims as well. The purchase was cheap and it
+closes every future argument about which floor applies.
+
+### 17.63 CORRECTION to 17.59: the images do not support the lattice reading
+
+§17.59 recorded that thinning "re-introduces the dot lattice", from hp_alpha
+rising 5.4x. Kimi's standing instruction -- and this project's own rule -- was to
+render stress views and look. Done, and it does not support the claim.
+
+Method matters here: the first crop was **guessed** and landed on a
+well-covered region where the accumulated alpha is still ~3.7 after thinning
+(6.66 layers x 0.55), so the cap never released and nothing could show. The
+second pass located the 96x96 window with the **most high-pass alpha energy** --
+i.e. where the metric itself says its number comes from -- and cropped there.
+
+At that window, alpha field, contrast-stretched 6x about the mean:
+
+```
+none    a clear periodic dot lattice
+thin    smooth gradients and one soft low-alpha wedge; NO periodic structure
+```
+
+**The unthinned map is the one with the visible lattice.** And the coverage cost
+that would have been the other explanation is absent:
+
+```
+                black (alpha<0.1)   mean alpha
+none                 0.00%            0.9997
+thin                 0.00%            0.9995
+thin tau=0.75        0.00%            0.9998
+thin dither          0.00%            0.9994
+```
+
+So the wedge is not a hole -- it is a dip from ~1.0 to ~0.9 that a 6x stretch
+renders black. Kimi's original prediction (holes, black +<0.5pp) is confirmed
+correct in the sense that matters: **there are none.**
+
+**What stands, and what does not:**
+
+```
+stands       hp_alpha rises 5.4x after thinning (measured, reproducible)
+             self-psnr falls 4 dB (measured)
+             the tau=0.75 arm halves hp_alpha and restores self-psnr to 45.99
+does NOT     that the rise is the dot lattice of 17.2
+             "saturation was masking the lattice" as the mechanism
+             the shipping reversal insofar as it rested on the lattice reading
+```
+
+The high-pass alpha statistic is **not lattice-specific**: it also counts
+coverage boundaries and smooth alpha gradients, and after thinning those
+dominate it. §17.2 validated it against a visible dot pattern on a *base* map
+where the lattice was the dominant high-frequency content; that validation does
+not transfer to a thinned map where it is not.
+
+**Open, and deliberately not resolved with a replacement story**: why the
+unthinned map shows the lattice and the thinned one does not, when the argument
+from clamping predicts the reverse. Two candidates, neither tested -- at alpha~1
+the front Gaussian alone determines the pixel so its own lattice prints
+directly, and blending many offset layers averages the ripple out; or the
+stretch visualisation is not comparable between arms because their alpha
+distributions differ. Both are checkable; neither is checked.
+
+#### The methodological point, which is the reason this entry exists
+
+The lattice reading survived a numeric safety check, a mechanism from Kimi, a
+shipping-recommendation reversal and 400 lines of write-up, and died to the
+first image. **§17.2 built hp_alpha precisely because psnr could not see the
+lattice; using it later as though it were a lattice detector on a map with
+different content is the same class of error the metric was built to prevent** --
+an instrument trusted outside the regime where it was calibrated.
+
+The tau=0.75 and dither arms therefore have no verdict yet: they were arms of an
+experiment against an artifact that has not been shown to be there.
+
+```
+arm            psnr@300  lpips@300  self-psnr  hp_alpha
+none            23.850    0.2234     46.50     0.00075
+thin            25.273    0.1523     42.52     0.00403
+thin tau=0.75   25.018    0.1790     45.99     0.00202
+thin dither     25.276    0.1545     42.72     0.00476
+```
+
+Kimi's pre-registration for tau=0.75 (hp_alpha <=0.001, self-psnr 45-46, lpips
+0.155-0.165): self-psnr exact, hp_alpha halved but not to floor, lpips 0.179
+against a predicted 0.155-0.165 -- the blur tax is ~17%, far above his 2-4%
+estimate. Recorded as measurements, not as a verdict on a lattice.
+
+### 17.64 State of play — read this first when resuming
+
+Written as a handoff. Everything below is either running, queued with a
+pre-registration, or a known debt.
+
+#### In flight
+
+```
+GPU0  exp_head_only --family replica --opacity-target 0.6  (epoch 22/40)
+      out: checkpoints/head_only_long/replica288_opac06
+      WHY: 17.61's penalty used relu(o-0.9) and the head parked at median 0.84,
+      so thinning still bought -21% on it. This aims at the 0.66 the TUM head
+      reached unaided. PRE-REGISTERED: if thinning finally collapses to <=2% on
+      THIS head's map, training-time can substitute for injection-time; if not,
+      injection thinning is unconditional. Run the 2x2 on its blob to decide.
+
+GPU1  exp_head_only --family replica-noisy  (epoch 39/40)
+      out: checkpoints/head_only_long/replica_noisy
+      WHY: Kimi's causal test for why clean supervision never teaches opacity.
+      PRE-REGISTERED: frac(op>0.9) should fall from 99.8% toward TUM-like
+      levels. FIRST NUMBER TO READ is that fraction, via /tmp/gp.py's pattern
+      (5 pairs, median opacity + frac>0.9 + scale p90).
+      The CONTROL is `--family replica-photo` (brightness jitter on one view
+      only), NOT YET RUN: opacity is view-independent so it cannot hedge
+      per-view brightness, and Kimi predicts it will NOT un-saturate. Only both
+      together prove the channel is geometric conflict rather than photometric.
+```
+
+#### Queued, with pre-registrations already on the record
+
+```
+1  cap on 3 more armed heads (7-scenes, euroc, eth3d; tail ratios 2.17/2.52/
+   3.26). Kimi: "armed by diagnostic" is proven benefit on ONE of four armed
+   heads. Predicted: baked lpips improves where ratio > 2, most on eth3d. If any
+   armed head gets WORSE, the threshold or the diagnostic needs revision.
+   Three offline 600-step runs, blob per head.
+2  the 17.63 open question: why the UNTHINNED map shows the lattice and the
+   thinned one does not. Two untested candidates recorded there.
+3  replica-photo (the control half of the causal test above).
+4  17.34 re-analysis: psnr now tracks the motion ratio at +0.714 raw / +0.623
+   partialling out map size, p=0.071. The "psnr is blind to this" leg of
+   17.34/17.36 does not survive the current defaults and needs rewriting.
+5  head-training seed ensemble: every head result in this file is single-seed,
+   while the refinement seed sigma is known (17.51). The cross-family lpips
+   gaps are smaller than that sigma.
+6  Replica mesh controlled-trajectory experiment: the release ships 8 scene
+   meshes, so the same-scene rotation-vs-translation design that 17.38 needed
+   is finally runnable. It is the only design that breaks the motion/scene
+   confound by construction.
+7  deployment A/B for 7-scenes, euroc, eth3d (Kimi: gate them behind
+   test_preprocess_roundtrip.py, lowest priority).
+```
+
+#### Instruments built this session, and what each is for
+
+```
+scripts/test_preprocess_roundtrip.py   training vs SLAM input shape, per family.
+                                       Catches the 17.55 class. All four pass.
+scripts/eval_head_row.py               one head vs base on every family, per
+                                       image, bootstrap CIs. Built because a
+                                       4/4 pattern collapsed to 2/4 under CIs.
+scripts/rescore_protocol2.py           re-score saved maps under p2.
+eval_map_quality.py --no-exposure      score under the OLD protocol, so the
+                                       same map can be scored both ways and the
+                                       protocol effect isolated (17.52).
+refine_local.py --uniform-fade         the thinning prior, selector-free
+             --scale-cap               the tail cap
+             --dither                  in-plane jitter (no verdict, 17.63)
+main.py --refiner-uniform-fade         both levers wired into the online path
+        --refiner-scale-cap
+scripts/diag_nview_scale.py --head     load a head onto the scale instrument
+                            --density  report confidence/gate fractions
+/tmp/gp.py                             per-head Gaussian parameter distributions
+                                       (scale median/p90, opacity median,
+                                       frac>0.9). Recreate if lost -- it is what
+                                       found the opacity collapse.
+```
+
+#### The load-time diagnostics, current form
+
+```
+accumulated alpha (map)      how much haze there is to remove
+frac(opacity > 0.9) (head)   how much of it the head already removed
+p90 scale ratio vs base      whether the tail needs capping (independent axis)
+
+measured, on TUM desk inputs:
+head        p90 ratio   frac>0.9      map            acc alpha   thin benefit
+base           --        100.0%       desk-base         6.17       -13.6%
+tum           1.04        12.5%       room-head         6.66        -8.2%
+7-scenes      2.17        17.4%       desk-head         4.45        -2.1%
+euroc         2.52         0.0%       360-head          3.16        -0.4%
+eth3d         3.26         4.9%
+replica       2.33        99.8%   <- the only saturated head, the only
+                                     synthetic dataset
+```
+
+#### Standing rules earned this session
+
+```
+1  Any evaluation sharing preprocessing with training is structurally blind to
+   input-pipeline errors. Every release gets one end-to-end check. (17.55)
+2  Before reusing an artifact across sessions, grep its generating log for the
+   configuration. The directory name is not evidence. (17.61, third instance)
+3  An instrument is only trustworthy in the regime where it was calibrated.
+   hp_alpha was calibrated against a visible lattice on a base map; it is not a
+   lattice detector on a thinned one. (17.63)
+4  When looking at an image to judge a metric, crop where the METRIC's energy
+   is, not where you guess. The first crop found nothing because the cap had
+   not released there. (17.63)
+5  Cross-harness absolutes do not mix (offline 600-step vs online 2300-step).
+   Made this error twice after writing the rule. (17.52, 17.62)
+```
+
+---
+
+## 17.65 The causal test reads out NEGATIVE, and the tail diagnostic turns out not to be a property of the head
+
+Three things happened in one sitting, and the second and third were both found
+while setting up the first. They are recorded in the order they were found
+rather than the order of importance, because the *way* the last two surfaced is
+the part that generalizes.
+
+### 17.65.1 `content` degradation does not un-saturate opacity
+
+Kimi's round-24 causal channel (§17.60): on clean rendered images the backbone's
+geometry is confident, multi-view conflict is rare, saturation is never
+punished. Prediction: degrading BOTH views (`content` = Gaussian noise
+sigma=6/255 + up to 5x5 blur) manufactures matching uncertainty, hence geometric
+conflict, hence un-saturation toward TUM-like levels.
+
+Trained 40 epochs, `--family replica-noisy`, same recipe/seed/resolution as the
+plain Replica head. It trains normally and beats base by 30.7% on its own val
+split, so this is not a failed run being read as a null.
+
+Probed on 5 pairs of Replica office0, the identical protocol behind every row of
+the §17.64 diagnostics table:
+
+```
+                 probed on CLEAN input              probed on CONTENT-DEGRADED
+head        scale p90   opacity med   frac>0.9   scale p90  opacity med  frac>0.9
+base           9.778       1.0000      100.0%      9.362      1.0000      100.0%
+replica       22.768       1.0000       99.8%     19.856      1.0000       99.7%
+noisy         26.182       1.0000      100.0%     20.731      1.0000      100.0%
+```
+
+**100.0%** — marginally MORE saturated than the clean head, not less, and not
+in the direction of TUM's 12.5%.
+
+Probed in BOTH regimes deliberately. Probing a degradation-trained head only on
+clean input would repeat the §17.63 error in a new costume: asking an artifact
+for a reading outside the regime it was produced in. The training distribution
+answers the same way, so the negative is not a domain-shift artifact.
+
+The perturbation demonstrably reaches the network — base's own numbers move
+under it (p90 9.778 -> 9.362) — so this is not a silently-inert degradation
+being mistaken for a null result.
+
+**What the head did instead.** It answered on the *scale* axis: p90
+22.768 -> 26.182 (+15%) with the median moving DOWN, 1.902 -> 1.503. Added
+matching uncertainty buys a longer tail of large Gaussians plus a smaller
+median. Reading, offered as a hypothesis rather than a finding: **scale is the
+head's uncertainty channel and opacity is not**, which would explain why no
+amount of manufactured uncertainty moves opacity. It has a sharp consequence —
+the scale cap should hurt MORE on the noisy head than the plain one, because it
+removes the channel actually in use. Not yet tested.
+
+The `photometry` control (brightness jitter on ONE view, where Kimi predicts no
+un-saturation because opacity is view-independent) is training now. Its value
+went up sharply with this result: if both arms are negative the round-24 channel
+is dead entirely, and the candidate becomes something no image-space degradation
+can reproduce — depth-supervision structure (`apply_mask`, in-frustum masking,
+sensor dropout) rather than image content.
+
+### 17.65.2 The round-trip gate had been silently skipping ETH3D, and ETH3D is not shape-homogeneous
+
+`test_preprocess_roundtrip.py` printed "all four pass" for weeks. It was
+checking `datasets/eth3d/sfm_house_loop`; the local release puts sequences under
+`datasets/eth3d/train/`. A missing path printed `SKIP` and did not count as a
+failure, so **the one family whose head the gate most needed to check was the
+one it never checked.**
+
+Fixing the path produced a MISMATCH, which was itself wrong — and the reason is
+worth more than the bug:
+
+```
+eth3d      SLAM feeds (304, 512) for 56/61 sequences   training uses (304, 512)   ok
+             !! 5 sequence(s) feed (320, 512): sfm_bench, sfm_garden,
+                sfm_house_loop, sfm_lab_room_1, sfm_lab_room_2
+```
+
+60 of 61 ETH3D sequences are 739x458 and feed 512x304. The five `sfm_*`
+sequences are 743x465 and feed 512x320 — a coherent subgroup (a different
+capture rig), not a stray file. `sfm_house_loop`, the sequence the gate happened
+to name, is one of the five.
+
+So: the eth3d head is **correctly** registered at (512,304) for its family, AND
+it hits the full §17.55 failure on those five sequences. A single-sequence probe
+cannot represent a heterogeneous release, and reports whichever answer its
+chosen sequence happens to give — here, a MISMATCH for a correct registry.
+
+The gate now scans every sequence in every family, judges the registry against
+the modal shape, and warns separately about non-homogeneity. Only ETH3D is
+affected; tum 9/9, 7-scenes 7/7, euroc 11/11, replica 5/5 are uniform.
+
+**Do not deploy or benchmark the eth3d head on any `sfm_*` sequence** without
+retraining at (512,320).
+
+### 17.65.3 The tail ratio is a property of (head, sequence), not of the head
+
+Setting up the queued cap confirmation required each family's own base p90,
+since the cap threshold is that p90 — reusing Replica's 0.009778 for 7-scenes
+would cap at a threshold calibrated on a different scene scale, the §17.63 error
+again. Measured each head against base on **its own family's data**:
+
+```
+family     sequence                     base p90    head p90   ratio   head p99/base p99
+7-scenes   7-scenes/chess               10.907 mm   25.230 mm   2.31        3.80
+euroc      euroc/MH_01_easy             16.263 mm   14.886 mm   0.92        1.42
+eth3d      eth3d/train/table_3           8.836 mm    8.072 mm   0.91        1.75
+```
+
+§17.64's table records 2.17 / 2.52 / 3.26 for these same three heads. Both are
+correct measurements of different quantities, and the difference is the header
+line of that table: **"measured, on TUM desk inputs"**. Every head there was
+shown TUM desk images. That answers "how does this head differ from base as a
+function, holding input fixed" — a legitimate question, and not the one the cap
+needs. The cap is applied in deployment, to a head running on its own family.
+
+They disagree about arming on two of three families. And note the p99 column:
+every head has a heavier extreme tail than base even where its p90 is *lighter*,
+because head training both shrinks the median and extends the extreme. Any
+single-percentile ratio therefore depends on where you cut — which is a defect
+in the diagnostic independent of which input it is measured on.
+
+#### Pre-registration, recorded before the runs are launched
+
+The two diagnostics make opposite predictions, so the cap runs now discriminate
+between them instead of merely confirming a rule.
+
+```
+common-input diagnostic (17.64, TUM desk):  cap helps all three, MOST on eth3d
+deployment-condition diagnostic (above):    cap helps 7-scenes only; neutral or
+                                            harmful on euroc and eth3d
+```
+
+Arms: `none` vs `cap` at each family's own base p90, offline 600-step
+`refine_local.py` on a blob baked with that family's head, one sequence per
+family (7-scenes/chess, euroc/MH_01_easy, eth3d/train/table_3 — the last chosen
+from the 56-sequence modal-shape group, NOT an `sfm_*`).
+
+Outcomes and what each licenses:
+
+- eth3d improves -> common-input diagnostic wins; the load-time probe should
+  keep using a fixed reference input, and 17.64's table stands as the gate.
+- eth3d flat or worse AND 7-scenes improves -> deployment-condition diagnostic
+  wins; 17.64's arming column must be recomputed per family and the "arm the cap
+  when ratio > 2" rule must specify *on what input*.
+- both flat -> the cap's single confirmed win (Replica, -16.7%) does not
+  generalize and the cap is Replica-specific, not "conditional-by-diagnostic".
+
+Either of the last two invalidates the arming column of §17.64 as written.
+
+---
+
+## 17.66 Opacity is predicted by the backbone's confidence — weakly, but robustly
+
+§17.65.1 ended with a hypothesis I offered and Kimi half-accepted: *scale is the
+head's uncertainty channel and opacity is not*. Kimi's round-28 reply rejected
+the test I proposed for it ("the cap hurts the noisy head more") as confounded —
+the cap's damage runs through coverage, and the noisy head simply has a bigger
+tail to bite, so differential harm is predicted by both accounts — and named a
+free observational test instead: correlate per-Gaussian outputs against
+per-pixel unreliability. He proposed it to settle a different dispute (my
+depth-mask candidate vs his non-rigid-photometry candidate). It settles both,
+and it comes out against the hypothesis I was defending.
+
+`scripts/diag_colocation.py`. One forward pass, no training. Per-pixel
+predictors, all computed SLAM-side so nothing shares the training preprocessing:
+
+```
+invalid    sensor depth <= 0, dilated 9x9      (my candidate)
+edge       depth discontinuity > 5 cm, dilated (silhouette anti-aliasing)
+disagree   local |I1 - I2| between the pair    (Kimi's candidate)
+conf       the backbone's own confidence head  (neither of us named it)
+depth      the network's own pointmap z        (the confound control)
+```
+
+### 17.66.1 Two guards, both of which fired
+
+**The depth control changed the answer.** TUM's structured-light depth drops out
+on far, glossy and dark surfaces, and Gaussian scale grows with range by
+construction — so `invalid` is a candidate proxy for distance and a raw
+correlation could be entirely a range effect. Stratifying by the network's own
+predicted depth (`partial_spearman`, pooled within 8 depth bands, because the
+opacity/depth profile is U-shaped and a linear partial would miss it):
+
+```
+TUM head, 1,179,648 gaussians over 6 pairs, median opacity 0.6004
+                    invalid      edge   disagree      conf     depth
+OPACITY   raw       -0.2390    0.0127   -0.1032    0.2116   -0.1085
+          |depth    -0.1983   -0.0267   -0.0962    0.2126   -0.0010
+MAXSCALE  raw        0.2218   -0.0356    0.1005   -0.3879    0.3967
+          |depth     0.1147    0.0902    0.0174   -0.2641    0.0800
+```
+
+Scale's raw correlation with depth (+0.397) is the largest number in the table,
+and controlling for it **halves** scale's association with `invalid`
+(+0.222 -> +0.115). Opacity's associations barely move (`conf` +0.212 -> +0.213,
+entirely undiminished; `invalid` -0.239 -> -0.198).
+
+**The degeneracy guard stopped three fabricated findings.** Running the same
+probe on the saturated heads produced large, stable-looking opacity
+correlations: replica-head -0.44 vs `invalid`, noisy-head -0.59, base -0.056.
+All three are artifacts. Those heads are 94-100% tied at opacity exactly 1.0,
+p10-p90 spread `1.19e-07` and `0`; `argsort` breaks ties by position, so rank
+statistics on them are arbitrary rather than weak. The instrument now measures
+the tie fraction and refuses to print instead of inviting the read.
+
+This is the §17.63 lesson in a third costume — a statistic returning a confident
+number outside the regime where it means anything — and this time the guard was
+built before the number was interpreted rather than after.
+
+### 17.66.2 What the surviving numbers say
+
+**Opacity's strongest measured associate is the backbone's own confidence
+output** (+0.213 partial), completely undiminished by the depth control. Low-
+opacity Gaussians sit where the backbone is unsure and where the sensor gave no
+depth.
+
+State the effect size with the claim, always (Kimi's round-29 tempering, and he
+is right): rho = 0.213 explains about **4.5% of the variance**. With 1.18M
+Gaussians significance is not the question; size is. The honest sentence is
+"opacity is predicted by backbone confidence, weakly but robustly, with sensor
+invalidity second" -- most of the opacity variance remains unowned. Writing
+"confidence channel" without the number next to it would oversell it. The lever
+in 17.66.4 does not need the coupling to be strong; it needs the ALLOCATION to
+matter, which is a separate question that only the run answers.
+
+One unresolved point that belongs in any mechanism paragraph: `conf`'s own
+causal identity is unknown. It is a two-view matching confidence, and its
+correlation with opacity could be driven by both being responses to surface type
+(textureless / far / dark) rather than by confidence as such.
+
+**Scale is not, or not mainly.** Its apparent link to unreliability is
+substantially a distance artifact, and on the noisy head — the head whose scale
+response prompted the hypothesis in the first place — the scale/confidence
+partial is **+0.003, gone**, while every other head has -0.19 to -0.29:
+
+```
+maxscale vs conf, partial|depth      tum-head  -0.264
+                                     base      -0.288
+                                     replica   -0.189
+                                     noisy     +0.003   <- the hypothesis's own head
+```
+
+If the noisy head were hedging uncertainty with scale, its scale should track
+confidence MORE than other heads, not less. **§17.65.1's reading is withdrawn.**
+Its scale/`disagree` partial is the highest of any head (+0.316), which on
+Replica mostly indexes inter-frame parallax rather than photometric conflict, so
+the tail inflation looks like coverage-seeking — which is exactly the
+alternative Kimi named ("if they're scattered on clean flat walls, it's
+coverage-seeking, not hedging"). Recorded as the leading reading, not a finding;
+`disagree` is a weak proxy on a moving camera and is not load-bearing anywhere.
+
+### 17.66.3 The dispute, resolved against both of us
+
+- **My depth-mask candidate: supported.** `invalid` is the second-strongest
+  surviving predictor. Kimi's quantitative objection — "masks are local
+  (10-20% of the map), the median shift is global" — is empirically wrong for
+  TUM: the dilated invalid mask covers **~40%** of pixels (mean of the column),
+  and it reaches 0.75 in the lowest opacity decile against 0.20 in the highest.
+  Not local.
+- **Kimi's non-rigid-photometry candidate: weakly supported at best** (-0.096).
+- **The occlusion-edge story: dead** (-0.027, and null on every head). Whatever
+  partial opacity is for, it is not silhouette anti-aliasing.
+- **Both of us were beaten by a predictor neither of us named**, which is also
+  the only one available for free at inference on any dataset.
+
+### 17.66.4 The lever this hands us, pre-registered
+
+The chain is now: opacity should track backbone confidence; the base checkpoint
+cannot express it (97.8% saturated); fine-tuning on real data creates it;
+fine-tuning on Replica does not. `--uniform-fade` currently thins **uniformly**
+because §17.34's elongation selector lost to it — but a uniform prior is the
+right answer only if there is no signal about *which* Gaussians to thin. There
+is one, it is free, and it has never been tried.
+
+```
+proposed   opacity *= 1 - D*(1 - conf_norm)     vs  current  opacity *= (1 - D)
+```
+
+PRE-REGISTERED, before implementation: a confidence-weighted fade beats uniform
+fade at equal mean opacity on the base/Replica maps (where the head never
+learned the channel and the prior is supplying it), and ties or slightly loses
+on the TUM head's map (where the head already encodes it, so the prior is
+redundant and can only add noise). If it loses on the base map too, then opacity
+co-location is a description of what trained heads do and not a usable prior,
+and uniform fade stays.
+
+The honest caveat: this is a within-map correlation on outputs, and "opacity
+tracks conf in a trained head" does not entail "imposing conf on an untrained
+head helps". That gap is exactly what the pre-registered run measures.
+
+---
+
+## 17.67 The cap experiment: both diagnostics failed, and they failed the same way
+
+§17.65.3 set up the cap runs so that the two tail diagnostics made opposite
+predictions, and the result would pick one. It picked neither.
+
+```
+family     deploy ratio  common-input ratio    cap: lpips        psnr
+Replica        2.33            2.33          0.0959 -> 0.0799   (-16.7%)
+7-scenes       2.31            2.17          0.5243 -> 0.5061    (-3.5%)   13.85 -> 13.33
+eth3d          0.91            3.26          0.4995 -> 0.4811    (-3.7%)   12.57 -> 12.46
+```
+
+Scoring the pre-registration exactly as written:
+
+- **Common-input diagnostic predicted the cap helps all three, MOST on eth3d**
+  (its 3.26 being the highest ratio on record). eth3d gained -3.7% against
+  7-scenes' -3.5% — a tie, not a maximum. The ordering carries no information.
+- **Deployment-condition diagnostic predicted 7-scenes only, neutral or harmful
+  on eth3d** (ratio 0.91, disarmed). eth3d gained slightly MORE than 7-scenes.
+  The arming decision was wrong.
+
+So the third pre-registered outcome is the one that landed, in a sharper form
+than I anticipated: the cap's Replica win (-16.7%) does not generalize —
+elsewhere it is a small, roughly constant -3.5% that is **uncorrelated with any
+tail statistic in either direction**.
+
+Kimi reached the same verdict independently in round 28, from a different
+observation: on the penalty head the ratio fell to 1.20 (diagnostic says
+*disarm*) while the cap still earned -16.7% on that map. Two independent routes,
+one conclusion:
+
+> **Stop inferring lever value from parameter statistics. Measure it per blob.**
+> A cap on/off offline arm costs an hour. The parameter tables stay as
+> description; they are not decision rules.
+
+**§17.64's arming column is retracted as a decision rule.** The p90 ratio
+remains a description of what a head does to the scale distribution, which is a
+real and reportable property. It does not predict whether the cap pays.
+
+### Two caveats that limit how far this travels
+
+**The absolute regime is not comparable to Replica's.** These baked maps sit at
+psnr 12-14 against Replica's ~27. Keyframe counts and Gaussian counts are
+ordinary (7-scenes 12 kf / 2.36M, eth3d 14 kf / 2.18M, against Replica 21 kf /
+3.10M), so the maps are not degenerate in size — these are simply much harder
+sequences. The cap delta is a *paired* comparison on one map with one held-out
+set, so it is internally valid; but a lever measured at 13 dB is not thereby
+measured at 27 dB, and this is the same cross-regime caution as standing rule 5.
+
+**The cap trades psnr for lpips, consistently.** Both families: lpips improves,
+psnr falls (-0.51 dB on 7-scenes, -0.11 dB on eth3d). Replica's arm showed the
+same sign. Whatever the cap is doing, it is not a free win, and a paper reporting
+only lpips for it would be misleading.
+
+euroc (deploy ratio 0.92, common-input 2.52 — the third discriminating case) is
+running.
+
+### 17.66.5 Round-29 exchange: is `invalid` just `conf` measured twice?
+
+Kimi's framing of the question was the useful part: *"what you can't do is write
+'confidence channel' and 'mask effect' as two findings when they may be one."*
+The backbone is unconfident where the sensor also failed, for shared physical
+reasons — dark, glossy, far — so the two predictors could be one signal.
+
+Same instrument, `--control conf` instead of `--control depth`:
+
+```
+TUM head                invalid      edge   disagree      conf     depth
+OPACITY   raw           -0.2390    0.0127   -0.1032    0.2116   -0.1085
+          |depth        -0.1983   -0.0267   -0.0962    0.2126   -0.0010
+          |conf         -0.1655    0.0452   -0.0967   (~0 by     -0.0086
+                                                       constr.)
+```
+
+`invalid` holds at **-0.166** after conditioning on `conf` — against Kimi's
+pre-stated decision rule ("collapses toward zero -> one channel; holds at ~-0.15
+-> independent information"). So sensor invalidity carries information the
+matching confidence does not see, and the two are overlapping but distinct.
+
+Consequences, both of which are now on the record rather than open:
+
+- The account has two members, not one. The write-up may report both.
+- The next lever is a **conf + invalid joint fade** rather than conf alone.
+  Noting the deployment limit up front: `invalid` needs sensor depth at
+  inference, which the SLAM path does not have (it is monocular), so the joint
+  version is an offline/analysis lever unless a proxy is found. `conf` has no
+  such problem — it is free on every dataset. That asymmetry is a reason to keep
+  conf as the shipping lever regardless of which correlates better.
+
+### 17.66.6 Guards added to the conf-fade before its results are read
+
+**The deletion tail.** Kimi caught a failure mode I had not named: the
+multiplier at `conf_norm=0` is `1-2D`, which hits **zero at D=0.5**. A
+multiplier of zero is deletion, not thinning — the §5 removal failure re-entering
+silently through the extreme tail. Now floored at 0.1. At the D=0.45 the running
+arms use, the untruncated minimum is exactly 0.1, so the floor is a no-op for
+those measurements and they remain valid as taken.
+
+**The failure signature to watch first** is not the one I proposed. I expected
+"psnr loss concentrated on low-texture frames" (conf is a two-view matching
+confidence, so it is low on textureless-but-easy walls, and thinning walls would
+be exactly wrong). Kimi: the first thing to check is **black fraction rising
+>0.5pp**, because that was §5's actual measured signature for over-removal.
+
+**Kimi's prediction, sharper than mine.** I registered "ties or slightly loses"
+on the TUM-head map. He registers **loses outright**: the head already thinned
+its low-conf Gaussians, so conf-fade double-thins them. He is right that tie vs
+loss is itself informative — a loss confirms the head's allocation is already
+near-optimal and the prior is worse than redundant.
+
+**A second readout added to the o-0.6 head**, which is still training. Beyond the
+acc-alpha <= 4.4 prediction, measure that head's own opacity-conf partial. The
+penalty supplies *dose*; whether it also produced *allocation* is unknown, and
+the two come apart cleanly:
+
+```
+coupling ~= 0 and thin still buys >5% at acc ~= 4.4
+   -> total opacity mass is not the whole variable; allocation is. Then
+      conf-fade vs uniform ON THAT HEAD is the sharp follow-up, and conf-fade
+      should win.
+coupling ~= 0.2 on its own
+   -> the penalty did not impose a level, it gave the head PERMISSION to use
+      the channel and the head used it correctly. The best available outcome.
+```
+
+### 17.66.7 Result: allocation beats dose, on both channel-absent maps
+
+The pre-registration in §17.66.4 is confirmed on both maps where the head never
+learned the opacity/confidence coupling. Equal mean dose (D=0.45), differing
+only in how the thinning is allocated:
+
+```
+tum-BASE map (base checkpoint, 97.8% saturated)     psnr      lpips
+  none                                             14.0747   0.4759
+  uniform-fade 0.45                                14.1319   0.4110
+  conf-fade    0.45                                14.2070   0.3993   -2.8% vs uniform
+
+replica-head map (99.9% saturated)                  psnr      lpips
+  none                                             25.3500   0.1649
+  uniform-fade 0.45                                26.3941   0.1110
+  conf-fade    0.45                                26.4119   0.1079   -2.8% vs uniform
+```
+
+**-2.8% on both**, on maps that differ by 12 dB in absolute quality and come
+from different datasets and different checkpoints. psnr moves the same direction
+on both (+0.075, +0.018 dB), so this is not a psnr/lpips trade like the cap's.
+
+Read the AGREEMENT, not the decimal. Two independent measurements landing on the
+same two significant figures is a coincidence at this sample size, and treating
+the exact match as evidence would be the same error as reading -0.44 off a tied
+array (Kimi, round 30). What is load-bearing is that both are clearly negative
+and of similar size across very different maps.
+
+Two things make this more than a small win:
+
+**It is present at iteration 0.** tum-base conf 0.5495 vs uniform 0.5726 before
+a single optimizer step. The prior is improving the *injected map*, not steering
+the optimizer, which is what a genuine allocation effect should look like.
+
+**It is the first lever in this file whose value was predicted from a
+measurement rather than found by sweeping.** The chain ran: measure that opacity
+co-locates with backbone confidence in trained heads (§17.66.2) -> observe that
+base and Replica heads cannot express it -> supply it externally -> it pays,
+exactly on the maps predicted and at the dose predicted. Every previous lever
+here (thin, cap, streak, dither) was found by trying it.
+
+Against that, the honest limits: one seed, one D, 600 offline steps, and the
+coupling it is built on explains ~4.5% of opacity variance. The lever pays about
+a fifth of what uniform thinning itself pays (uniform buys -13.6% over none on
+tum-base; conf buys a further -2.8%). It is a refinement of the thinning prior,
+not a new mechanism.
+
+Still open at the time of writing: the tum-head map (channel PRESENT), where I
+registered "ties or slightly loses" and Kimi registered "loses outright". That
+arm is the one that tests whether the account is right about *why* it works.
+
+### 17.66.8 The channel-present arm: an exact tie, which is the predicted result
+
+```
+tum-HEAD map (median opacity 0.60 -- the head ALREADY encodes the coupling)
+                          psnr      lpips     black
+  none                  14.0938    0.3952     1.80%
+  uniform-fade 0.45     14.0112    0.3871     1.90%
+  conf-fade    0.45     14.0364    0.3871     1.92%
+```
+
+**lpips identical to four decimals**, psnr +0.025 dB for conf. Set against the
+two channel-absent maps, the interaction is exactly the shape the account
+predicts:
+
+```
+                          conf-fade vs uniform-fade
+channel ABSENT   tum-BASE          -2.8% lpips
+channel ABSENT   replica-head      -2.8% lpips
+channel PRESENT  tum-head           0.0% lpips
+```
+
+Scoring the two pre-registrations honestly: mine ("ties or slightly loses") is
+confirmed; **Kimi's sharper "loses outright" is falsified.** His reasoning was
+that the head has already thinned its low-conf Gaussians so conf-fade
+double-thins them. The tie says the prior is exactly redundant rather than
+harmful — which is the better outcome for shipping it as a default, since it
+means conf-fade is safe to leave on for heads that do not need it.
+
+**The deletion-tail guard passes.** Black fraction none 1.80% -> conf 1.92%, a
+rise of 0.12pp against Kimi's 0.5pp alarm threshold, and only 0.02pp above
+uniform at the same dose. The floor added in §17.66.6 is doing its job, and this
+is the first run in the file where that number was actually measured rather than
+recommended.
+
+Provenance note: the `none` arm's log was corrupted to NUL bytes on first
+capture and was re-run rather than substituted from another harness. The rerun
+lands at iter-0 `12.3544 / 0.5071` -- the exact four-digit signature §17.61 used
+to CATCH a mislabelled artifact. Here it is the opposite: it confirms this blob
+really is the TUM-head bake. The same coincidence that exposed an error once is
+a provenance check when you know which map you meant to load.
+
+---
+
+## 17.68 The cap, fourth cell: the diagnostic is dead in both directions
+
+```
+euroc MH_01_easy          psnr      lpips     black
+  none                  13.7459    0.4373     0.36%
+  cap 0.016263          13.6282    0.4052     0.68%      -7.3% lpips
+```
+
+Complete scorecard, with both diagnostics' predictions next to the outcome:
+
+```
+family     deploy ratio  common ratio   cap lpips    cap psnr
+Replica        2.33          2.33         -16.7%        --
+euroc          0.92          2.52          -7.3%      -0.12 dB
+eth3d          0.91          3.26          -3.7%      -0.11 dB
+7-scenes       2.31          2.17          -3.5%      -0.51 dB
+```
+
+- **Deployment-condition diagnostic** (arm when ratio > 2) predicted 7-scenes
+  alone. 7-scenes gained the LEAST. euroc at 0.92 -- solidly "disarm" -- gained
+  twice as much as either armed family.
+- **Common-input diagnostic** predicted the gain would order as
+  eth3d (3.26) > euroc (2.52) > 7-scenes (2.17). Measured order is
+  euroc > eth3d > 7-scenes. Wrong at the top.
+
+Neither ordering survives. §17.67's verdict is now four cells deep instead of
+three, and the ratio is confirmed to carry no predictive information about
+whether the cap pays -- in either the fixed-input or the deployment-condition
+form. §17.64's arming column stays retracted as a decision rule.
+
+**The cap trades psnr for lpips in every cell measured** (-0.51, -0.11, -0.12 dB).
+It is not a free win anywhere, and reporting only its lpips would misrepresent it.
+
+**New, from the black-fraction instrument added this session:** the cap raises
+black fraction on euroc from 0.36% to 0.68%, the largest rise seen for any lever
+so far. Still under the 0.5pp alarm, but it is a coverage cost and it is the
+mechanism §5 predicted for anything that shrinks footprints. Worth watching if
+the cap is ever raised above the base p90.
+
+#### 17.66.8a The tie is real, and it is not a degenerate multiplier
+
+An lpips tie to four decimals between two different per-Gaussian multipliers is
+suspicious enough to check before it is interpreted. The worrying reading was
+that the conf plumbing had silently collapsed to a constant, which would produce
+"same dose, same result" for an uninteresting reason. Injected-opacity
+distributions, measured directly on the first four keyframes of each blob:
+
+```
+                   conf multiplier                                resulting opacity
+             min   p25   med   p75   max   MEAN        uniform (sd)     conf (sd)
+tum-head    0.100 0.325 0.550 0.775 1.000  0.5500     0.3540 (0.0912)  0.3203 (0.2097)
+tum-base    0.100 0.325 0.550 0.775 1.000  0.5500     0.5500 (0.0023)  0.5499 (0.2598)
+```
+
+The multiplier spans the full 0.1-1.0 range, and its **mean is exactly 0.5500**,
+matching uniform's constant 0.5500 — so the dose-matching design works to four
+decimals and the two arms differ only in allocation, as intended.
+
+The resulting distributions are not close: conf produces **2.3x the opacity
+spread** on tum-head (sd 0.210 vs 0.091) and **113x** on tum-base (0.260 vs
+0.002, where uniform is near-constant because base opacity is ~1.0 everywhere).
+
+So the tum-head tie is a real result, and a stronger one than "tie" suggests:
+**two substantially different injected opacity fields converge to identical
+held-out lpips at 600 steps.** On a map whose head already encodes the
+coupling, the optimizer erases the allocation difference. On maps whose head
+does not, the same difference is worth -2.8% and survives to convergence. That
+contrast is the account's central claim, and it is now supported by the injected
+distributions rather than only by the outcome metric.
+
+#### 17.66.9a `--refiner-gpu` indexes VISIBLE devices — third instance of the silent-refiner-death class
+
+The conf-fade deployment A/B was launched with `CUDA_VISIBLE_DEVICES=1` and
+`--refiner-gpu 1`. Under that environment torch sees exactly one device,
+`cuda:0`, so the refiner raised
+
+```
+torch.AcceleratorError: CUDA error: invalid device ordinal
+  refiner.py:1047 run_refiner -> refiner.py:887 _gaussian_window
+```
+
+**inside the subprocess.** SLAM ran to completion, wrote the trajectory, the
+keyframes and `office0_gaussians.ply`, and exited cleanly. The only missing
+artifact was `office0_refined.ply` — the thing being measured. The arm was
+scored by a `grep` for `psnr=` that silently fell through to a log tail, so the
+run announced nothing wrong.
+
+This is the third member of one family in this file:
+
+```
+17.53   --refiner-streak-opacity without --refiner-aa-sigma -> ValueError in
+        the subprocess, main run completes looking normal
+17.55   training resolution mismatch -> val split improves, deployment loses
+here    --refiner-gpu past the visible device count -> refiner dies, main run
+        completes looking normal
+```
+
+The shared shape: **a fatal error in a child process that the parent's exit code
+does not carry, on a path whose output nothing checks for existence.** Both
+previous instances were fixed by moving validation into `main.py`'s argument
+parsing; this one now is too, checking `--refiner-gpu` against
+`torch.cuda.device_count()` and saying explicitly that the flag indexes VISIBLE
+devices.
+
+The remaining hole is the scoring script, not the launcher: a harness that
+`grep`s for a metric and falls through when the file is absent will report a
+missing arm as a formatting oddity rather than a failure. Any A/B script here
+should assert the artifact exists before scoring it.
+
+### 17.66.10 Dose sweep: the advantage grows with dose, which is what an allocation effect should do
+
+tum-BASE map, offline, 600 steps. Doses capped at 0.45 deliberately: the 0.1
+floor starts clipping above D=0.5 (the untruncated minimum is 1-2D), and once it
+clips the realized mean multiplier is no longer exactly (1-D), so the two arms
+would differ in DOSE as well as allocation and stop being comparable at all.
+
+```
+D       uniform lpips   conf lpips    delta     uniform psnr   conf psnr
+0.25       0.4260         0.4178      -1.9%       14.1649      14.2040
+0.35       0.4185         0.4088      -2.3%       14.1507      14.2111
+0.45       0.4110         0.3993      -2.8%       14.1320      14.2071
+```
+
+conf wins at every dose, on both metrics, and **the margin grows monotonically
+with D** — which is the signature an allocation effect should have: the more
+dose you spend, the more it matters where you spend it. A fixed offset would
+have suggested something incidental.
+
+The psnr column carries a second pattern worth reporting: **conf-fade is
+psnr-flat across dose** (14.2040 / 14.2111 / 14.2071) while **uniform's psnr
+declines** as dose rises (14.1649 / 14.1507 / 14.1320). Uniform thinning buys
+lpips by spending psnr; confidence-allocated thinning does not appear to pay
+that toll over this range.
+
+Black fraction rises slightly with conf (1.53 / 1.59 / 1.66% against uniform's
+1.50 / 1.52 / 1.55%), a maximum penalty of 0.11pp — well inside the 0.5pp alarm.
+
+Note what this sweep does NOT establish: it is sloped, not flat, so **D=0.45 is
+the top of the measured range and not a located optimum.** Kimi's shipping rule
+distinguishes these ("if the curve is flat the default is robust; if sloped you
+ship D with a warning"), and the warning is in the flag's help text.
+
+### 17.66.11 It survives deployment
+
+Full online SLAM, Replica office0, Replica head, ~2300 steps with the map
+growing as SLAM runs — a different harness from the 600-step frozen-blob arms,
+which standing rule 5 says never to assume transfers.
+
+```
+                 psnr      lpips
+none           26.3345    0.1099
+uniform        26.3974    0.0983
+conf           26.4156    0.0960     -2.3% vs uniform, -12.6% vs none
+```
+
+The offline -2.8% arrives as -2.3% online. Not identical, which is expected and
+is exactly why the run was made; same sign, similar size, and conf is ahead on
+psnr too (+0.018 dB over uniform, +0.081 over none).
+
+**This satisfies Kimi's pre-stated shipping rule** ("online A/B shows conf >=
+uniform and black fraction within budget -> conf-fade replaces uniform as the
+default, unconditioned on head; the tie licenses that"), so:
+
+`--refiner-conf-fade` now defaults to **0.45** in `main.py`. `--refiner-uniform-
+fade` stays at 0.0 and setting it explicitly turns conf-fade off, so the two
+never stack — a bare `--refiner-uniform-fade 0.45` selects the uniform
+allocation rather than tripping the mutual-exclusion error, which is what a user
+asking for one lever means. Only setting BOTH explicitly is an error.
+
+#### The evidence behind the default, in one place
+
+```
+2 offline maps, D=0.45, channel absent      -2.8%, -2.8%
+3 doses on one map (0.25/0.35/0.45)         -1.9%, -2.3%, -2.8%, monotone
+1 offline map, channel present (control)     0.0%  (exact tie, verified live)
+1 full online SLAM A/B                       -2.3%
+black fraction, every arm                    <= +0.12pp, alarm is 0.5pp
+```
+
+Unmeasured and stated as such: seeds (Kimi ranks these least informative here
+and recommends skipping unless online disagreed with offline, which it did not),
+doses above 0.45, and any family other than TUM and Replica.
+
+---
+
+## 17.69 The opacity penalty gave the head PERMISSION, not a level
+
+Kimi's round-30 cheapest readout, run on the EXISTING `relu(o-0.9)` head rather
+than waiting for the retrain. His framing: the penalty supplies *dose*; whether
+it also produced *allocation* is a separate question, and the co-location probe
+answers it directly.
+
+```
+o-0.9 penalty head, Replica office0, 6 pairs
+opacity median 0.8395   frac>0.9 0.0%
+                    invalid      edge   disagree      conf     depth
+OPACITY   raw        0.0206   -0.0714   -0.0810    0.3541    0.2262
+          |depth     0.0153   -0.0897   -0.1107    0.3794    0.0730
+MAXSCALE  |depth     0.0770    0.1076   -0.0196   -0.4836    0.0128
+```
+
+**Opacity-conf partial = +0.379**, against the TUM head's +0.213. The penalty
+head's coupling is nearly **double** that of the head that learned the channel
+unaided on real data.
+
+This is the outcome Kimi named as the best available: the penalty did not impose
+an opacity level, it **gave the head permission to use the channel**, and the
+head then used it more strongly than any head trained without one. A penalty
+that merely clipped the top of the distribution would show dose without
+allocation — coupling near zero at median 0.84. That is not what happened.
+
+`invalid` is ~0 here and should be ignored rather than read as a null result:
+Replica's rendered depth is complete, so the predictor has no variance on this
+family by construction (the adapter's own docstring says so). It is a
+TUM-family predictor only.
+
+Note the consequence for the thinning levers: this head's map has the channel
+PRESENT and more strongly than TUM's, so §17.66.8 predicts conf-fade should tie
+or lose on it — the map already encodes the allocation. That is a genuine
+out-of-sample prediction and it is testable on the same 2x2.
+
+### 17.69.1 Val cost of the harder push
+
+Kimi's readout 3, all four Replica-family heads at 40 epochs, same seed:
+
+```
+head                    val psnr    val lpips
+plain (long40)           21.2310      0.1084
+o-0.9 penalty            21.2672      0.1110
+o-0.6 penalty            21.0986      0.1153
+content-degraded         21.0022      0.1283
+```
+
+**o-0.9 is free** (+0.036 dB, +0.0026 lpips — inside noise). **o-0.6 carries a
+real if small tax**: -0.13 dB and +0.0069 lpips against plain, i.e. ~6% relative
+lpips. So the knee position is not cost-free once it is pushed below where the
+head would settle on its own, and that tax has to be reported against whatever
+deployment gain the harder push buys.
+
+### 17.69.2 A metric-comparability trap, logged before it was reported
+
+The o-0.6 run's own verdict line reads `head-only BEATS base by 94.1%`, against
+the plain head's 30.7%. **That number is not comparable and must not be quoted.**
+The "base" figure in a penalty run is the base checkpoint's loss *including the
+penalty term*, and the base checkpoint predicts opacity 1.0 almost everywhere,
+so it eats a ~0.4 penalty per Gaussian that the plain run's base never paid.
+The comparable quantities are the val psnr/lpips in §17.69.1, which show the
+opposite sign.
+
+### 17.69.3 `acc_alpha` is now a standing instrument, and it is NOT in the old units
+
+§17.64 named accumulated alpha the operational target for the thinning levers,
+but it had only ever been measured ad hoc. It now prints on every lattice
+report, next to black fraction, with a stated definition:
+
+> total alpha MASS per pixel, sum_k alpha_k, recovered by rendering at opacity
+> `eps*alpha` and dividing by eps -- compositing is `1-prod(1-eps*a) ~= eps*sum(a)`
+> to first order. Not the composited alpha, which saturates at 1 and cannot
+> express the quantity that ordered the maps.
+
+Calibrated against the two maps §17.64 reports:
+
+```
+map          17.64 (ad hoc)    this instrument
+desk-base         6.17              34.23
+desk-head         4.45               9.11
+```
+
+**The ordering reproduces; the scale does not** (3.8x separation here against
+1.39x there). The two are not interchangeable, and with two calibration points
+and a discrepancy that large, fitting a conversion would be unjustified.
+
+Consequence for the o-0.6 pre-registration: **Kimi's re-anchored threshold
+"acc alpha <= 4.4" is stated in the old instrument's units and cannot be
+evaluated in these.** The core registered leg does not depend on it — "does
+thinning's gain collapse to <=2% on this head's map" is a direct percentage on
+the same map and is unaffected. That leg is what gets scored; the acc_alpha
+figure is reported alongside for future comparison in its own units.
+
+---
+
+## 17.70 The o-0.6 head: two falsifications, one of them mine
+
+### 17.70.1 Injection-time thinning is unconditional. Settled.
+
+The registered test, on record since §17.64 and re-anchored by Kimi in round 28:
+*if thinning's gain collapses to <=2% on a properly dosed penalty head's map,
+training-time can substitute for injection-time; if not, injection thinning is
+unconditional.*
+
+```
+o-0.6 head map, Replica office0        psnr      lpips     black   acc_alpha
+  none                               27.2051    0.0920    0.00%      10.12
+  thin (uniform 0.45)                27.4765    0.0775    0.00%       4.65   -15.8%
+  conf-fade 0.45                     27.6614    0.0732    0.00%       3.86   -20.4%
+  cap 0.009778                       27.5793    0.0740    0.01%       5.67   -19.6%
+```
+
+**-15.8%, not <=2%** — on a head whose median opacity is **0.5614**, i.e. below
+the 0.66 the TUM head reached unaided, which is exactly the dose the o-0.6 knee
+was designed to hit. The head is not under-thinned, and thinning still pays.
+
+Second falsification of the same claim, now at two knee positions (o-0.9 gave
+-21.0%, o-0.6 gives -15.8%). The margin shrinks slightly with a harder dose but
+comes nowhere near collapsing. **Training-time opacity penalties do not
+substitute for injection-time thinning. The claim is closed, negative.**
+
+Note the psnr column: on this map every lever improves psnr as well
+(+0.27 to +0.46 dB), unlike the cap's behaviour on the real-sensor families.
+
+### 17.70.2 My §17.69 out-of-sample prediction is falsified, and it takes the "channel present/absent" account with it
+
+I predicted, in writing and before the run: this head's map has the coupling
+PRESENT and stronger than TUM's, so conf-fade should tie or lose here, as it did
+on the tum-head map.
+
+**conf-fade won by -5.5% over uniform — its largest margin on any map.**
+
+And the head's coupling is indeed high, which makes the failure clean rather than
+ambiguous:
+
+```
+head                opacity median   opacity-conf partial|depth   conf-fade vs uniform
+o-0.6 penalty           0.5614              +0.326                     -5.5%
+o-0.9 penalty           0.8395              +0.379                       --
+tum head                0.6004              +0.213                      0.0%
+tum base (saturated)    ~1.0             degenerate                    -2.8%
+replica head (sat.)     ~1.0             degenerate                    -2.8%
+```
+
+Coupling strength does **not** order the benefit. The map with the second-highest
+coupling gets the largest gain; the map with the lowest non-degenerate coupling
+gets none. So "the prior is redundant where the head already encodes it" — the
+account §17.66.8 was built on — is **not supported**, and the tum-head tie needs
+a different explanation.
+
+### 17.70.3 The account the numbers actually suggest
+
+`acc_alpha`, which only became a standing measurement this session (§17.69.3),
+points at a different mechanism. At the SAME mean opacity dose:
+
+```
+o-0.6 map    none 10.12  ->  uniform 4.65  ->  conf 3.86
+```
+
+**conf-fade reaches a materially lower accumulated alpha than uniform at equal
+mean dose**, because it concentrates thinning where layers pile up instead of
+spreading it evenly. §17.64 and Kimi's round-28 answer both name accumulated
+alpha as the operational target for these levers. If that is right, conf-fade is
+not "supplying a channel the head lacks" — it is **hitting the actual target more
+efficiently**, which is a claim about crowding geometry and says nothing about
+what the head learned.
+
+That reframing makes a sharp, falsifiable prediction about the one result it has
+to explain away: **on the tum-head map, where conf-fade and uniform tied, the two
+arms should reach the SAME acc_alpha.** If they do, the tie is explained and the
+crowding account replaces the channel account. If conf reaches a lower acc_alpha
+there and still only ties, both accounts are wrong.
+
+That measurement is running now, at 0 iterations so it reads the injected map
+before any optimization. Recorded before the numbers land.
+
+Caveat carried forward: the o-0.6 arms are the first to be scored with the
+`black`/`acc_alpha` instruments in place, and black fraction is 0.00% in every
+arm — a genuinely clean map, and a reminder that Replica's rendered completeness
+makes it the easiest family for any coverage-costing lever.
+
+### 17.70.4 The crowding account is falsified too. Three accounts down.
+
+The prediction from §17.70.3, registered before the run: on tum-head, where the
+arms tied, they should reach the same acc_alpha. Injected map, 0 iterations:
+
+```
+map        arm        acc_alpha   black     quality vs uniform
+tum-head   none          9.11     6.22%
+           uniform       0.85     6.37%
+           conf          2.31     6.77%        0.0%   (tie)
+tum-base   none         34.23     5.01%
+           uniform      11.26     5.10%
+           conf         10.07     5.33%       -2.8%
+o-0.6      none         10.12     0.00%
+           uniform       4.65     0.00%
+           conf          3.86     0.00%       -5.5%
+```
+
+**Not the same — they are 2.7x apart (0.85 vs 2.31), and conf reaches the
+HIGHER one while tying on quality.** So "conf-fade wins by reaching lower
+accumulated alpha at equal dose" is false as a general claim: on tum-head it
+reaches higher acc_alpha and does not lose.
+
+Standing count: the channel-present/absent account (§17.66.8) is falsified by
+§17.70.2, and the crowding account (§17.70.3) is falsified here. **No scalar
+tested — coupling strength, opacity median, acc_alpha — orders conf-fade's
+benefit across the five maps.**
+
+What survives is the empirical result itself, which is unaffected: conf-fade is
+>= uniform on every map tested, margin 0.0% to -5.5%, at every dose tested, and
+in the online A/B.
+
+### 17.70.5 The surviving hypothesis, flagged as third-in-a-row
+
+One pattern is consistent with all five maps, and it is about safety rather than
+optimality. On tum-head, **uniform drove acc_alpha to 0.85 — below 1, meaning
+the average covered pixel is no longer opaque** — while conf held it at 2.31.
+That is exactly what the allocation should do: conf spends its dose on the
+low-confidence Gaussians and leaves high-confidence ones near full opacity, so
+it cannot strip coverage from the structurally load-bearing part of the map,
+whereas uniform thins everything including the parts holding the surface up.
+
+Under that reading conf-fade is **self-limiting**, which explains the one thing
+both earlier accounts got wrong: why it never loses. It is not that it always
+wins by more where the head is worse; it is that it has no failure mode of the
+kind uniform has.
+
+Independent support already in hand, collected before this hypothesis existed:
+the §17.66.10 dose sweep found **uniform's psnr declines monotonically with dose
+(14.1649 -> 14.1507 -> 14.1320) while conf's is flat (14.2040 -> 14.2111 ->
+14.2071)**. A self-limiting prior should behave exactly like that.
+
+**This is the third account fitted to the same five maps and it deserves the
+suspicion that earns.** It is recorded as a hypothesis with an out-of-sample
+test attached, not as a finding. The test: push D past the measured range, where
+uniform should degrade sharply and conf gracefully. Dose-matching breaks above
+D=0.5 (the 0.1 floor clips), but the prediction is about robustness rather than
+matched dose, so that does not block it. If uniform and conf degrade together at
+high D, the self-limiting account dies too and conf-fade keeps its measured
+result with no mechanism attached — which would be an honest place to leave it.
+
+### 17.70.6 The high-dose test: the self-limiting hypothesis is half right, and the half that matters fails
+
+Out-of-sample test from §17.70.5, on tum-head (where uniform's failure mode
+appeared first), pushed past the dose-matched range:
+
+```
+D       uniform lpips   conf lpips   uniform psnr  conf psnr   u acc_a  c acc_a
+0.55       0.3853         0.3859       13.9928     14.0211      5.29     5.37
+0.70       0.3838         0.3845       13.9743     14.0048      3.54     4.46
+0.85       0.3849         0.3845       13.9506     13.9991      1.53     3.79
+```
+
+**The mechanism half is confirmed.** conf-fade demonstrably resists driving
+accumulated alpha down — at D=0.85 uniform reaches 1.53 while conf holds 3.79 —
+which is exactly the self-limiting behaviour predicted: dose lands on
+low-confidence Gaussians and the high-confidence ones stay near full opacity.
+The psnr column agrees (uniform declines monotonically 13.9928 -> 13.9506, conf
+is flat 14.0211 -> 13.9991).
+
+**The consequence half fails.** Uniform driving acc_alpha to 1.53 does not hurt
+lpips: every cell sits in 0.3838-0.3859, a spread smaller than the difference
+between conf and uniform at D=0.45. There is no collapse to be protected from.
+So self-limitation is real and measurable but buys no measured quality on this
+map — and at D >= 0.55 on tum-head, uniform and conf are simply tied, with
+uniform marginally ahead at 0.55.
+
+**Fourth account, fourth falsification.** Recorded as such rather than rescued.
+
+Two incidental findings worth keeping:
+
+- **No harmful thinning regime was found even at D=0.85** on this map. §17.56
+  reported deep fade as "actively worse" for the elongation selector; that does
+  not reproduce for uniform fade here, where lpips improves slightly from D=0.45
+  (0.3871) to D=0.70 (0.3838) and then plateaus. The default of 0.45 is
+  therefore conservative rather than optimal, and is left there because higher
+  doses are untested on the other four maps.
+- The lattice statistic hp_alpha is flat across all six cells (0.00506-0.00529)
+  while acc_alpha moves 3.5x, which is one more piece of evidence that hp_alpha
+  is not tracking what these levers do.
+
+### 17.70.7 The standing rule these four falsifications add up to
+
+Kimi's round-31 formulation, which the record now supports at four independent
+points:
+
+> **In this system, no parameter statistic of the head or the map has ever
+> successfully gated a lever. Direct per-blob measurement has never failed to.**
+
+The exhibits:
+
+```
+tail ratio (p90 head/base)     4 cells, no predictive information      17.67, 17.68
+saturation fraction (frac>0.9) drove a pre-registration to the wrong    17.62
+                               variable; acc alpha was the right one
+opacity-conf coupling          INVERTED: strongest coupling got the     17.70.2
+                               largest conf-fade margin
+accumulated alpha              ordered three maps, failed on the        17.70.4
+                               fourth, and the arms that tie reach
+                               values 2.7x apart
+```
+
+`opacity-conf partial` is kept as a **mechanism-section measurement and never a
+gate** — it is a real fact about what heads learn, and its value in this file is
+now equally as the fourth exhibit of a real measurement failing as a decision
+variable.
+
+### 17.70.8 Why training-time penalties cannot substitute, stated properly
+
+Kimi's sentence, which turns §17.70.1 from a failed experiment into a finding:
+
+> **Crowding is a map-level property, and the head never sees a map.**
+
+Pair training shows the head two views. The 6-11 layer stack that thinning
+addresses exists only after SLAM accumulates dozens of keyframes over the same
+surface. A training-time penalty can shape per-Gaussian opacity — and it
+demonstrably does, §17.69's +0.379 coupling proves the channel is reachable from
+the loss — but no per-pair objective can see the stack it would need to price.
+**Map problems need map-time levers.** That is why injection-time thinning is
+unconditional, and it predicts the result would not change at any knee position,
+which is consistent with o-0.9 (-21.0%) and o-0.6 (-15.8%) differing so little.
+
+### 17.70.9 The harness bug is fixed, and it was worse than it looked
+
+`scripts/exp_head_only.py` scored its verdict on the PENALIZED loss, so every
+penalty run compared itself against a base checkpoint paying the maximum
+possible penalty. Measured directly after the fix, on the base checkpoint at
+`--opacity-target 0.6`:
+
+```
+base render loss      0.0705
+base training loss    0.8705
+```
+
+**92% of the reported "base loss" was penalty, not render error.** That is the
+entire content of the o-0.6 run's "BEATS base by 94.1%". The verdict now scores
+the render component with penalty terms excluded and prints the training
+objective separately; the run also now reports `does NOT beat base` correctly
+when it does not. The record in §17.69.1-17.69.2 already used the val
+psnr/lpips, which were never affected.
+
+---
+
+## 17.71 The acc_alpha instrument was broken, and it was broken in the direction of the comparison it was built for
+
+`acc_alpha` was added this session (§17.69.3) and used immediately in §17.70.3
+and §17.70.4 to compare conf-fade against uniform-fade. It was wrong.
+
+### 17.71.1 How it surfaced
+
+Kimi's matched-acc-alpha design needed the INJECTED acc_alpha of the uniform arm
+at several doses. Every one came back `0.00`, on a map whose own 600-step arm at
+the same dose reported 3.49. A metric that reads 0.00 before optimization and
+3.49 after, on the same injected map, is not measuring what it claims.
+
+### 17.71.2 The bug
+
+The rasterizer culls Gaussians whose alpha falls below ~1/255 = 0.0039. The
+linearization rendered at `eps*alpha` with `eps=0.01`. On a map already thinned
+by a D=0.55 fade the median opacity is ~0.25, so `eps*alpha = 0.0025` — under
+the cutoff for essentially every Gaussian, and the render comes back exactly
+zero.
+
+This is not a small bias, and its direction is the worst possible one: **conf-
+fade and uniform-fade differ precisely in how many Gaussians they push into the
+low-alpha tail.** Uniform multiplies everything by (1-D), moving the whole
+distribution down together; conf-fade drives a minority hard toward the 0.1
+floor and leaves the rest near full opacity. So the arm with more Gaussians
+under the cutoff had more of its alpha mass invisible to the instrument — the
+metric was systematically biased along the exact axis it was introduced to
+measure.
+
+Saturated maps (opacity ~1.0, `eps*alpha = 0.01`) cleared the threshold, which
+is why the first calibration (§17.69.3, base and head maps, no fade) looked
+sane and the ordering reproduced.
+
+### 17.71.3 The fix
+
+Two changes, both required:
+
+```
+eps 0.01 -> 0.05            clears the cull threshold at realistic thinned
+                            opacities
+A/eps -> -ln(1-A)/eps       exact inversion of 1-prod(1-eps*a) instead of a
+                            first-order approximation, so the larger eps costs
+                            no accuracy on crowded maps
+```
+
+Plus a guard: the report now appends `[UNRELIABLE: N% of gaussians under the
+rasterizer cull threshold]` whenever that share exceeds 2%, so the failure
+announces itself instead of returning a confident small number.
+
+### 17.71.4 What this voids
+
+**Every acc_alpha comparison between arms with different opacity distributions
+is withdrawn pending re-measurement.** Specifically:
+
+- §17.70.3's claim that conf-fade reaches lower acc_alpha than uniform at equal
+  dose (3.86 vs 4.65 on the o-0.6 map). That claim was already falsified in
+  §17.70.4 on other grounds, so nothing downstream depended on it being true —
+  but it should not have been stated at all.
+- §17.70.4's table of injected acc_alpha across maps and arms, which is the
+  evidence that killed the crowding account.
+- §17.70.5-17.70.6's self-limiting reading, whose entire mechanism half rested
+  on "uniform reaches 1.53 while conf holds 3.79" at D=0.85.
+
+Note that the *conclusions* of §17.70.4 and §17.70.6 do not depend on the
+direction of the acc_alpha bias — both were falsifications of accounts I had
+proposed, and both also rest on lpips and psnr, which are unaffected. The
+crowding account is still dead (the arms that tie do not tie in quality-per-
+alpha under any measurement), and the self-limiting account still fails on its
+consequence half (lpips is flat at high dose regardless of what alpha did).
+**But the mechanism half of §17.70.5 is now unsupported rather than confirmed**,
+and §17.70.6's "mechanism half is confirmed" is retracted.
+
+The re-measurement with the fixed instrument is running.
+
+### 17.71.5 The lesson, which is not the one I would have guessed
+
+This is the fourth instrument failure this session (hp_alpha out of calibration,
+argsort on ties, the single-sequence roundtrip probe, and now this) and the
+first where the instrument was **built during the session, by me, for the exact
+comparison it then got wrong.** The other three were inherited or reused
+outside their regime.
+
+What would have caught it earlier: the instrument was validated once, on
+un-faded maps (§17.69.3), and then used exclusively on faded ones. The
+validation regime and the usage regime had no overlap at all — which is
+§17.63's rule, arriving for the third time and still not internalized.
+
+The practical form of the rule for next time: **validate an instrument on the
+arms you intend to compare, not on a convenient reference case.** A calibration
+against the base map proved nothing about faded maps, and the fade is the whole
+experiment.
+
+### 17.71.6 Re-measurement: the correction REVERSES §17.70.4, and the crowding account is back
+
+Injected acc_alpha, fixed instrument, with the cull-share guard shown:
+
+```
+map        none    uniform 0.45   conf 0.45        uniform 0.85
+tum-head   24.22      11.68       10.99  (3%)       0.86  (26%, void)
+tum-base   69.30      37.23       30.63             5.67
+o-0.6      26.65      12.50        9.59  (5%)       0.24  (14%, void)
+```
+
+Against the broken instrument's numbers for the same cells (9.11 / 0.85 / 2.31
+on tum-head), every value is different and **the key comparison flips sign**.
+The broken metric said conf reaches HIGHER acc_alpha than uniform on tum-head
+(2.31 vs 0.85); corrected, conf reaches **lower** (10.99 vs 11.68), as it does
+on all three maps.
+
+That was the single observation §17.70.4 used to falsify the crowding account.
+**The falsification is withdrawn.** And the corrected data does more than fail
+to contradict the account — it supports it, in the one way I had not been able
+to get any statistic to do all session:
+
+```
+map        acc_alpha reduction    conf-fade quality
+           (conf vs uniform)      benefit vs uniform
+tum-head        -5.9%                   0.0%
+tum-base       -17.7%                  -2.8%
+o-0.6          -23.3%                  -5.5%
+```
+
+**Monotone across all three maps, including the tie.** The map where conf barely
+lowers accumulated alpha is exactly the map where it produces no quality gain.
+This is the first scalar in this session that orders conf-fade's benefit — and
+§17.70.7's standing rule ("no parameter statistic has ever gated a lever") needs
+its first qualification: acc_alpha is a MAP-level property measured per blob,
+not a parameter statistic of the head, so it is the kind of quantity that rule
+was pointing toward rather than a counterexample to it.
+
+Stated with the caution four falsifications have earned: **three points, one
+of which I predicted wrongly twice already.** It is recorded as the leading
+account with an out-of-sample test outstanding (Kimi's matched-acc-alpha run,
+now redone against the fixed instrument), not as a finding.
+
+Two further corrections that follow:
+
+- §17.70.6's "the mechanism half is confirmed" (conf resists lowering alpha,
+  uniform drives it to 1.53) is **retracted twice over**: the direction was
+  backwards AND the D=0.85 cells carry 14-26% culled Gaussians, so they are void
+  rather than merely wrong. conf-fade is not self-limiting in the sense I
+  claimed; it lowers accumulated alpha MORE than uniform at equal dose.
+- The §17.69.3 calibration numbers (desk-base 34.23, desk-head 9.11) were taken
+  on un-faded maps where the cull threshold was not reached, so they stand — but
+  they are now 69.30 and 24.22 under the corrected estimator, because the
+  first-order form underestimates on crowded maps even when nothing is culled.
+  The ordering still reproduces §17.64's and the scale still does not.
+
+### 17.71.7 Kimi's matched-acc-alpha test: allocation carries a real but minority bonus
+
+Matched on **injected** acc_alpha, not post-optimization. That is both the right
+definition (the comparison is about allocation, not about where the optimizer
+ends up) and the only reliable one — the 600-step readings come back flagged at
+36-38% culled, while every 0-iteration reading here is clean.
+
+```
+o-0.6 map, uniform dose -> injected acc_alpha        target: conf@0.45 = 9.59
+  D=0.50   10.96
+  D=0.55    9.39      <- brackets the target; matched D ~ 0.544
+  D=0.60    7.83
+
+600-step lpips
+  uniform D=0.50   0.0758
+  uniform D=0.55   0.0744
+  uniform @ matched acc (interp. D=0.544)   ~0.0746
+  conf    D=0.45                             0.0732
+```
+
+**Kimi's prediction is confirmed on its qualitative claim** — uniform at matched
+acc_alpha lands between thin (0.0775) and conf (0.0732) — though below his
+stated numeric range of 0.076-0.080.
+
+The decomposition this buys is the useful part:
+
+```
+conf vs uniform at matched DOSE                     0.0775 -> 0.0732   -5.5%
+  ... of which, from reaching a lower alpha budget  0.0775 -> 0.0746   -3.7%
+  ... residual, from allocation per se              0.0746 -> 0.0732   -1.9%
+```
+
+So roughly **two thirds of conf-fade's advantage is that it reaches a lower
+accumulated alpha for the same mean opacity dose, and one third is allocation
+mattering beyond the scalar.** Neither term is zero, which is why the pure
+one-curve account and the pure allocation account were both wrong.
+
+This is consistent with §17.71.6's monotone ordering and it explains the
+tum-head tie without special pleading: there conf lowers acc_alpha by only 5.9%,
+so the large term is nearly absent, and what remains is the ~1-2% allocation
+residual — which is inside the noise of a single 600-step run.
+
+Instrument limit worth recording: even at eps=0.05 the estimator goes unreliable
+on uniform-faded maps AFTER optimization (36-38% culled), because the optimizer
+does not raise every opacity back over the threshold. **acc_alpha is trustworthy
+on injected maps and should not be quoted post-optimization for faded arms**
+without checking the guard.
+
+---
+
+## 17.72 The Replica sweep: conf-fade's first loss, and the account predicts it
+
+Kimi's round-31 risk-reducer #1. Every strong number for these levers came from
+office0; this runs the stack on three more Replica scenes with the plain Replica
+head.
+
+```
+scene      arm        psnr      lpips     conf vs uniform
+office1    none     27.3993    0.1252
+           uniform  27.7061    0.0854
+           conf     27.6541    0.0878        +2.8%  <- LOSS
+office2    none     18.9418    0.2310
+           uniform  19.9612    0.1537
+           conf     20.0610    0.1488        -3.2%
+room0      none     21.4092    0.2239
+           uniform  22.6212    0.1466
+           conf     22.8819    0.1385        -5.5%
+```
+
+**office1 is the first map where conf-fade loses to uniform-fade**, on both
+metrics (psnr -0.052 dB as well). That matters directly: the default shipped in
+§17.66.11 rested on Kimi's rule "conf >= uniform", and that rule is now violated.
+
+### 17.72.1 The failure is the account's best evidence
+
+Injected acc_alpha on the three new scenes, all clean of the cull guard:
+
+```
+scene      none    uniform   conf    conf's extra reduction    quality benefit
+office1   19.41     9.87     9.56          -3.1%                   +2.8%
+office2   35.81    18.53    16.30         -12.0%                   -3.2%
+room0     41.14    21.22    15.50         -27.0%                   -5.5%
+```
+
+Pooled with §17.71.6's three maps and sorted by how much extra accumulated alpha
+conf-fade removes:
+
+```
+map         extra acc_alpha reduction      quality benefit
+office1              -3.1%                     +2.8%   (loss)
+tum-head             -5.9%                      0.0%   (tie)
+office2             -12.0%                     -3.2%
+tum-base            -17.7%                     -2.8%
+o-0.6               -23.3%                     -5.5%
+room0               -27.0%                     -5.5%
+```
+
+Monotone but for one adjacent swap (office2/tum-base), Spearman ~0.94 over six
+maps. **The account predicted its own failure case**: office1 is where conf
+barely improves on uniform's alpha reduction, and it is the only map where conf
+loses. A correctly-predicted negative is worth considerably more than another
+win, and this is the first out-of-sample test the crowding account has passed.
+
+Per Kimi's round-32 shelving, which I am adopting: **the ordering is data and
+goes in the findings; the 2/3-1/3 decomposition remains a hypothesis** until the
+crowding-fade arm runs, because that arm is the account's sharpest consequence.
+
+His accompanying observation kills any temptation to gate on the untreated map:
+tum-head's untreated acc_alpha is 24.22 and o-0.6's is 26.65 — nearly identical
+starting levels, benefits of 0.0% and -5.5%. A threshold on the untreated map
+fails a fourth time, in the new units. What orders the benefit is the
+**achievable reduction**, which you only learn by pulling the lever:
+
+> The only map-level statistic that has ever ordered a lever's benefit in this
+> project is measured by pulling the lever.
+
+### 17.72.2 The default stays on, and its description is corrected
+
+Full record across seven maps (six offline + the online A/B):
+
+```
+wins 5   ties 1 (tum-head)   loses 1 (office1, +2.8%)   mean ~ -2.4%
+```
+
+Keeping `--refiner-conf-fade` on at 0.45 is defensible on the mean, and the loss
+case is small. What is NOT defensible is the sentence I shipped in its help text
+— "measured better or equal on every map tested" — which was true when written
+and is now false. The help text now states the win/tie/loss record, the mean, and
+that the lever is on **because it is better in expectation, not because it is
+safe everywhere**.
+
+Recording the process point plainly: I set that default earlier in this same
+session on a rule ("conf >= uniform") that three more scenes then broke. The
+rule was reasonable on five maps and wrong on six. Shipping a default off a
+five-map win record was the error, not the rule itself.
+
+### 17.72.3 Kimi's generalization of the instrument rule
+
+Third instance this session, and it now has an operational form worth quoting:
+
+> Any probe that TRANSFORMS the signal — eps-scaling, filtering, masking — must
+> re-validate at the extremes of the input range it will actually see, and print
+> its reliability flag on the same line as the number.
+
+The `[UNRELIABLE: N% under cull threshold]` guard is the template for that, not
+an exception. §17.63's rule covered recording the calibration regime; this adds
+the half that would actually have caught the bug.
+
+---
+
+## 17.72 Multi-scene Replica sweep: conf-fade is not uniformly better, and the default's justification has to change
+
+Kimi's round-31 risk-reducer #1, run because every strong number for these
+levers came from Replica office0. It found something on the first batch.
+
+```
+scene      none      uniform    conf     conf vs uniform    psnr (conf-uniform)
+office1   0.1252     0.0854    0.0878        +2.8%  WORSE     -0.052 dB
+office2   0.2310     0.1537    0.1488        -3.2%            +0.100 dB
+room0     0.2239     0.1466    0.1385        -5.5%            +0.261 dB
+```
+
+**office1 is conf-fade's first loss.** The sentence used to justify shipping it
+as a default — "measured better or equal on every map tested" — is no longer
+true, and it was true only because the sample was three maps drawn from two
+scenes.
+
+Full record across everything measured so far:
+
+```
+tum-base (offline)     -2.8%      o-0.6 map (offline)   -5.5%
+replica office0        -2.8%      tum-head (offline)     0.0%   tie
+office0 online A/B     -2.3%      office1               +2.8%   LOSS
+office2                -3.2%      room0                 -5.5%
+                                       mean -2.4%,  6 wins / 1 tie / 1 loss
+```
+
+The default is still defensible on the average, but **not on the grounds
+originally given**. The honest statement is "better on 6 of 8 maps, tied on 1,
+worse on 1, mean -2.4%", not "never worse". Four more scenes (office3, office4,
+room1, room2) are running before the default is either restated or withdrawn.
+
+What office1 is NOT explained by: its untreated acc_alpha is 21.86, the lowest
+of the three, which would fit "less crowding, less to gain" — except tum-base at
+69.30 gains only -2.8% while o-0.6 at 26.65 gains -5.5%. Kimi's round-32 point
+stands and is now confirmed a fifth time: **the untreated map's acc_alpha does
+not order the benefit; only the achievable REDUCTION does, and that is a
+property you learn by pulling the lever.** His sentence for the file:
+
+> The only map-level statistic that has ever ordered a lever's benefit in this
+> project is measured by pulling the lever.
+
+The acc_alpha guard fired at 18-37% on the faded arms of every scene here, so
+those post-optimization values cannot be used to test the reduction-ordering
+account on this batch. Injected values would be needed and were not taken.
+
+## 17.73 Crowding-fade, built
+
+`--crowd-fade T` / `--crowd-voxel M` in `refine_local.py`. Kimi's round-32
+lever and the sharpest consequence of §17.71.7's account: if two thirds of
+conf-fade's value is reaching a lower alpha budget, confidence is a proxy and
+the direct variable should do better.
+
+```
+mult = clamp(T / sum(opacity in voxel), 0.1, 1)
+```
+
+Applied AFTER assembly, not per keyframe, and that placement is the design.
+Within one keyframe there is exactly one Gaussian per pixel, so there is no
+stack to measure — crowding exists only where several keyframes' Gaussians land
+on the same surface. It is a map-level property, which is the same fact that
+makes §17.70.8 true.
+
+No rank normalization, on Kimi's explicit instruction and for a good reason:
+rank-per-keyframe forces every keyframe to give up the same fraction regardless
+of how crowded it is. That was a defensible compromise for an uncalibrated
+confidence head; for crowding, which is geometric and comparable across
+keyframes by construction, it would be a bug.
+
+### 17.73.1 The voxel scale is not a free parameter, and the default was wrong
+
+First smoke test used the built-in default (4x median Gaussian extent = 1.41 cm)
+and the lever was **inert**: alpha/voxel median 1.16, mean multiplier 0.966,
+acc_alpha 25.94 against the untreated 26.65.
+
+The reason is worth recording because it nearly shipped: **accumulated alpha is
+a RAY quantity and voxel occupancy is a VOLUME quantity.** A pixel accumulating
+26 layers collects them at different depths along its ray, which land in
+different voxels. A voxel small enough to be "one surface" therefore sees almost
+no stacking, and the lever measures nothing.
+
+```
+voxel     occupied    alpha/voxel median   mult mean   injected acc_alpha
+1.41 cm   897,401           1.16             0.966          25.94
+3 cm      196,323           5.25             0.516          13.30  (8% culled)
+6 cm       41,802          23.14             0.164           2.99  (73% culled)
+12 cm       9,059          93.51             0.107           0.75  (97% culled)
+```
+
+3 cm is the working scale: wide enough to hold the several keyframes' worth of
+Gaussians that land on one surface, narrow enough not to merge separate
+surfaces. The matched-acc arms are running at that scale.
+
+Note the cull-share guard doing exactly its job at 6 and 12 cm — those acc_alpha
+figures would otherwise have looked like spectacular crowding reduction.
+
+### 17.72.1 All eight Replica scenes: the thinning is decisive, the allocation is not
+
+```
+scene       none     uniform     conf     conf vs uniform
+office0    0.1649    0.1110    0.1079        -2.79%
+office1    0.1252    0.0854    0.0878        +2.81%
+office2    0.2310    0.1537    0.1488        -3.19%
+office3    0.2352    0.1628    0.1540        -5.41%
+office4    0.2521    0.1533    0.1578        +2.94%
+room0      0.2239    0.1466    0.1385        -5.53%
+room1      0.1831    0.1372    0.1380        +0.58%
+room2      0.2402    0.1652    0.1472       -10.90%
+```
+
+Paired over the 8 scenes:
+
+```
+comparison          mean       paired t      Wilcoxon    wins
+uniform vs none    -32.34%     p=2.5e-05     p=0.0078     8/8
+conf    vs none    -34.18%     p=3.8e-05     p=0.0078     8/8
+conf    vs uniform  -2.68%     p=0.132       p=0.148      5/8
+```
+
+**Two conclusions, and they are not the same conclusion.**
+
+1. **Turning thinning on is overwhelming and reproducible.** -32% to -34% lpips
+   on every one of eight scenes, p < 1e-4. Nothing else in this project has an
+   effect this large or this consistent.
+2. **Choosing the confidence allocation over the uniform one is not
+   established.** Mean -2.7%, median -3.0%, but sd 4.7 across scenes and both
+   paired tests land at p ~ 0.13-0.15. At n=8 this is indistinguishable from
+   zero.
+
+The default stays at `--refiner-conf-fade 0.45`, and the reasoning in the help
+text is rewritten to match: it is on because it is never much worse (worst case
++2.9%) and is numerically ahead on mean and median, **not because it is
+measurably better.** `--refiner-uniform-fade 0.45` is within noise of it.
+
+This retires the framing of §17.66.7-§17.66.11. The -2.8% that looked like a
+stable constant across two maps was a draw from a distribution with sd 4.7;
+seeing it twice in a row was the coincidence Kimi warned about in round 30 when
+he told me not to read the decimal agreement. **He was right for a reason I did
+not appreciate at the time: the agreement was not evidence of precision, it was
+a small sample of a wide distribution.**
+
+## 17.74 Crowding-fade LOSES at matched budget: the map variable is not the mechanism
+
+Kimi's round-32 pre-registration: *crowding-fade at acc alpha matched to
+conf-fade's 9.59 should land at or below conf's 0.0732; if it beats conf, the
+mechanism arc closes on the map variable and the head-side statistics become
+description.*
+
+```
+o-0.6 map, all arms                lpips     psnr     injected acc_alpha
+none                              0.0920   27.2051        26.65
+uniform 0.45                      0.0775   27.4765        12.50
+conf 0.45                         0.0732   27.6614         9.59
+crowd T=4.0  (matched, 9.36)      0.0806   27.4268         9.36
+crowd T=4.5              (10.36)  0.0815   27.4057        10.36
+combo: crowd 4.5 + conf 0.45      0.0703   27.6976         6.12
+```
+
+**Crowding-fade at matched budget scores 0.0806 — worse than conf (0.0732) AND
+worse than uniform (0.0775).** Pre-registration falsified, and in the direction
+that hurts the account rather than helping it.
+
+This is the cleanest evidence yet against §17.71.7's decomposition. If two
+thirds of conf-fade's value were "reaching a lower accumulated alpha", then a
+lever that targets accumulated alpha DIRECTLY, and provably reaches the same
+value, should capture at least that two thirds. It captures none of it: it does
+worse than the uniform fade that reaches a HIGHER acc_alpha (12.50).
+
+So accumulated alpha is not the operative variable. Reaching a given alpha
+budget is not what pays; **where the alpha is removed from is what pays**, and
+crowded voxels are the wrong place to take it from. Note crowd-fade needs a
+heavier mean multiplier (0.389) than conf (0.55) to reach the same budget, i.e.
+it removes more opacity for the same alpha reduction -- an inefficient
+allocation by construction.
+
+The combo arm is the best cell in the table (0.0703) but is **not dose- or
+budget-matched** (acc_alpha 6.12 against conf's 9.59), so it cannot be scored
+against Kimi's decision rule. What it does establish is that the two levers are
+not redundant: stacking them beats either alone, so confidence carries
+information that voxel crowding does not. A budget-matched combo arm is the
+outstanding measurement.
+
+### 17.74.1 Running score of mechanism accounts
+
+```
+channel present/absent          falsified 17.70.2 (coupling ordering inverted)
+crowding / acc-alpha budget     falsified 17.70.4, reinstated 17.71.6 by an
+                                instrument fix, falsified again HERE by direct test
+self-limiting allocation        falsified 17.70.6 (consequence half)
+2/3 budget + 1/3 allocation     falsified HERE (the 2/3 term does not transfer
+                                to a lever that targets the budget directly)
+```
+
+Four accounts, five falsifications, one of which was an instrument artifact in
+both directions. **The empirical position is unchanged and is worth stating
+plainly: thinning works enormously (-32%, p<1e-4, 8/8), and no mechanism yet
+proposed survives contact with a direct test.** The lever ships on its measured
+effect, and this file does not claim to explain it.
+
+---
+
+## 17.75 The causal test closes: the channel is PHOTOMETRIC, not geometric
+
+Both arms of Kimi's round-24 design are now in, trained identically (40 epochs,
+same seed, same family, same resolution) and probed identically (5 pairs of
+Replica office0, clean input, the protocol behind every row of §17.64).
+
+```
+head                  scale p90    opacity median   mean    frac>0.9   frac>0.99
+base                    9.778          1.0000      1.0000    100.0%     100.0%
+replica (clean)        22.768          1.0000      0.9993     99.8%      99.4%
+noisy   (content)      26.182          1.0000      1.0000    100.0%     100.0%
+photo   (photometry)   17.367          0.9912      0.9293     83.1%      52.1%
+```
+
+**Only the photometric arm moves opacity.** Against the clean head's 99.8%:
+
+```
+content     +0.2 pp   (99.8 -> 100.0)   no recruitment at all
+photometry -16.7 pp   (99.8 ->  83.1)   and frac>0.99 halves, 99.4 -> 52.1
+```
+
+That reverses the round-24 hypothesis, which predicted geometric conflict would
+be the channel and photometric jitter would not be. The measured dissociation is
+the other way round.
+
+### 17.75.1 Scoring the pre-registration exactly as written
+
+Kimi's stated rule was **"photometry arm ends with frac>0.9 > 70%; if it comes
+out <50%, the exposure-hedge slice is real and my colour-sufficiency model is
+wrong."** Measured 83.1%. **By his own threshold his prediction holds** — the
+opacity channel is not strongly recruited, and his argument (a global x0.8-1.25
+shift is exactly representable by scaling `f_dc`, so opacity never needs to be
+called on) survives as the account of why it is only partial.
+
+Both things are true and the file records both: his numeric prediction passed,
+and the *direction* of the round-24 channel is falsified. The contrast between
+arms does not depend on the threshold — it is 16.9 pp wide between two arms that
+differ in nothing but the perturbation.
+
+### 17.75.2 The two degradations have opposite signatures, on both axes
+
+```
+                       scale p90 vs clean head     opacity frac>0.9
+content (geometric)         +15%   (22.8 -> 26.2)      unchanged
+photometry (appearance)     -24%   (22.8 -> 17.4)      -16.7 pp
+```
+
+Two distinct response modes, cleanly separated:
+
+- **Matching uncertainty is answered with scale**, and opacity is not touched.
+- **Appearance disagreement is answered with opacity**, and the scale tail
+  actually shrinks.
+
+This is the first result in the arc that assigns each output channel a job, and
+it was produced by a controlled pair rather than by correlating outputs — which
+matters, given that every correlational account in §17.70-17.74 has been
+falsified.
+
+### 17.75.3 What still does not explain TUM
+
+Neither arm reaches TUM's 12.5%. Photometry gets 83.1% from 99.8%, moving about
+one sixth of the distance on the frac>0.9 scale and rather more on frac>0.99.
+So per-view brightness jitter is *a* real driver and is nowhere near sufficient.
+
+The remaining candidates are the ones no image-space perturbation of a rendered
+dataset can produce, and they are now better motivated than when I proposed them
+in round 28, because the surviving driver is photometric rather than geometric:
+specular drift, white balance, rolling shutter, motion blur -- appearance
+disagreements that are view- and scene-correlated rather than an i.i.d. global
+gain. Replica has none of them by construction. Depth-supervision structure
+(§17.66.3's `invalid`, partial -0.198) remains the other live member and is the
+one that is not photometric at all.
+
+### 17.75.4 The corrected verdict printer, first clean use
+
+```
+base           : 0.1009
+head-only best : 0.0749   => BEATS base by 25.7%
+```
+
+This run has no opacity penalty, so the render loss and the training objective
+coincide and 25.7% is a real quality number. Recorded as the contrast case for
+§17.70.9's o-0.6 run, whose 94.1% was 92% penalty term. Comparable val figures:
+photo psnr 21.00 / lpips 0.1283 against the clean head's 21.23 / 0.1084, so the
+degradation costs val quality as expected and the head still beats base.
+
+### 17.74.2 Budget-matched combo: crowding contributes nothing, and dilutes conf
+
+The outstanding cell from §17.74, now matched. All on the o-0.6 map:
+
+```
+arm                                  lpips     injected acc_alpha
+none                                0.0920        26.65
+uniform 0.45                        0.0775        12.50
+crowd  T=4.0        (matched)       0.0806         9.36
+combo6 crowd 6.0 + conf 0.30        0.0747         9.63   <- budget-matched
+combo8 crowd 8.0 + conf 0.30        0.0755        11.03
+conf   0.45                         0.0732         9.59   <- best
+```
+
+Scored against Kimi's round-32 decision rule:
+
+- **combo (0.0747) >> crowd alone (0.0806)** -> confidence carries information
+  that voxel crowding does not. His stated consequence: ship the combination.
+- But **combo is also WORSE than conf alone (0.0747 vs 0.0732)** at the same
+  budget, which his rule did not anticipate. Adding the crowding term to
+  confidence does not add anything; it dilutes.
+
+So at a matched alpha budget the ordering is unambiguous:
+
+```
+conf alone  0.0732   <   combo  0.0747   <   uniform  0.0775   <   crowd  0.0806
+```
+
+**Crowding-fade is the worst allocation tested, including worse than spreading
+the dose uniformly.** The lever Kimi proposed as the line's "final form" — the
+one that targets the map property directly — is refuted, and refuted twice: it
+loses alone, and it degrades conf-fade when mixed in. `--crowd-fade` stays in
+the codebase as a measured negative, not as a shipping lever.
+
+This also closes the §17.71.7 decomposition for good. There is no sense in which
+"reaching a lower accumulated alpha" is two thirds of the benefit: three
+different levers reach ~9.5 and score 0.0732, 0.0747 and 0.0806.
+
+## 17.76 The photometric channel produces ALLOCATION, not just a level shift
+
+Co-location probe on the photo head, the same instrument as §17.66:
+
+```
+photo head, Replica office0, opacity median 0.9906, frac>0.9 81.2%
+                    invalid      edge   disagree      conf     depth
+OPACITY   raw        0.0479   -0.0693   -0.2273    0.0985    0.2581
+          |depth     0.1338   -0.0689   -0.2684    0.1270    0.0710
+MAXSCALE  |depth     0.0019    0.1341    0.1277   -0.4174    0.0428
+```
+
+**`disagree` is the strongest opacity predictor at -0.268 partial**, against
+`conf` at +0.127. Compare the TUM head, where the ranking is the other way round
+(conf +0.213, disagree -0.096).
+
+So training under per-view brightness jitter does not merely lower the opacity
+level — it makes opacity **predicted by local photometric disagreement**, which
+is the specific pattern the perturbation would predict if opacity were serving
+as an appearance-disagreement hedge. Perturb photometry, and opacity reorganizes
+around photometry.
+
+That is a causal demonstration of the channel rather than a correlational one,
+and it is the strongest single piece of mechanism evidence in this arc — notable
+because every correlational account here (§17.70-17.74) has been falsified while
+the two controlled-pair results (§17.75.2's dissociation and this) both stand.
+
+`invalid` is +0.134 here and must be ignored: Replica's rendered depth is
+complete, so the predictor has no variance on this family and the sign is noise.
+
+---
+
+## 17.77 The real-family deployment lands OUTSIDE the pre-registered band, and the line's scope has to be restated
+
+Kimi's round-31 risk-reducer #2, the run he called "the only one that answers
+does this line matter in a real deployment". Full online SLAM, TUM desk, TUM
+head, ~2300 steps, conf-fade at the new default against conf-fade disabled.
+
+His PRE-REGISTERED band: lpips -3% to -8%, psnr +-0.1 dB, black +<0.3pp, and
+explicitly *"if it lands outside that, the whole line's scope statement needs
+rewriting."*
+
+```
+arm        psnr       lpips
+nofade   14.1646     0.3718
+conf     14.2152     0.3696      -0.6% lpips, +0.05 dB
+```
+
+**-0.6%. Outside the band, on the low side.** psnr is inside it. So by his own
+criterion the scope statement is what changes, not the lever.
+
+### 17.77.1 The magnitude is largely Replica-specific; the sign is not
+
+Set against the Replica online A/B on the same harness:
+
+```
+family/head              online conf-fade vs no fade
+Replica office0, head          -12.6%
+TUM desk, TUM head              -0.6%
+```
+
+and the offline TUM sequences now coming in tell the same story — thinning
+against no thinning is -1.8% on tum room and -0.3% on tum 360, against -32% mean
+across eight Replica scenes.
+
+**This is the Replica-artifact risk Kimi flagged in round 31, and it is real for
+the effect SIZE.** It is not a sign flip: thinning does not hurt on TUM, it
+simply buys very little there. The headline "-32%, p<1e-4, 8/8" in §17.72.1 is a
+statement about Replica and must never be quoted without the family attached.
+
+### 17.77.2 The leading explanation, and the experiment that isolates it
+
+The TUM head un-saturates itself (median opacity 0.60, frac>0.9 12.5%), so its
+baked map has little haze left for an injection-time fade to remove. The Replica
+head stays saturated at 99.8%. On that account the difference is a property of
+the MAP, not of the dataset.
+
+The confound is obvious: TUM and Replica differ in sensor, geometry, exposure,
+trajectory and absolute map quality (14 dB vs 27 dB), any of which could produce
+the same contrast.
+
+**The isolating experiment is running now**: the same TUM desk sequence, same
+harness, same everything, with the BASE head (100% saturated) instead of the TUM
+head. PRE-REGISTERED: if saturation is the explanation, the base head gains
+substantially more than the TUM head's -0.6%. If it also gains ~0, saturation is
+not the explanation and the contrast belongs to the dataset.
+
+Against that, one caution already on record: the o-0.6 head is un-saturated
+(frac>0.9 = 0.0%, median 0.5614 — close to the TUM head's 0.60) and still gains
+-20.4% offline. So per-Gaussian saturation cannot be the whole story, and if the
+base-head arm comes back large, the account will be "saturation matters on TUM"
+rather than "saturation explains the levers".
+
+### 17.77.3 Saturation IS the explanation on TUM, and the pre-registration lands
+
+Same sequence, same harness, same everything except the head:
+
+```
+TUM desk, online, ~2300 steps      psnr      lpips     conf-fade effect
+BASE head   (frac>0.9 = 100%)
+  no fade                        14.1743    0.4035
+  conf-fade 0.45                 14.0596    0.3775      -6.4%   -0.11 dB
+TUM head    (frac>0.9 =  12.5%)
+  no fade                        14.1646    0.3718
+  conf-fade 0.45                 14.2152    0.3696      -0.6%   +0.05 dB
+```
+
+**A 10x difference in the lever's value, from the head alone.** The
+pre-registration in §17.77.2 is confirmed: on TUM, map saturation is what
+decides whether injection-time thinning pays.
+
+And note where -6.4% falls: **inside Kimi's pre-registered -3 to -8% band.** His
+band was right; it was right for a *saturated* map, and the TUM head had already
+done the job the lever exists to do.
+
+### 17.77.4 The 2x2 the two arms accidentally completed
+
+Reading the four cells as a factorial — head training vs injection thinning:
+
+```
+                    no fade     conf-fade
+base head           0.4035       0.3775
+TUM head            0.3718       0.3696
+
+head training alone   -7.9%
+injection lever alone -6.4%
+both                  -8.4%
+```
+
+**The two routes do nearly the same job, and stacking them adds almost nothing**
+(-8.4% against -7.9% for head training alone). Head training is slightly the
+better of the two on this sequence, and the lever recovers most of its value on
+an untrained head.
+
+That is a genuinely useful engineering statement, and it is the first time the
+two halves of this project have been measured against each other on one axis in
+one harness. It also gives the lever a clear role: **it is what you use when you
+cannot retrain the head for the deployment family.**
+
+Caveat, stated because it limits the claim: one sequence, and the o-0.6 head
+remains a counterexample to any pure saturation account — it is un-saturated
+(frac>0.9 = 0.0%, median 0.5614, essentially the TUM head's 0.60) and still gains
+-20.4% offline on Replica. So saturation decides the WITHIN-TUM contrast
+decisively and still does not explain the cross-family one. The 2x2 is repeating
+on tum room now.
+
+### 17.77.5 TUM allocation sweep: conf and uniform are indistinguishable there too
+
+```
+sequence   none      uniform    conf     conf vs uniform   thinning vs none
+room      0.4583     0.4502    0.4501       -0.02%             -1.8%
+360       0.4406     0.4399    0.4419       +0.45%             -0.3%
+teddy     0.4456     0.4371    0.4367       -0.09%             -1.9%
+```
+
+Three ties and one marginal loss, on a real-sensor family with a head that has
+already un-saturated itself — so both the allocation question and the thinning
+question come out near zero here, for the reason §17.77.3 identifies.
+
+Combined with Replica's p=0.13, the position on the allocation choice is now
+firm: **conf-fade vs uniform-fade is not measurably different on any family
+tested.** The default stays where it is on the "never much worse, numerically
+ahead" grounds already written into the flag's help, and nothing stronger should
+be claimed for it.
+
+---
+
+## 17.78 The allocation question, closed: no measurable difference, on 12 maps across two families
+
+```
+TUM (4 sequences, TUM head)     room -0.02%   360 +0.45%   teddy -0.09%   plant +1.16%
+                                mean +0.38%,  wins 2/4,  paired t p=0.279
+Replica (8 scenes, Replica head)                          mean -2.68%,  wins 5/8,  p=0.132
+
+COMBINED  n=12    mean -1.66%   median -0.06%   wins 7/12
+                  paired t p=0.231    Wilcoxon p=0.380
+                  95% CI on the mean   -3.96% .. +0.63%
+```
+
+**The confidence interval contains zero and the median is -0.06%.** After a dose
+sweep, two families, twelve maps and an online A/B, `--conf-fade` and
+`--uniform-fade` are not distinguishable.
+
+Note the family split, which is the only structure in the data: conf is ahead on
+Replica (-2.7%) and marginally behind on TUM (+0.4%). §17.77.3 explains why any
+allocation effect must be small on TUM — the TUM head has already un-saturated
+itself, so total thinning only buys -0.3% to -4.1% there, and a third-order
+question about how to allocate a small dose cannot resolve above noise.
+
+**The default is left at `--refiner-conf-fade 0.45`** — not because it is better,
+but because it is the configuration both deployment A/Bs were actually run with,
+and changing a default on no evidence is churn. The flag's help now states the
+CI and says plainly that `--refiner-uniform-fade 0.45` is equally defensible and
+simpler, and that effort belongs on *whether thinning is on*, not on which
+allocation.
+
+### 17.78.1 What this retires
+
+§17.66.7 read a -2.8% agreement across two maps as a stable effect and built
+three sections of mechanism on it. The effect was a draw from a distribution
+whose 95% CI spans -4.0% to +0.6%. Every mechanism account in §17.70-17.74 was
+an attempt to explain a difference that is not established to exist.
+
+That is the single most expensive error of the session, and it is not an
+instrument bug — the numbers were all correct. **It was reading a two-point
+agreement as precision instead of asking for a confidence interval, and then
+spending five experiments explaining it.** The instrument bugs cost hours; this
+cost the whole mechanism arc.
+
+The rule, for the file: **before explaining an effect, put an interval on it.**
+A difference of a few percent measured on two maps needs n before it needs a
+mechanism.
+
+### 17.77.6 tum room replicates the 2x2 (partial), and two operational near-misses
+
+```
+tum room, online              psnr      lpips
+base head, no fade          12.5912    0.4801
+base head, conf-fade        12.6953    0.4470     lever alone  -6.9%
+TUM head,  no fade          13.0125    0.4325     head alone   -9.9%
+TUM head,  conf-fade          (running)
+```
+
+Against desk's -6.4% / -7.9%, the two effects replicate closely on a second
+sequence, and the ordering (head training slightly ahead of the lever) holds.
+
+**Near-miss 1: a flag validation caught a real misconfiguration.** The Replica
+saturation run died immediately on `--refiner-gpu 1 is not a visible device`
+-- the flag indexes VISIBLE devices, so with `CUDA_VISIBLE_DEVICES` pinned to a
+single card the only valid value is 0. That check was added in an earlier
+session precisely because a bad refiner device used to kill the refiner
+subprocess while the main run completed looking normal. It did its job: the run
+failed loudly instead of silently producing a map with no refinement. The three
+earlier deployment scripts were checked against this and were correct
+(`--refiner-gpu 0`), and their logs contain no errors and reach `snapshot v10`,
+so §17.66.11's -12.6% and §17.77's numbers stand.
+
+**Near-miss 2, which was luck rather than care.** Fixing that bug, I `sed`-ed
+three scripts including one that was still running, and the replacement changed
+the byte length of a line. **Bash reads scripts lazily by byte offset**, so
+editing a running script can make it execute garbage from a shifted position.
+This session already produced one artifact of exactly that kind -- the
+`cf_tumhead.out` log that came back as NUL bytes and had to be re-run. The job
+survived here only because bash had already buffered the loop.
+
+Rule: **never edit a script that is currently executing.** Copy it, edit the
+copy, and launch the copy. The cost of the copy is nothing; the cost of the
+failure mode is a silently corrupted run that looks like a result.
+
+---
+
+## 17.79 In the ONLINE harness, head saturation separates the lever's value perfectly — and the offline harness was overstating it tenfold
+
+The cross-family test from §17.77.2 came back, and with it the four online
+deployment A/Bs now form a complete picture.
+
+```
+online A/B, conf-fade vs no fade      head frac>0.9    lpips effect
+Replica office0, plain head               99.8%          -12.6%
+TUM desk,        base head               100.0%           -6.4%
+Replica office0, o-0.6 head                0.0%           -1.8%
+TUM desk,        TUM head                 12.5%           -0.6%
+```
+
+**Perfect separation, 4/4, across both families.** Saturated heads gain -6% to
+-13%; un-saturated heads gain -0.6% to -1.8%. The two clusters do not overlap
+and the split is not confounded with family — each family contributes one point
+to each cluster.
+
+### 17.79.1 The offline harness overstates the lever by an order of magnitude
+
+The o-0.6 head is the case that makes this unmissable, because the baselines
+match almost exactly:
+
+```
+o-0.6 head, Replica office0        no-fade lpips    conf-fade    effect
+offline, 600 steps, frozen blob        0.0920         0.0732     -20.4%
+online,  ~2300 steps, growing map      0.0913         0.0897      -1.8%
+```
+
+Same head, same sequence, baselines within 0.8% of each other — and the lever's
+measured benefit differs **eleven-fold**.
+
+The explanation is the optimizer. Injection-time thinning is a *prior on the
+initial opacities*; given enough steps the optimizer re-derives whatever
+opacities the data supports and the prior washes out. 600 offline steps leave it
+largely intact; ~2300 online steps mostly erase it. What survives online is only
+the part the optimizer cannot fix on its own — which is exactly the haze a
+saturated head bakes in, and exactly nothing when the head has already
+un-saturated itself.
+
+This is standing rule 5 (cross-harness absolutes do not mix) in a sharper form
+that the rule as written does not cover: **it is not only absolute scores that
+fail to transfer between harnesses, it is the measured EFFECT SIZE of an
+intervention.** Every offline lever number in §17.66-17.74 is therefore an upper
+bound on deployment value, not an estimate of it. The rule is amended.
+
+### 17.79.2 This rehabilitates the one diagnostic I had written off
+
+§17.64 originally said "arm it when the map's accumulated alpha is high and the
+head has not un-saturated itself." I retired the arming column wholesale in
+§17.67 after the tail RATIO failed on four cells, and §17.70.7 generalized that
+to "no parameter statistic of the head has ever gated a lever."
+
+That generalization was measured entirely in the offline harness, where — per
+§17.79.1 — the lever's value is dominated by an effect the optimizer would have
+removed anyway. **In the harness that ships, the saturation fraction gates the
+lever correctly on every cell tested.** The tail ratio remains dead; the
+saturation fraction does not.
+
+Stated with the caution this deserves: n=4, perfect separation, and I have been
+wrong about a gating statistic four times before — every one of those times
+offline. An out-of-sample cell is running now (Replica office1, plain saturated
+head), pre-registered to land in the saturated cluster at worse than -3%.
+
+### 17.79.3 What this implies for the default, pending that cell
+
+If the gate holds, `--refiner-conf-fade 0.45` unconditionally is the wrong
+default: it buys -6% to -13% on a saturated head and ~1% on an un-saturated one,
+and `frac(opacity > 0.9)` is measurable at load time from a single pair. The
+right default is to arm the lever on that measurement. Not changed yet — one
+out-of-sample cell first, and a gate that fires on the wrong side would be worse
+than no gate.
+
+### 17.79.4 The 2x2 replicates
+
+```
+                     desk                room
+lever alone         -6.4%               -6.9%
+head alone          -7.9%               -9.9%
+both                -8.4%              -10.4%
+```
+
+Both sequences agree: head training and the injection lever do nearly the same
+job, head training is slightly ahead, and stacking adds about half a point.
+Consistent with §17.79.1's account — head training removes the haze at source,
+so the lever has less left to remove.
+
+### 17.79.5 The gate is falsified on its first out-of-sample cell
+
+Pre-registered in §17.79.2, before the run: Replica office1 with the plain
+(99.8% saturated) head should land in the saturated cluster, worse than -3%.
+
+```
+Replica office1, plain head, online     psnr      lpips
+  no fade                             22.3723    0.1103
+  conf-fade 0.45                      22.3235    0.1085     -1.6%
+```
+
+**-1.6%. It lands in the UN-saturated cluster.** The gate is wrong on the first
+cell that could have falsified it.
+
+Worse for the account, the comparison that isolates the variable:
+
+```
+plain Replica head (99.8% saturated), online conf-fade effect
+  office0     -12.6%
+  office1      -1.6%
+```
+
+**Same head, same family, same harness — an 8x difference from the SCENE
+alone.** Whatever decides the lever's online value, it is not a property of the
+head, because the head is identical in those two rows.
+
+So the four-cell perfect separation in §17.79 was a coincidence of which scenes
+happened to be paired with which heads, and §17.79.2's "this rehabilitates the
+saturation fraction" is **withdrawn**. §17.70.7's rule stands unamended after
+all, and now at five exhibits:
+
+```
+tail ratio                4 cells, no predictive information
+saturation fraction       perfect on 4 cells, falsified on the 5th
+opacity-conf coupling     inverted
+accumulated alpha         ordered 3, failed the 4th
+untreated acc_alpha       failed (Kimi, round 32)
+```
+
+I should have caught this before writing §17.79.2. The four cells varied head
+AND scene together and I read the separation as being about the head; office1
+was already on record in §17.72 as the scene where conf-fade behaved oddly
+(the only offline loss at that point). The confound was visible in data I had
+already collected.
+
+### 17.79.6 What actually survives, and what the default now rests on
+
+Every online cell measured, all families and heads:
+
+```
+Replica office0, plain head    -12.6%
+TUM desk,        base head      -6.4%
+Replica office0, o-0.6 head     -1.8%
+Replica office1, plain head     -1.6%
+TUM desk,        TUM head       -0.6%
+```
+
+Range -0.6% to -12.6%, **beneficial in every cell, harmful in none**, and not
+predicted by any head- or map-level statistic tried. That is a weaker claim than
+a gate, and it is the one the default should rest on:
+
+> Leave conf-fade on unconditionally. It has never been harmful in the online
+> harness, it is occasionally worth -12%, and nothing available at load time
+> predicts which case you are in — so the expected value of gating it is
+> negative once the risk of gating it wrongly is counted.
+
+This is also the correct reading of §17.79.1: the online effect is bounded below
+by zero because the optimizer removes a prior it disagrees with. A prior that
+washes out when wrong and persists when right is exactly the kind of
+intervention that should be left on by default.
+
+More online cells are running to test the "never harmful" claim, since it is now
+load-bearing for the default and rests on five points.
+
+### 17.79.7 The gate fails on the un-saturated side too
+
+Second out-of-sample cell, pre-registered in §17.79.3's companion run: the o-0.9
+penalty head (frac>0.9 = 0.0%, median opacity 0.8395) on Replica office0 should
+land in the un-saturated cluster, better than -3%.
+
+```
+Replica office0, o-0.9 head, online     psnr      lpips
+  no fade                             26.8403    0.0889
+  conf-fade 0.45                      26.8770    0.0842     -5.3%
+```
+
+**-5.3%**, between the two clusters and much nearer the saturated one. The
+prediction misses on this side as well.
+
+Both out-of-sample cells fail, in opposite directions — a saturated head
+predicted large that came in small (office1, -1.6%), and an un-saturated head
+predicted small that came in large (o-0.9, -5.3%). Testing both sides is what
+made the falsification unambiguous rather than a near-miss; a gate confirmed
+only where it predicts "large" would have looked half-alive.
+
+Note also that the o-0.9 and o-0.6 heads sit at 0.0% saturation on the same
+scene with the same harness and give -5.3% and -1.8%. Two heads, identical on
+the gating statistic, differing threefold in the outcome it was supposed to
+predict.
+
+### 17.79.8 The "never harmful" record, which is what the default rests on
+
+```
+online A/B, conf-fade vs no fade                     lpips effect
+Replica office0, plain head                             -12.6%
+Replica room0,   plain head                              -8.9%
+TUM desk,        base head                               -6.4%
+Replica office0, o-0.9 head                              -5.3%
+Replica office0, o-0.6 head                              -1.8%
+Replica office1, plain head                              -1.6%
+TUM desk,        TUM head                                -0.6%
+```
+
+**7 cells, 7 beneficial, none harmful.** Range -0.6% to -12.6%, mean about
+-5.3%, spanning two families, four heads and five scenes. Nothing predicts the
+magnitude; the sign is so far invariant.
+
+That asymmetry is the whole case for the default, and it has a mechanism behind
+it (§17.79.1): the lever is a prior on initial opacity, and the optimizer
+removes a prior it disagrees with while keeping one it agrees with. A prior that
+washes out when wrong and persists when right should be on by default, and no
+gate is needed precisely because the downside is bounded near zero.
+
+Four more cells are running to push this to eleven, since it is the one claim in
+the arc that the shipped configuration depends on.
+
+### 17.79.9 A third family produces the first harmful cell — and it is negligible
+
+Pre-registered in §17.79.8's companion run: the sign stays negative on 7-scenes
+and euroc, because a positive cell would break the default's only remaining
+justification.
+
+```
+7-scenes chess, 7-scenes head, online     psnr      lpips
+  no fade                               13.6824    0.4889
+  conf-fade 0.45                        13.6163    0.4897     +0.16%
+```
+
+**+0.16%.** The first harmful online cell in eleven, and psnr also falls
+(-0.07 dB). "Never harmful" is falsified as an absolute.
+
+The practical conclusion strengthens rather than weakens, because the magnitude
+is what matters for a default and it is negligible. Full online record:
+
+```
+Replica office3, plain head    -12.7%      TUM desk,  base head       -6.4%
+Replica office0, plain head    -12.6%      Replica office0, o-0.9     -5.3%
+Replica office2, plain head    -10.2%      Replica office0, o-0.6     -1.8%
+Replica room0,   plain head     -8.9%      Replica office1, plain     -1.6%
+Replica room1,   plain head     -7.1%      TUM desk,  TUM head        -0.6%
+                                           7-scenes chess, 7sc head   +0.16%
+```
+
+Read with a noise floor -- the refinement seed sigma is real (§17.51) and cells
+under about 1% should be called ties rather than results:
+
+```
+clear benefit   9 cells   -1.6% to -12.7%
+tie             2 cells   TUM head -0.6%, 7-scenes chess +0.16%
+clear harm      0 cells
+```
+
+**The correct claim is not "never harmful" but "downside bounded at the noise
+floor".** That is what a default needs, and it is now quantified rather than
+asserted: the worst outcome observed over eleven cells, three families, five
+heads and seven scenes is +0.16%, against a best of -12.7%.
+
+The mechanism from §17.79.1 predicts exactly this shape and should be stated as
+the reason the asymmetry is expected rather than lucky: the lever is a prior on
+initial opacity, the optimizer discards a prior it disagrees with, so the
+downside is bounded by how much damage survives ~2300 steps of disagreement --
+near zero -- while the upside is whatever haze the optimizer cannot remove on
+its own.
+
+Note 7-scenes chess is also the weakest map in the set (psnr 13.7), and §17.77.1
+already recorded that low-quality bakes are where these levers do least. euroc
+is still running.
+
+### 17.79.10 Fourth family, and the online record closed at twelve cells
+
+```
+euroc MH_01_easy, euroc head, online     psnr      lpips
+  no fade                              13.6544    0.3697
+  conf-fade 0.45                       13.6319    0.3489     -5.6%
+```
+
+Complete online record, `--refiner-conf-fade 0.45` against no fade:
+
+```
+Replica office3, plain head    -12.7%      euroc MH_01, euroc head    -5.6%
+Replica office0, plain head    -12.6%      Replica office0, o-0.9     -5.3%
+Replica office2, plain head    -10.2%      Replica office0, o-0.6     -1.8%
+Replica room0,   plain head     -8.9%      Replica office1, plain     -1.6%
+Replica room1,   plain head     -7.1%      TUM desk, TUM head         -0.6%
+TUM desk,        base head      -6.4%      7-scenes chess, 7sc head   +0.16%
+```
+
+**12 cells, 4 families, 6 heads, 8 scenes: 10 clear benefit, 2 ties, 0 harm.**
+Range -0.6% to -12.7%, single positive cell +0.16%.
+
+This is the result the shipped default rests on, and it is now broad enough to
+state without the family caveat that §17.77.1 had to attach to the offline
+numbers. The magnitude remains unpredicted by any statistic tried; the
+distribution of outcomes is what justifies the default, not any ability to
+anticipate a given map's number.
+
+## 17.80 Re-measuring the offline levers online
+
+§17.79.1's 11x discrepancy applies in principle to every lever in this file
+whose record is offline. The cap is the one that matters, for a reason the
+conf-fade case did not have: **the cap carries a measured COST** -- psnr -0.1 to
+-0.5 dB in every offline cell (§17.68) and a black-fraction rise on euroc. A
+lever that keeps its cost and loses its benefit under the harness that ships
+would be actively harmful, not merely useless.
+
+PRE-REGISTERED, before the run: the cap's online benefit falls far below its
+-16.7% offline figure on Replica office0, by the same mechanism -- the optimizer
+re-derives scales it disagrees with, just as it re-derives opacities. If instead
+it holds near -16%, then the 11x discrepancy is specific to OPACITY priors and
+does not generalize to geometry priors, which would be the more interesting
+outcome and would need explaining.
+
+Running alongside it: the head-training route through the online refiner on
+7-scenes and euroc, with conf-fade off in both arms so it isolates the training
+route from the injection lever. Kimi's round-33 question 2 is the motivation --
+if head training survives the harness where the injection lever largely does
+not, that is the strongest available argument for the training route, and it has
+never been measured that way on these two families.
+
+### 17.80.1 The cap SURVIVES the online harness, and gains psnr instead of costing it
+
+Both halves of this reverse a documented conclusion.
+
+```
+Replica office0, plain head, online     psnr      lpips
+  no cap                              26.5926    0.0995
+  scale-cap 0.009778                  26.6280    0.0897     -9.8%,  +0.035 dB
+```
+
+```
+the same lever and map, offline 600 steps (17.67)
+  none 0.0959 -> cap 0.0799                                 -16.7%
+```
+
+**The cap keeps most of its benefit online (-9.8% against -16.7%).** That is
+nothing like the opacity prior's collapse (-20.4% -> -1.8%, eleven-fold), so the
+pre-registration in §17.80 resolves on its second branch:
+
+> **The 11x harness discrepancy is specific to OPACITY priors and does not
+> generalize to geometry priors.**
+
+Which needs an account, and the honest one is that I do not have a confirmed
+mechanism. The plausible reading: opacity is a per-Gaussian free parameter that
+the optimizer can move directly and cheaply toward whatever the photometric loss
+wants, so a prior on it is erased in a few hundred steps. The cap does not just
+bias a parameter, it removes coverage that oversized Gaussians were providing,
+which changes which basin the optimization is in rather than only where it
+starts. That is a hypothesis, and given this session's record on hypotheses it is
+recorded as one.
+
+**The psnr sign also flips.** Every offline cap cell cost psnr (-0.11 to -0.51 dB
+across four families, §17.68), which I wrote up as "the cap is not a free win
+anywhere". Online on this map it GAINS psnr (+0.035 dB) while also improving
+lpips. So that characterization was an artifact of the offline harness and is
+withdrawn pending the confirmation run.
+
+This matters more than the conf-fade result did, because the cap was the lever
+carrying a measured cost, and §17.80's worry was that it would keep the cost and
+lose the benefit. The measurement says the opposite on both counts.
+
+A second family (euroc, offline -7.3% lpips / -0.12 dB psnr) is running to
+confirm before either reversal is treated as established. One map is not a
+result, and two documented conclusions are at stake.
+
+### 17.80.2 Head training on 7-scenes chess: nothing in deployment
+
+```
+7-scenes chess, online, conf-fade OFF in both arms     psnr      lpips
+  base checkpoint                                    13.5719    0.4897
+  7-scenes head                                      13.6681    0.4904    +0.14%
+```
+
+psnr +0.096 dB, lpips +0.14% -- a wash, and on the lpips axis marginally the
+wrong way. The 7-scenes head beat base on its val split during training, and
+that advantage does not reach the deployed map on this sequence.
+
+Recorded as a single cell with euroc still running, and it is the first
+deployment measurement of the head-training route on a family other than TUM and
+Replica. It is also the same sequence that produced the only positive conf-fade
+cell (§17.79.9), which is consistent with §17.77.1's observation that the
+weakest bakes (psnr 13.7 here) are where all of these levers do least -- but
+consistency with an existing story is not evidence for it, and the honest
+statement is that 7-scenes chess is where two independent interventions have now
+both come out at zero.
+
+## 17.81 Why the head persists and the injected prior does not: the optimizer un-saturates by itself
+
+Kimi's round-33 measurement, computed on the shipped post-polish artifacts
+(`scripts/diag_attractor.py`), TUM desk, both arms with conf-fade OFF:
+
+```
+post-polish map        n           opacity median  frac>0.9  maxscale med   p90
+base checkpoint     2,396,900         0.2645        12.1%      2.893 mm   10.491
+TUM head            1,860,034         0.1284         9.2%      2.545 mm    7.489
+```
+
+Two things fall out, and the first is the one that explains §17.79.1.
+
+**The optimizer un-saturates on its own, drastically.** The base checkpoint
+injects opacity ~1.0 for essentially every Gaussian (§17.58, frac>0.9 = 100%).
+After ~2300 online steps its map sits at **median 0.2645, with 33.9% of
+Gaussians below 0.1**. The polish does not merely tolerate un-saturation, it
+performs it, going far further than any fade we inject.
+
+That is the mechanism for the eleven-fold decay, and it is now measured rather
+than hypothesized: **an injected opacity prior washes out because the optimizer
+was going to remove that opacity anyway.** `--conf-fade 0.45` multiplies
+opacities by a mean 0.55; the optimizer takes them to 0.26 unaided. The prior is
+a head start on a journey the optimizer completes without it, so its value is
+whatever the optimizer had not finished by the time the budget ran out -- which
+is exactly why the effect shrinks as steps grow and why it varies by scene.
+
+**Head training moves the attractor.** The two maps do not converge to the same
+place: median opacity 0.2645 vs 0.1284, a factor of two, plus a 28.6% lighter
+scale tail and 22% fewer Gaussians surviving the cull. So the head does not
+merely start the optimizer somewhere better, it changes where the optimizer
+ENDS. Kimi's phrasing is the right one for the write-up: *the optimizer does not
+restore what the data never asked to restore.*
+
+This resolves Kimi's round-33 question 2 in the direction that favours the
+training route, and it is the cleanest mechanistic statement produced in this
+whole arc -- notably, again, from a controlled comparison of artifacts rather
+than from correlating statistics within one map.
+
+### 17.81.1 What it implies for the two routes
+
+```
+head training      changes the converged state          persists under budget
+injection prior    changes the starting state           decays with budget
+scale cap          removes coverage, not just a value    persists (17.80.1)
+```
+
+The cap fits this frame and is no longer anomalous: it does not bias a parameter
+the optimizer is already moving, it removes geometry the optimizer would have to
+re-create, which is a different kind of intervention. That was offered as a
+hypothesis in §17.80.1 and this table is consistent with it, though it is still
+not a direct test of it.
+
+The practical corollary is worth stating plainly for the write-up: **if you can
+retrain the head for your deployment family, do that; the injection lever is
+what you use when you cannot, and its value falls as your refinement budget
+rises.**
+
+## 17.82 Head training through the online refiner: the largest deployment effect in the project
+
+Base checkpoint vs family head, full online SLAM, `--refiner-conf-fade 0` in
+BOTH arms so this isolates the training route from the injection lever
+completely.
+
+```
+family / sequence          base          head           lpips      psnr
+euroc MH_01_easy       13.0482/0.4555  13.6660/0.3606   -20.8%   +0.62 dB
+TUM desk (17.77.4)              /0.4035         /0.3718    -7.9%
+TUM room (17.77.6)              /0.4801         /0.4325    -9.9%
+7-scenes chess         13.5719/0.4897  13.6681/0.4904    +0.14%  +0.10 dB
+```
+
+**euroc at -20.8% lpips and +0.62 dB is the largest single effect measured for
+any intervention in this project, in the harness that ships.** For comparison,
+the best injection-lever cell over twelve online A/Bs was -12.7%, and its median
+was about -5%.
+
+Three of four families show a real deployment benefit from head-only training;
+7-scenes chess is a wash on both metrics. That sequence is also where the
+injection lever produced its only positive cell (§17.79.9), so it is now the
+site of two independent interventions coming out at zero -- worth noting as a
+pattern, though with n=1 sequence per family here it is not yet a family-level
+statement.
+
+Read together with §17.81, this is the project's central engineering claim and
+it now has a mechanism behind it:
+
+```
+head training      moves the optimizer's converged state   persists under budget
+                   (opacity median 0.2645 -> 0.1284)       -7.9% to -20.8%
+injection prior    moves the starting state only           decays with budget
+                   (optimizer reaches 0.26 unaided)        -0.6% to -12.7%
+```
+
+**If you can retrain the head for your deployment family, do that.** The
+injection lever is what you use when you cannot, and its value falls as the
+refinement budget rises.
+
+Caveats kept with the claim: one sequence per family for euroc and 7-scenes, and
+the two TUM cells come from the §17.77 2x2 rather than a dedicated run. eth3d is
+running as the fifth family, on a modal-shape sequence (table_3) rather than an
+`sfm_*` one, since those five would hit the §17.55 resolution failure with this
+head.
+
+### 17.80.3 CORRECTION: the cap's online survival was one map, and the second map contradicts it
+
+§17.80.1 reported, on Replica office0, that the cap keeps most of its offline
+benefit online and gains psnr instead of costing it, and drew from that the
+conclusion that the harness discrepancy is specific to opacity priors. The
+confirmation cell was already running when that was written; it disagrees.
+
+```
+                        offline    online     retained    online psnr
+Replica office0         -16.7%     -9.8%        59%        +0.035 dB
+euroc MH_01_easy         -7.3%     -0.5%         7%        -0.135 dB
+   (conf-fade, for scale: -20.4%   -1.8%         9%)
+```
+
+**On euroc the cap retains 7% of its offline benefit -- the same order as the
+opacity prior's 9% -- and it costs psnr there, as it did offline.**
+
+So both halves of §17.80.1 are withdrawn:
+
+- "The 11x discrepancy is specific to opacity priors" is **not supported**. The
+  cap decays like an opacity prior on one family and largely survives on
+  another. What varies is the map, not the parameter type.
+- "The cap gains psnr online" was one map. It costs psnr on the second, matching
+  every offline cell. The original §17.68 characterization -- the cap trades
+  psnr for lpips -- stands after all.
+
+I reported that reversal after a single cell while the confirmation run was in
+flight. The run existed precisely because one map is not a result, and I should
+have waited for it before writing the conclusion rather than writing the
+conclusion and the caveat together.
+
+The surviving statement about the cap is weaker and matches everything else in
+this file: **its online value is map-dependent and unpredictable, ranging from
+-9.8% to -0.5%, and it carries a psnr cost at least some of the time.** Combined
+with §17.68's finding that no tail statistic predicts where it pays, the cap is
+not a default and should be armed only after a per-map offline on/off arm --
+which, given §17.79.1, will itself overstate the online benefit by an unknown
+factor. That is a lever with a poor cost-to-confidence ratio and the write-up
+should say so.
+
+### 17.82.1 eth3d: the largest deployment effect yet
+
+```
+eth3d table_3, online, conf-fade OFF both arms     psnr      lpips
+  base checkpoint                                13.2213    0.5575
+  eth3d head                                     14.0378    0.3951    -29.1%  +0.82 dB
+```
+
+Head-training deployment record, five families:
+
+```
+eth3d table_3       -29.1%   +0.82 dB
+euroc MH_01_easy    -20.8%   +0.62 dB
+TUM room             -9.9%
+TUM desk             -7.9%
+7-scenes chess       +0.14%  +0.10 dB
+```
+
+Four of five families show a large deployment gain; 7-scenes is the lone
+exception. The two largest are the two families whose heads were trained on
+self-predicted pseudo-depth rather than sensor depth, which is the opposite of
+what I would have guessed and is worth flagging for the write-up rather than
+explained away here.
+
+Second sequences are running for eth3d, euroc and 7-scenes -- the last because a
+single sequence cannot separate "the 7-scenes head is weak" from "chess is a
+hard sequence", and that distinction decides whether the exception is a family
+result or a scene result.
+
+---
+
+## 17.83 STATE OF PLAY — read this instead of §17.64, which is superseded
+
+§17.64 was written earlier the same day and predates everything below. Where the
+two disagree, this section wins.
+
+### 17.83.1 The three results that would go in a paper
+
+```
+1  HEAD-ONLY TRAINING, measured through the ONLINE refiner (17.82)
+   eth3d  -29.1% lpips / +0.82 dB      TUM room  -9.9%
+   euroc  -20.8% lpips / +0.62 dB      TUM desk  -7.9%
+                                       7-scenes  +0.14%  (the one exception)
+   Mechanism (17.81): it moves the optimizer's CONVERGED state, not its start.
+   Post-polish opacity median 0.2645 (base) vs 0.1284 (head).
+
+2  INJECTION THINNING, 12 online cells, 4 families, 6 heads, 8 scenes (17.79.10)
+   10 clear benefit (-1.6% to -12.7%), 2 ties, 0 harm. Worst cell +0.16%.
+   Mechanism (17.81): the optimizer un-saturates ITSELF from ~1.0 to 0.26, so
+   the lever is ACCELERATION ALONG A PATH THE OPTIMIZER ALREADY WALKS. Value
+   ~ (distance along that path) x (budget scarcity); decays as polish converges;
+   downside bounded because a prior the optimizer overtakes cannot hurt much.
+
+3  A CAUSAL DISSOCIATION between the head's two output channels (17.75, 17.76)
+   content degradation (geometric)   -> scale tail +15%, opacity unchanged
+   photometric jitter (appearance)   -> scale tail -24%, opacity -16.7 pp
+   and the ALLOCATION half: on the photo head, opacity's strongest predictor is
+   local photometric disagreement (-0.268 partial) where on the TUM head it is
+   backbone confidence (+0.213). Perturb photometry, opacity reorganizes around
+   photometry. Both come from controlled pairs, not correlations.
+```
+
+### 17.83.2 The methodology record, which Kimi argues is a co-lead not an appendix
+
+```
+five gating statistics falsified by out-of-sample data
+   tail ratio (4 cells) | saturation fraction (perfect on 4, dead on 2 more)
+   opacity-conf coupling (INVERTED) | accumulated alpha | untreated acc alpha
+four instrument failures caught, one of which I built this session
+   hp_alpha out of calibration | argsort on a ~100%-tied array
+   single-sequence roundtrip probe on a heterogeneous release
+   acc_alpha's eps-linearization culled by the rasterizer, biased along the
+     exact axis it was built to compare
+five mechanism accounts proposed and falsified, plus one falsified by a broken
+   instrument and then REINSTATED by the fix
+```
+
+Portable rules earned, in the order they cost the most:
+
+```
+1  Before explaining an effect, put an INTERVAL on it. Rounds 30-32 explained a
+   -2.8% "constant" that was a two-point sample of an sd-4.7 distribution whose
+   95% CI is -4.0% .. +0.6%. Every number was correct. This cost the whole
+   mechanism arc and no instrument was broken.
+2  An instrument's validation regime must OVERLAP its usage regime. acc_alpha
+   was validated on un-faded maps and used only on faded ones.
+3  Cross-harness, the measured EFFECT SIZE of an intervention does not transfer,
+   not just absolute scores. Offline 600-step overstated the opacity lever 11x.
+4  Diagnostics nominate; per-blob measurement decides. Five statistics, zero
+   successes as a-priori gates.
+5  Never edit a script that is currently executing (bash reads lazily by byte
+   offset; one log came back as NUL bytes).
+```
+
+### 17.83.3 Kimi's lever taxonomy, with the correction the euroc cell forces
+
+His round-34 framing, which the data mostly supports:
+
+```
+opacity fades       budget bridges -- acceleration only, ship ungated
+cap-type edits      content removals -- persist because the optimizer is
+                    indifferent to what it did not need
+head training       BASIN SELECTION -- the only intervention that moves the
+                    endpoint. This is the sentence the training case rests on.
+```
+
+**The middle row does not survive the euroc cell**, which landed after he wrote
+it: the cap retains 59% of its offline benefit on Replica office0 and **7% on
+euroc** -- the same order as the opacity prior's 9%. So "cap-type edits persist"
+is a one-map result. The corrected row is: *cap-type edits persist on some maps
+and not others, unpredictably, and carry a psnr cost at least some of the time*
+(§17.80.3).
+
+Rows 1 and 3 stand and are the two that matter.
+
+### 17.83.4 What ships
+
+```
+--refiner-conf-fade 0.45     DEFAULT ON, ungated. Justified by the 12-cell
+                             distribution, NOT by any ability to predict which
+                             map benefits. conf-vs-uniform is a coin flip
+                             (n=12, median -0.06%, CI contains zero).
+--refiner-uniform-fade       equally defensible, simpler, within noise
+--refiner-scale-cap          NOT a default. Arm per map, knowing the offline
+                             arm will overstate the online value.
+--crowd-fade                 measured NEGATIVE, kept as a record (17.74.2)
+head training                do it if you can retrain for the family
+```
+
+### 17.83.5 Open, in priority order
+
+```
+1  second sequences for eth3d/euroc/7-scenes head deployment (RUNNING) -- the
+   headline rests on one sequence per family for three of five
+2  whether 7-scenes is a weak head or chess is a hard sequence (RUNNING: fire,
+   office)
+3  why the two LARGEST head gains are the two pseudo-depth families (eth3d,
+   euroc) -- opposite of expectation, currently unexplained
+4  the per-depth-rank gradient probe, now with a TIME-RESOLVED prediction from
+   Kimi: unblocking difference large at iter ~50, gone by ~1000
+5  17.34 re-analysis under current defaults; head-training seed ensemble;
+   Replica mesh controlled-trajectory design
+```
+
+### 17.82.2 Second sequences: the headline holds, and 7-scenes is a SCENE effect not a family effect
+
+```
+family / sequence            base            head            lpips     psnr
+eth3d table_3            13.2213/0.5575  14.0378/0.3951     -29.1%   +0.82 dB
+eth3d sofa_1             22.0717/0.2313  23.1519/0.1811     -21.7%   +1.08 dB
+euroc MH_01_easy         13.0482/0.4555  13.6660/0.3606     -20.8%   +0.62 dB
+TUM room                        /0.4801         /0.4325      -9.9%
+TUM desk                        /0.4035         /0.3718      -7.9%
+euroc V1_01_easy         13.2728/0.4749  13.2233/0.4458      -6.1%   -0.05 dB
+7-scenes office          11.3933/0.5498  11.6121/0.5228      -4.9%   +0.22 dB
+7-scenes chess           13.5719/0.4897  13.6681/0.4904      +0.14%  +0.10 dB
+```
+
+**8 cells, 5 families, 7 benefit, 1 null.** Every family has at least one clear
+positive cell.
+
+**RETRACTED, see 17.82.3.** On two cells (chess +0.14%, office -4.9%) I wrote
+that the exception was a scene rather than a family. The third 7-scenes sequence
+falsifies that; the family reading was right and I called it early off n=2.
+
+Within-family spread is large: eth3d -29.1% and -21.7%; euroc -20.8% and -6.1%.
+So the family-level numbers should be reported as ranges, never as point
+estimates from one sequence -- which is exactly the error §17.72 caught for the
+injection lever when office1 broke a two-map pattern.
+
+Data limitation worth recording for anyone repeating this: **only chess, office
+and pumpkin ship `groundtruth.txt` in this 7-scenes release.** fire, heads,
+redkitchen and stairs cannot be scored by `eval_map_quality.py` at all; the fire
+cell was run and had to be discarded after the fact. Check for the file before
+spending two SLAM runs on a sequence.
+
+pumpkin (the third and last evaluable 7-scenes sequence) and a third TUM
+sequence are running.
+
+### 17.82.3 The third 7-scenes cell: it IS a family effect, and my n=2 call was wrong
+
+```
+7-scenes pumpkin      base 14.6259/0.4852    head 14.7660/0.4852    0.00%  +0.14 dB
+```
+
+lpips identical to four decimals. Full 7-scenes record: **chess +0.14%, pumpkin
+0.00%, office -4.9%** -- two nulls and one modest gain, against every other
+family having at least one cell past -20%.
+
+So §17.82.2's "the exception is a scene, not a family" is **withdrawn**. I wrote
+it after office reversed chess, on two cells, in the same session in which I had
+already recorded (§17.72, §17.78.1) that two-point patterns in this project have
+repeatedly failed at n=3. The correction is not that the data changed; it is
+that I made a family-level call off two sequences immediately after writing a
+rule against exactly that.
+
+Full head-training deployment table, ten cells, five families:
+
+```
+eth3d table_3     -29.1%  +0.82 dB        TUM room           -9.9%
+TUM plant         -25.9%  +1.29 dB        TUM desk           -7.9%
+eth3d sofa_1      -21.7%  +1.08 dB        euroc V1_01        -6.1%  -0.05 dB
+euroc MH_01       -20.8%  +0.62 dB        7-scenes office    -4.9%  +0.22 dB
+                                          7-scenes pumpkin    0.00% +0.14 dB
+                                          7-scenes chess     +0.14% +0.10 dB
+```
+
+By family, as ranges rather than point estimates:
+
+```
+eth3d      -21.7% to -29.1%   (2 cells)   strongest, both cells large
+TUM         -7.9% to -25.9%   (3 cells)   widest spread
+euroc       -6.1% to -20.8%   (2 cells)
+7-scenes    +0.14% to -4.9%   (3 cells)   the weak family
+```
+
+**Four of five families gain substantially; 7-scenes is genuinely weaker.** Why
+is unexplained. Bake quality is not it -- 7-scenes office (psnr 11.4) is the
+weakest map in the table and is the only 7-scenes cell that gains, while chess
+at 13.7 gains nothing. Recorded as open.
+
+Third sequences for eth3d and euroc and a fourth for TUM are running, since
+those families rest on two or three cells with spreads of 7 to 18 points.
+
+### 17.82.4 Third/fourth cells, and a repeat offence
+
+```
+eth3d plant_1     base 20.3776/0.4088   head 20.1810/0.3796    -7.1%   -0.20 dB
+TUM teddy         base 12.8566/0.5304   head 13.1675/0.4439   -16.3%   +0.31 dB
+euroc V2_01_easy  UNSCORABLE -- no groundtruth.txt, two SLAM runs wasted
+```
+
+eth3d's third cell is **-7.1%**, far below its other two (-29.1%, -21.7%), so
+the family range widens to -7.1% .. -29.1%. TUM's fourth is -16.3%, inside its
+-7.9% .. -25.9% band. Neither family is well summarized by a single number, and
+the spread within eth3d is now as large as the spread between families.
+
+**The repeat offence.** §17.82.2 recorded, one turn earlier, that four of seven
+7-scenes sequences ship no `groundtruth.txt` and that the check costs one line
+and belongs before the runs. I then queued euroc V2_01_easy without checking and
+lost two more SLAM runs the same way. Only 2 of 11 euroc sequences are scorable
+(MH_01_easy, V1_01_easy) -- both already used -- so **euroc is capped at two
+cells with this release** and its range cannot be firmed further.
+
+Writing the lesson down did not prevent the repeat, so it is now a script:
+`scripts/check_evaluable.py`, which exits non-zero on any unscorable sequence
+and is invoked as a gate before the batch launches rather than as advice.
+
+```
+euroc      2/11 scorable   MH_01_easy, V1_01_easy
+7-scenes   3/7  scorable   chess, office, pumpkin
+eth3d      widely present
+TUM        present
+Replica    written from traj.txt by the dataloader on first load
+```
+
+That is the second time this session that a rule recorded in prose failed and a
+mechanical check was needed instead -- the first being the `--refiner-gpu`
+validation that caught a bad device index (§17.77.6). The pattern is worth
+stating: **in this project, prose rules have not survived contact with my own
+next batch; the ones that hold are the ones that fail a command.**
+
+---
+
+---
+
+## 17.84 交接记录：一次会话内跨压缩的进度重复，已修复；round 33(Kimi计数35)的净新增内容
+
+**先说清楚发生了什么，因为它值得作为方法论记录。** 在这次会话的某个点上，我
+基于一份陈旧的理解重新推导了 §17.75/17.76/17.78 已经确立的结论(光度学2x2的
+反转结果、crowd-fade 在预算匹配下的失败)，把它们当作"新发现"追加到了文件末尾，
+编号也撞车成了 §17.73/17.74/17.75。追加的内容和真实记录在数字上完全吻合(例如
+两边都测出 frac>0.9 从 99.8%→83.1%，opacity-disagree partial 都是 -0.268，
+crowd T=4.0 在 vox=3cm 下都精确落在 acc_alpha=9.36)——这不是巧合，是同一组
+实验在会话被压缩后被我不知情地重跑了一遍。发现方式：在处理 Kimi round 33 的
+回复时，它引用了一些我发出的 prompt 里根本没有的具体数字(`combo` 臂、crowd
+vs conf 的精确排序)，这个不一致promot我去读 SKILL.md 的真实全文，才发现
+§17.76-17.83 早已存在且更完整。**处理方式是直接删除重复内容，而不是保留两份
+相互矛盾的记录**——已删除的部分见本节之前的 git 历史。
+
+**真实的当前进度基准是 §17.83(STATE OF PLAY)+ §17.82.4**，不是我之前误以为的
+§17.75。以下只记录在修复之后、基于真实状态做出的净新增工作。
+
+### 17.84.1 Kimi round 33 回复中，独立验证之后仍然成立的部分
+
+Kimi 的回复引用了具体数字来源不明的 "12-map, CI [-3.96,+0.63]"——但这个结论
+本身在真实记录里已经用**更严格的方式**确立了(§17.78"closed: no measurable
+difference, on 12 maps",§17.83.4 "median -0.06%, CI contains zero")，不需要
+我再重新验证一遍。真正新增的是他这一轮给出的两个方案性判断：
+
+**Q1(是否需要给 fade 加"光度学职责"防护)：不需要。** 论证:该顾虑(fade 可能
+破坏正在做光度学调和工作的 opacity)在量级上已经被现有测量界定——TUM-head
+地图上(opacity 承担光度学工作最多的部署场景，disagree partial 仅 -0.096)，
+uniform 和 conf 两个 fade 打平，代价 0.08-0.09 dB。饱和头(Replica/base)上
+完全没有光度学工作可破坏，而这正是杠杆收益最大的地方。不加防护；改为免费
+预案:**若任何 fade 分支未来在某张图上出现损失，先对照 `disagree` 场做定位
+分析，再决定要不要设计防护。**
+
+**Q2(更强的光度学扰动 vs crowd-fade 变体，哪个优先)：更强光度学扰动优先。**
+论证:crowd-fade(体素版)在预算匹配下已经**两次**被证伪(§17.74.2:单独更差、
+混入 conf 还会稀释 conf)，继续做它的射线版本是在抢救一个已经告负的杠杆；
+而更强的光度学扰动是"一次训练"就可能同时完成因果解释 AND 产出一个训练配方
+级别的修复——如果光度学增强能自然教会透明度，就可能从根源上替代 relu 惩罚
+这条路线。他给出更锐利的机制:纯全局亮度抖动(现有 photo 臂)几乎能被逐
+Gaussian 的颜色残差完全兜住(一个标量)，尚且把 frac>0.9 从 99.4%→52.1%(按
+frac>0.99 口径)打了对折；**空间变化型**的光度学扰动(需要的修正量取决于该点
+落在目标视角画面里的位置，而不只是取决于它来自源图的哪个像素)按源像素预测
+的颜色残差没法预先兜住，理应招募更多 opacity。
+
+### 17.84.2 已实现并已在 GPU0 上启动:`replica-photo-spatial`
+
+`splatt3r_core/data/replica/replica.py` 新增 degrade 模式
+`"photometry-spatial"`：对每对视角中的一个视角施加
+
+```
+per-channel WB 抖动    每通道独立 gain ~ U(0.9, 1.1)，刻意保持温和，
+                      因为这部分本身接近能被颜色通道兜住的范围
+径向渐晕(vignetting)  中心随机偏移(图像 35%-65% 范围内)，强度 v~U(0.25,0.55)，
+                      falloff = 1 - v*(r/r_max)^2
+```
+
+已在 `train_lora_per_scene.py` 的 `FAMILIES` 注册为 `replica-photo-spatial`
+(288,512 分辨率，与其它 Replica 变体一致)，coverage cache 硬链接自
+`replica_train/val_...pkl`(仅像素内容改变，几何/位姿/覆盖度不变，标准做法，
+见 §17.65.1 对 `replica-noisy` 的同一处理)。`exp_head_only.py` 的
+`--family` choices 里原本缺这一项，已补上(否则直接报 `invalid choice`，
+第一次启动就是这样失败并重启的)。
+
+**预注册(Kimi round 33，启动之前写下)**：40 epoch 训完后，
+`scripts/diag_colocation.py` 探测该头在 Replica office0 上的
+`frac(opacity>0.9)` 应落在 **30%-60%** 区间——比 plain photometry 的 83.1%
+更接近 TUM 的 12.5%，但不会打平。若真落在这个区间，"结构化光度学分歧"就
+基本坐实为真实数据集不饱和的主因，depth-mask/invalid 结构分摊剩余部分；若仍
+停在 70-80%，说明光度学只是次要通道，mask 候选原因通过排除法接管大部分解释。
+
+正在训练中，训完后立刻用 `diag_colocation.py` 读数、送 Kimi 独立分析。
+
+### 17.84.3 GPU1:补充 conf-vs-uniform 样本(office3/4, room1/2)——低优先级确认性数据
+
+由于 §17.78/§17.83.4 已经用 12 张图把这个问题判定为"统计上不可区分、经费
+无关紧要"，这个补充实验**不解决任何悬而未决的问题**，只是把样本量从 12
+扩到最多 16，进一步收窄一个已经足够窄的置信区间。跑起来的原因是它在我发现
+进度重复*之前*就已经启动，且不影响其它工作，就让它按原计划跑完作为额外确
+认数据；跑完不会改变 §17.83.4 的结论，也不会因此重新打开这个问题。跑完后
+GPU1 应转去 §17.83.5 列出的真正未解决问题，优先级最高的是:为什么两个用
+伪深度(pseudo-depth)监督的家族(eth3d、euroc)反而是 head-training 收益
+最大的两个家族——这与直觉相反且目前无解释。
+
+---
+
+## 17.85 Round 34: the pseudo-depth account is mechanically dead; the coverage account is falsified by measurement; un-saturation has a clean counterexample
+
+### 17.85.1 Kimi actually read the code, and it kills my proposed mechanism at the root
+
+I proposed (round 34): pseudo-depth trains the head in the network's own
+self-consistent frame, so there's no train/deploy scale mismatch, while real
+sensor depth forces a correction toward an external metric scale the deployed
+SLAM pipeline may not honour.
+
+Kimi checked the actual training code rather than reasoning about it, and the
+mechanism does not exist: **the head-only loss is purely photometric** --
+`1.0*masked_MSE + 0.25*masked_LPIPS`, in pixel space only. Gaussian means are
+`pts3d.detach()`, frozen backbone output, never trainable in this recipe. The
+MASt3R geometric loss is disabled (`mast3r_loss_weight=None`). **`is_metric_scale`
+is a no-op in the entire head-only path** -- its only consumer is that disabled
+loss. Depth never supervises the head, in any frame, metric or otherwise. My
+account had no pipe to act through. Fixed the misleading comment at the two
+call sites (`splatt3r_core/data/{eth3d,euroc}/*.py`) so the next reader does not
+make the same assumption.
+
+Depth touches training in exactly two non-differentiable places: the loss mask
+(`calculate_in_frustum_mask`: depth>0, in-frustum, cross-view depth agreement
+within 0.1m) and pair selection (`compute_coverage`, same test plus a 0.5m
+camera prefilter). Kimi's sharper point: for euroc/eth3d these run in **mixed
+units** -- network-scale pseudo-depth against metric GT poses -- while TUM/
+7-scenes run in consistent metric units throughout. If scale-frame consistency
+mattered, it should hurt the pseudo-depth families, not help them. My account's
+mechanism, where it exists in the code at all, predicts the wrong sign.
+
+### 17.85.2 Free check (a): supervision coverage, measured -- and it falsifies the leading alternative
+
+Kimi's own leading replacement candidate was supervision coverage: TUM's real
+depth masks out its ~40% sensor-invalid pixels (round 29), while pseudo-depth
+families only lose their `conf<1.5` zeros, so they should supervise far more of
+the image. Predicted: TUM ~60%, euroc/eth3d ~85%+, Replica ~100%.
+
+Measured directly (`calculate_loss_mask` on 40 real training batches per
+family, before spending any GPU-hour on a retrain):
+
+```
+family      mean supervised fraction    median     sd
+tum               60.0%                 59.2%      10.2
+7-scenes          65.1%                 67.6%       8.9
+euroc             39.5%                 40.9%      15.3   <- LOWEST, not highest
+eth3d             61.9%                 63.3%      12.5   <- ~= TUM, not >>
+replica           79.8%                 81.7%      11.2   <- high, not ~100%
+```
+
+**Falsified.** TUM's 60% is correctly predicted, but euroc has the LOWEST
+coverage of any family (39.5%) while having the SECOND-LARGEST deployment gain
+(-20.8%), and eth3d's 61.9% is statistically indistinguishable from TUM's 60.0%
+despite a 3x larger deployment gain (-29.1% vs -9.9%). Coverage fraction orders
+nothing. This is exactly the check Kimi flagged might make the retrain
+unnecessary -- it did, by ruling the leading candidate out before the
+GPU-hour was spent.
+
+### 17.85.3 Free check (b): un-saturation degree, and 7-scenes is a real counterexample, not a pending one
+
+Kimi's second candidate, which needed no new data for four families and fit
+them in perfect rank order: eth3d 0.24 (-29.1%), euroc 0.38 (-20.8%), TUM 0.66
+(-9.9%), Replica 0.998 (null/negative pre-penalty). He flagged 7-scenes (median
+0.4537 from the round-27 table, deployment null) as the one cell that breaks
+the ordering, and left it "pending bake soundness" rather than counted against
+the account.
+
+Measured directly (identical 5-pair probe protocol, `checkpoints/head_only_long
+/7-scenes/head_best.pt` on `datasets/7-scenes/chess`):
+
+```
+base            opacity median 1.0000   frac>0.9 100.0%   frac<0.1  0.0%
+7-scenes head   opacity median 0.4789   frac>0.9  31.4%   frac<0.1  4.4%
+```
+
+Confirms the round-27 figure (0.4537 vs 0.4789 -- different probe draws, same
+regime) rather than an artifact. **7-scenes IS substantially un-saturated** --
+more than TUM (0.66), comparable to euroc (0.38) -- yet its deployment gain is
+null (+0.14%). This is not a cell waiting on a bake-soundness check; it is a
+direct, measured counterexample to "un-saturation degree orders deployment
+gain." The account explains 4 of 5 families and is wrong on the fifth in a way
+that cannot be explained by insufficient data.
+
+### 17.85.4 Where this leaves the question
+
+Both of Kimi's own candidates are now damaged by direct measurement rather than
+argument: coverage is falsified outright; un-saturation is a 4/5 fit with one
+clean counterexample. What is left standing, unfalsified because untested:
+headroom (eth3d/euroc bases were the worst in the matrix) and content/
+distribution distance (euroc's machine-hall imagery is far from the backbone's
+training distribution). Neither has been measured against the actual deployment
+gains yet. Sent to Kimi for the next round rather than pursued alone, since the
+"is 7-scenes' bake even sound" question and the headroom/content confounds both
+need judgment calls about which controlled experiment actually discriminates
+them -- the same kind of design question the last several rounds have needed
+him for.
+
+### 17.85.5 Round 35: both replacement candidates are now dead, and euroc's low coverage explains itself
+
+Kimi owned both kills cleanly. New detail he added: euroc's 39.5% coverage
+(the lowest of any family, §17.85.2) is not an isolated anomaly -- it is the
+**mixed-unit mask signature itself**, the mechanism his round-34 reply
+predicted would exist (network-scale pseudo-depth vs metric GT poses, tested
+against a 0.1m atol). euroc's machine-hall scenes likely carry a larger network-
+vs-metric scale error than eth3d's smaller rooms, so its `atol=0.1` consistency
+test fails on more pixels -- 61.9% eth3d coverage vs 39.5% euroc is consistent
+with that. **Recorded as a genuine recipe quirk, unresolved**: the mask's
+geometric-consistency test is miscalibrated in mixed units for both pseudo-depth
+families, and it excludes more than half of euroc's pixels from supervision.
+Whether this is worth fixing is orthogonal to the deployment-gain question --
+euroc gained the second-most despite it, so "more supervision would help" does
+not follow from "the mask is measurably wrong for this family."
+
+Three mechanism candidates for the depth-source pattern have now died on
+contact with data: scale-frame (killed by the plumbing report, §17.85.1),
+coverage (killed by direct measurement, §17.85.2), un-saturation (killed by
+direct measurement on the fifth cell, §17.85.3).
+
+### 17.85.6 The design that replaces family-level pattern-matching: predict a cell before running it
+
+Kimi's reframe: headroom and content-distance were never two candidates, they
+are one variable measured two ways. **Base deficit is the observable form of
+distribution distance** -- a family/sequence far from the backbone's training
+distribution bakes a bad base map, and a bad base map is what "headroom" means.
+So the predictor to test is **per-sequence base val deficit**, not family
+membership and not depth source.
+
+Existing val-gain numbers from the base-vs-head matrix are already suggestively
+ordered: euroc (+3.69 dB) ~= eth3d (+3.15 dB) >> 7-scenes (+2.15 dB) >
+Replica (+1.81 dB) > TUM (+1.74 dB). The two cells that break a clean ordering
+against deployment gain are exactly the two with independent explanations
+already on record (7-scenes' bake-soundness question, Replica's saturation
+story) -- but Kimi's point, correctly, is that **consistency on five points is
+not a test.** A pattern across five families is a hypothesis generator, not a
+conclusion; the conclusion lives in a cell predicted before it is run.
+
+**The design, three steps:**
+
+1. Compute base val deficit for every training sequence in every family --
+   free, no SLAM run, the existing eval harness does this.
+2. Correlate against the deployment gains already measured, at the SEQUENCE
+   level (not family maxima) -- roughly 8-10 points rather than 5.
+3. **Pre-register and run the separating cells**: (i) the highest-deficit
+   REAL-depth sequence not yet deployed -- family/depth-source predicts a
+   small gain, base-deficit predicts a large one; (ii) the lowest-deficit
+   eth3d/euroc sequence -- family/depth-source predicts large, base-deficit
+   predicts small. If both land on the base-deficit side, the account is
+   confirmed out-of-sample -- the first mechanism in this entire inquiry to
+   earn that status rather than fit-after-the-fact. If they do not, the
+   correct final entry is "family-level variation of unknown origin, n too
+   small" -- stated plainly rather than chased with a fifth account.
+
+**Standing rules added, verbatim, because this is the fourth mechanism hunt in
+the project to end in a falsified account:**
+
+> A pattern across five families is a hypothesis generator, never a
+> conclusion; the conclusion lives in the cell you predict before you run it.
+> Report all sequences, never family maxima -- "best sequence each" is a
+> selection statistic that manufactures patterns.
+
+### 17.85.7 What the depth-source pattern is now: effect real, cause unassigned
+
+Kimi's precision, worth keeping exact: the DEPLOYMENT GAINS on eth3d/euroc are
+real measurements (-29%/-21% against a 0.17% floor, not noise). What has died
+three times is the ATTRIBUTION of those gains to depth source. The correct
+current entry is *"large deployment gains measured on eth3d/euroc; attribution
+unresolved; base deficit is the live untested candidate"* -- not "no effect,"
+and not "pseudo-depth causes it." The depth-source framing is retired from this
+point forward; base val deficit is what gets tested next.
+
+Base-deficit computation and the separating-cell selection are next, before any
+further deployment A/Bs are queued for this question.
+
+### 17.85.8 Base-deficit tested on data already in hand: also dead, no new GPU-hour needed
+
+Kimi's step 1-2 (compute base deficit per sequence, correlate against existing
+deployment gains) doesn't require new measurements -- every deployment A/B
+already reports both base and head lpips. Compiled the 11 sequences with
+recorded base lpips and gain%:
+
+```
+base_lpips   gain      sequence
+0.5575      -29.1%     eth3d table_3
+0.5498       -4.9%     7-scenes office
+0.5304      -16.3%     TUM teddy
+0.4897       +0.1%     7-scenes chess
+0.4852        0.0%     7-scenes pumpkin
+0.4801       -9.9%     TUM room
+0.4749       -6.1%     euroc V1_01
+0.4555      -20.8%     euroc MH_01
+0.4088       -7.1%     eth3d plant_1
+0.4035       -7.9%     TUM desk
+0.2313      -21.7%     eth3d sofa_1
+
+Pearson r  = 0.143
+Spearman rho = 0.145
+```
+
+**Essentially no correlation.** The single most damaging point: eth3d sofa_1
+has the LOWEST base deficit of any sequence (0.2313 -- the base is already
+good there) and the SECOND-LARGEST gain (-21.7%) -- directly against the
+headroom account. 7-scenes office has the second-worst base (0.5498) and only
+a modest gain (-4.9%). Existing data refutes base-deficit before any separating
+cell needs to be run.
+
+**Fourth candidate dead by direct measurement**, joining scale-frame (plumbing),
+coverage (measurement), un-saturation (measurement). No mechanism proposed for
+the depth-source pattern across five rounds has survived contact with data.
+Sent back to Kimi rather than pursued further alone -- per his own round-35
+rule, this is exactly the point at which "family-level variation of unknown
+origin, n too small" becomes the responsible entry, and whether to write that
+now or spend the two GPU-hours on separating cells anyway (in case lpips is
+the wrong deficit metric, e.g. psnr-based deficit or the two-view val loss
+before any SLAM run) is a judgment call handed back rather than made alone.
+
+### 17.85.9 Round 36: closed. The 7-scenes cell is not obviously broken; neither metric variant would have changed the answer
+
+Kimi's argument for closing without further metric variants: both killer points
+are metric-robust. eth3d sofa_1 has the best lpips AND would have the best psnr
+(the two rarely disagree on "is this base good"); 7-scenes office inverts under
+lpips, would invert under psnr, and inverts under the pre-SLAM val loss too
+(base val psnr 13.71 vs TUM's 15.09, yet null deployment gain). Base-psnr and
+pre-SLAM-val are re-measurements of the same near-zero correlation with
+different noise -- not queued.
+
+The one non-metric-variant action he named -- checking 7-scenes' round-29
+bake-soundness flag, never resolved -- is free (log analysis, no GPU) and
+worth doing before writing the final sentence. Checked:
+
+```
+RELOCALIZING / Failed to relocalize count, all four 7-scenes deployment logs: 0
+```
+
+No tracking loss in any of the four runs. And the psnr range is not anomalous
+against the other real-sensor families measured in the SAME harness:
+
+```
+eth3d table_3     base psnr 13.2213
+euroc MH_01       base psnr 13.0482
+7-scenes chess    base psnr 13.5719
+7-scenes pumpkin  base psnr 14.6259
+7-scenes office   base psnr 11.3933
+```
+
+7-scenes sits inside the same 11-15 psnr band as eth3d/euroc/TUM. The round-29
+suspicion of broken bakes was most likely an artifact of comparing this band to
+Replica's 21-27 psnr regime (synthetic, exact geometry) rather than to the other
+real-sensor deployments it actually belongs with. **The cell is not obviously
+broken.** It stands as real data, and it remains the point that kills every
+deficit account tested.
+
+### 17.85.10 CLOSED: family-level variation of unknown origin, n too small
+
+Final scorecard, four mechanism candidates for "why do eth3d/euroc gain most
+from head training", each killed by a pre-registered check rather than by
+argument:
+
+```
+scale-frame consistency    DEAD -- inert in the training path (plumbing, 17.85.1)
+supervision coverage       DEAD -- anti-correlated in the decisive cell (17.85.2)
+opacity un-saturation      DEAD -- clean counterexample, 7-scenes (17.85.3)
+base deficit (headroom)    DEAD -- rho=0.145 on 11 sequences, sofa_1 kills it (17.85.8)
+```
+
+Per Kimi's framing, adopted for the write-up: this is not "we don't know" but
+a **negative-results result** -- the four candidates any reader would propose
+have each been pre-registered and killed, which is itself the useful content.
+The reporting rule for the paper: give the full per-sequence table (all
+measured gains, no family maxima), state plainly that the variation is
+unattributed after four tested candidates, and invite a fifth mechanism only
+if it comes with a pre-registered out-of-sample cell -- the standard this
+inquiry finally held itself to on the fourth attempt.
+
+**The depth-source framing is retired.** What remains open and worth one more
+experiment, per Kimi: not another correlation, but the one CAUSAL test never
+run -- see §17.85.11.
+
+### 17.85.11 The one remaining causal test: TUM head trained on pseudo-depth
+
+Every check so far has been correlational (across families, across sequences).
+Kimi's argument for one more experiment, not a fifth correlation: **train a TUM
+head on pseudo-depth instead of real sensor depth** -- same family, same
+scenes, same recipe, same seed structure, ONE variable moved. This is the only
+design in the whole inquiry that can answer "does depth-supervision source
+matter at all" causally rather than by pattern-matching across confounded
+families.
+
+Pre-registered:
+
+```
+pseudo-TUM deployment gain ~= real-TUM's -9.9%
+    -> depth source is dead, PERMANENTLY, by a controlled negative rather
+       than an exhausted correlation list. Stronger than the correlational
+       close in 17.85.10.
+pseudo-TUM deployment gain >> real-TUM's -9.9%
+    -> depth source causally matters after all, and the mechanism hunt
+       reopens with a proven lever to explain rather than a correlation
+       to explain away.
+```
+
+Launching now: `scripts/precompute_pseudo_depth.py` for TUM (idempotent),
+then a 40-epoch head-only run identical to the existing TUM recipe except for
+depth source, then a deployment A/B against the existing real-depth TUM head.
+
+---
+
+## 17.86 The causal test lands: depth source is dead, permanently, by a controlled negative
+
+### 17.86.1 E1: TUM room, real-depth head vs pseudo-depth head, everything else fixed
+
+```
+                psnr        lpips
+real-depth    13.0996      0.4346
+pseudo-depth  13.1369      0.4397     +1.17% relative (pseudo slightly worse, negligible)
+```
+
+**Statistically indistinguishable.** The delta (1.17%) is far inside the noise
+this project has already characterized (scene-level sd ~4.7%, §17.75.1-style
+CIs routinely spanning several percent on n=1 comparisons). Reproducibility
+check: the real-depth arm's lpips here (0.4346) matches the previously-recorded
+real-depth TUM-room number (0.4325, §17.77.6/17.82) to within 0.5% relative --
+same head, same behaviour, confirming this run is not an anomalous bake.
+
+**Kimi's pre-registered null is confirmed exactly.** Same family, same scenes,
+same recipe, same seed structure -- the ONE variable moved (depth source) and
+deployment gain did not move with it. This is the first CAUSAL result in the
+entire depth-source inquiry, after five rounds of correlational analysis and
+four dead candidates (§17.85). It closes the question more strongly than the
+correlational analysis could: not "no pattern found" but "the one variable
+directly implicated by the family split, moved directly, produces no effect."
+
+**Depth supervision source is retired as an explanation for the eth3d/euroc
+deployment gains, permanently.** Whatever drives those gains, it is not which
+kind of depth (real sensor vs self-predicted) trained the head -- consistent
+with, and now doubly confirmed by, the plumbing finding that depth never
+supervises the head's parameters at all in this recipe (§17.85.1).
+
+### 17.86.2 E2: the spatially-varying photometry arm deploys, and lands exactly where predicted
+
+Deployment A/B, Replica office0, base checkpoint vs `replica-photo-spatial`
+head (per-channel WB jitter + radial vignetting on one view, §17.84.2):
+
+```
+              psnr        lpips
+base        26.4177      0.1086
+photo-spatial 26.6552    0.0934     -14.0% lpips   +0.24 dB
+```
+
+A real, solid deployment gain -- comparable in size to the o-0.9 opacity
+penalty's deployment result (+0.20 dB / -15.2%, §17.69), but produced by
+teaching the channel through realistic photometric augmentation rather than by
+imposing it with a loss penalty.
+
+**The opacity readout confirms the pre-registration.** Measured via
+`diag_colocation.py`, identical protocol to every other head:
+
+```
+photo-spatial head    opacity median 0.8344   frac>0.9 34.7%
+```
+
+Kimi's round-33 pre-registration was **frac>0.9 in [30%, 60%]** -- lands right
+at the bottom of the predicted range, and materially lower than plain
+photometry's 83.1% (frac>0.99 comparison would be sharper still, matching the
+pattern from §17.73.1). The mechanistic account -- spatially-varying photometric
+disagreement, which a per-source-pixel colour residual cannot fully absorb
+because the needed correction depends on where a point lands in the TARGET
+frame -- predicted more opacity recruitment than global brightness alone, and
+got it.
+
+Still short of TUM's unaided 12.5%, consistent with §17.73.3's standing
+conclusion: photometric disagreement is A driver, not sufficient alone.
+
+One change worth flagging: this head's leading opacity predictor is `conf`
+(+0.310 partial), NOT `disagree` (-0.071, weak) -- the OPPOSITE of the plain
+photometry head, whose leading predictor was `disagree` (-0.268). So the
+spatially-varying perturbation recruited MORE opacity overall (34.7% vs 83.1%
+frac>0.9) while reorganizing WHAT that opacity tracks -- toward backbone
+confidence rather than toward local photometric disagreement. Not yet
+understood; flagged for the next round rather than explained here.
+
+### 17.86.3 Standing state of both open lines, updated
+
+```
+depth-source pattern (eth3d/euroc gain most)   CLOSED -- unattributed, and now
+                                                the one causal lever available
+                                                was tested and found inert
+photometric-augmentation-as-recipe-fix         POSITIVE, replicated at deployment:
+                                                -14.0% lpips / +0.24 dB, opacity
+                                                recruitment landed in the
+                                                pre-registered range
+```
+
+### 17.86.4 Free check on candidate 1: the vignetting field does not correlate with conf. Candidate 1 refuted.
+
+Tested without any new training: applied a FRESH, out-of-training-sample
+vignetting field (identical formula to `replica.py`'s degrade, new random
+centre/strength) to held-out Replica office0 pairs, ran the photo-spatial head,
+and correlated the KNOWN ground-truth vignetting field directly against the
+head's predicted opacity and predicted backbone confidence on the same pixel
+grid:
+
+```
+n=737,280 pixels, 5 pairs
+spearman(vignette_falloff, opacity) = +0.032   (~0)
+spearman(vignette_falloff, conf)    = -0.037   (~0)
+```
+
+**Both negligible.** The vignetted region is NOT where backbone confidence
+drops, and it is NOT where the head's predicted opacity drops either. Candidate
+1 (conf is a confound of the vignetting perturbation's own spatial structure)
+is refuted -- this was a free, out-of-sample generalization test (fresh random
+vignette parameters, not the ones any specific training pair saw), so the null
+result is not an artifact of testing on memorized noise.
+
+This leaves candidate 2 (the recipe determines which channel the head reaches
+for; spatial photometric structure gets learned as a confidence-like signal for
+reasons not yet identified) as the only surviving account, and a third
+possibility neither of us named: the reorganization is a training-dynamics
+artifact of this specific 40-epoch run (single seed) rather than a property of
+the perturbation family at all. Sent to Kimi with the refutation rather than
+pursued further alone.
+
+### 17.86.5 Round 37: Kimi's unifying account, and the mixed arm
+
+Kimi's answer to the conf/disagree puzzle subsumes both candidates I proposed:
+**opacity allocates to wherever the training-time damage field lives; what it
+appears to "track" is whichever observable best marks that field.** Global
+brightness jitter leaves damage distributed by the scene's own disagreement
+structure -> opacity keys to `disagree`. A radial vignette concentrates damage
+peripherally -> opacity keys to whatever best marks that region, and if `conf`
+does, opacity tracks `conf` -- not because conf causes anything, but because it
+is the best available marker of where the perturbation hurt. Under this
+account the flip is the prediction, not an anomaly.
+
+His proposed decisive check: compute per-pixel Δloss (perturbed vs clean,
+frozen base model, inference only, no training) for each perturbation on a
+handful of pairs, then correlate each head's own opacity against its own
+perturbation's damage field. Queued for the next free GPU slot -- both GPUs are
+currently committed to real training/deployment runs, and building this
+correctly means going through the actual render+loss harness rather than a
+pixel-difference proxy, which is worth doing right rather than quickly.
+
+His sharper read on my candidate 1 (conf as vignette sensor): conf comes from
+the FROZEN backbone (§17.85.1, means/conf are `pts3d.detach()`/frozen pointmap
+output) -- head training cannot change it. So candidate 1 can only be about
+whether the frozen backbone's conf ALREADY responds to vignetting, not about
+the head learning to make it respond. §17.86.4's free check answered this
+directly (conf does not move under a fresh, out-of-sample vignette) and by his
+logic that kills candidate 1 at the root, independent of the damage-map result.
+
+**Mixed arm launched** (GPU1): `--family replica-mixed`, new `ReplicaData`
+degrade `"mixed"` applying content (noise+blur) and photometry-spatial
+(WB+vignette) together per view, same rng object advanced through both blocks
+so neither perturbation's own calibration changes relative to running alone.
+Pre-registered: both channels engage without interference -> frac>0.9 drops to
+30-50% AND scale p90 inflates >=10% on the same head. If one suppresses the
+other, that is itself a finding (a shared, competed-for budget).
+
+Per Kimi: this is the last mechanism experiment with real decision value:
+"beyond this cell, diminishing returns." The office1 confirmatory run (guarding
+against a repeat of §17.72's single-scene reversal) is running on GPU0.
+
+Minor documentation bug noticed while building the mixed mode, not yet fixed:
+the class docstring says photometry/photometry-spatial degrade the "TARGET
+view only," but `get_view`'s rng is seeded by `(sequence, view_idx)`
+independently for every call regardless of whether it is serving a context or
+target role, so in practice EVERY view gets its own independent draw. This
+does not invalidate the measured results (independent per-view jitter still
+produces inter-view appearance disagreement, which is what the causal story
+needed), but the docstring overclaims a target-only asymmetry the code does
+not implement. Flagged for a future cleanup pass, not urgent.
+
+### 17.86.6 office1 confirms: positive on both scenes, not another office1 reversal
+
+```
+Replica office1        psnr        lpips
+base                 21.7742      0.1202
+photo-spatial        22.2909      0.1123      -6.6% lpips   +0.52 dB
+```
+
+Positive on both metrics, same direction as office0 (-14.0% lpips/+0.24 dB),
+smaller in relative lpips magnitude. **Not a repeat of §17.72's office1
+reversal** (where conf-fade flipped sign entirely on this exact scene) --
+here the sign holds, only the size differs, which is the expected and
+unremarkable kind of within-family spread this project has learned to report
+as a range rather than suppress:
+
+```
+photo-spatial deployment gain range (n=2): -6.6% to -14.0% lpips, both positive
+```
+
+Two-scene confirmation is not conclusive on its own (this project has been
+burned by n=2 calls before -- §17.82.3's 7-scenes correction), but it clears
+the specific risk this run was checking for. The photo-spatial deployment
+result stands as replicated, not scene-specific.
+
+### 17.86.7 E1 second-sequence confirmation: desk agrees, and the sign flips -- exactly what a true null looks like
+
+```
+TUM desk                psnr        lpips
+real-depth head       14.0955      0.3755
+pseudo-depth head     14.1822      0.3720     -0.93% relative (pseudo slightly BETTER)
+```
+
+Room showed pseudo slightly worse (+1.17%); desk shows pseudo slightly better
+(-0.93%). **Noise straddling zero in opposite directions on the two sequences
+is a stronger confirmation of the null than two same-direction near-zero deltas
+would have been** -- a consistent small bias in one direction across both
+sequences would have at least raised the question of a systematic (if small)
+effect; sign flip with both magnitudes inside the project's established noise
+floor is the signature of no real difference at all.
+
+E1 is now confirmed on two TUM sequences, matching the same replication
+discipline just applied to the photo-spatial result. Depth source stays closed.
+
+### 17.86.8 Four-scene range for the photo-spatial deployment result
+
+```
+scene       base            photo-spatial       lpips     psnr
+office0   26.4177/0.1086    26.6552/0.0934      -14.0%   +0.24 dB
+office1   21.7742/0.1202    22.2909/0.1123       -6.6%   +0.52 dB
+room0     24.9794/0.1198    25.5077/0.0968      -19.2%   +0.53 dB
+office2   20.8521/0.1629    21.2616/0.1329      -18.4%   +0.41 dB
+
+range: -6.6% to -19.2% lpips, mean -14.55%, all four positive on both metrics
+```
+
+Consistently positive across four different Replica scenes -- the deployment
+claim for photo-spatial should be reported as this range, not office0's -14.0%
+alone (Kimi's point: "office0's -14.0% should be reported as the top of a
+range, not the number" -- room0 turned out larger still, so office0 was
+actually mid-range, which only reinforces the point that a single scene is not
+representative in either direction). office2 (4th scene, confirmatory, run
+2026-08-17) lands near the top of the existing range rather than outside it --
+no change to the range bounds, mean shifts from -13.3% to -14.55%.
+
+---
+
+## 17.87 Kimi's causal test for the trajectory story: falsified, in the wrong direction
+
+Same baked map (TUM room, base checkpoint, `logs/frames_head`), two supervision
+subsets split by LOCAL translation/rotation ratio (`diag_within_seq.py`'s exact
+`local_ratio()`, 227 frames each, matched counts, clean separation: low subset
+ratio range [0.002,0.007], high subset [0.012,0.036], zero overlap). Held-out
+set is independent of frames-traj content by construction (confirmed by
+reading `refine_local.py` before relying on it: held-out frames come from
+`gt_pairs`/`kf_idx`, never from the frames-traj file), so both arms share the
+identical 50-frame eval set.
+
+```
+supervision subset          iter 0 lpips   iter 600 lpips   gain
+low ratio  (rotation-heavy)    0.5964         0.5385        -9.71%
+high ratio (translation-heavy) 0.5964         0.5522        -7.41%
+```
+
+**Kimi's pre-registration**: high-parallax supervision should yield >= 2x the
+gain of low-parallax supervision. **Measured: the opposite sign of the
+prediction.** Rotation-heavy supervision produced the LARGER gain (-9.71% vs
+-7.41%), not the smaller one -- not a null result, a reversal.
+
+### 17.87.1 What this adds to the existing record
+
+This is the second independent measurement to turn against the
+supervision-parallax mediator specifically (as opposed to the cross-sequence
+correlation itself, which stands unchallenged at r=-0.978). §17.38's
+within-sequence test already found the mediator sign-inconsistent (4 negative,
+3 positive across 7 sequences) despite having more dynamic range than the raw
+ratio. This causal manipulation -- not just an observational correlation --
+now shows the mediator predicting the wrong sign on the one sequence tested.
+
+Two mediator failures, one correlational and inconsistent, one causal and
+reversed, are a stronger joint statement than either alone: **supervision
+parallax, however it is operationalized, does not appear to be the channel.**
+The cross-sequence correlation (motion type vs scene type, r=-0.978) remains
+real and unexplained; what is now further weakened is any specific causal
+story for WHY it holds.
+
+### 17.87.2 Honest caveats before this closes anything
+
+n=1 sequence, n=1 causal manipulation. Per this project's own repeatedly
+re-learned rule (§17.72, §17.82.3), a single reversal should not be promoted to
+"the mediator is dead" any more than a single confirmation should have been
+promoted to "the mediator is proven." The result is reported and sent to Kimi
+rather than acted on alone.
+
+One live confound specific to this design, flagged in the pre-registration and
+not yet checked: the two supervision subsets may cover different scene content
+(rotation-heavy frames tend to sweep more distant surfaces; translation-heavy
+frames tend to densely re-observe near ones), so "low beats high" could reflect
+which SURFACES got supervised rather than which MOTION TYPE did. The held-out
+coverage overlap between the two subsets was pre-registered to be reported
+alongside the gains and has not yet been computed.
+
+### 17.87.3 The coverage confound, checked: the two subsets occupy the same region
+
+```
+subset   n     centroid            pos spread (mean/max)   view-dir spread (mean)
+low     227   [1.21,-0.27,0.37]        1.08 / 1.52 m              45.9 deg
+high    227   [1.23,-0.08,0.24]        0.98 / 1.50 m              38.9 deg
+
+centroid distance (low vs high) = 0.233 m
+```
+
+The two subsets' camera centroids sit 0.23m apart against a ~1.5m position
+spread within each -- they occupy essentially the same region of the room, not
+different areas. Position spread and view-direction spread are also similar
+between subsets. This weakens the gross scene-coverage confound (the two
+supervision sets are not obviously looking at different parts of the room) but
+does not rule out finer content differences (e.g. near-surface vs far-surface
+emphasis at matched centroids), which the held-out-pixel-coverage check
+Kimi's pre-registration specified would settle more precisely.
+
+### 17.87.4 Second sequence (desk): confirms the ORIGINAL direction, not the room reversal
+
+```
+TUM desk, same design, matched 102-frame subsets
+supervision           iter 0 lpips   iter 600 lpips   gain
+low (rotation-heavy)     0.5071         0.4342        -14.38%
+high (translation-heavy) 0.5071         0.3875        -23.59%     1.64x low's gain
+```
+
+Coverage check, same method as room: centroid distance 0.24m against ~0.7-1.3m
+spread within each subset -- same region, weak confound, consistent with the
+room check.
+
+**Desk confirms Kimi's original pre-registration direction** (high beats low,
+1.64x -- short of his stated >=2x bar but the right sign and a meaningful
+margin). Room reversed it. Two sequences, opposite signs:
+
+```
+sequence   low gain    high gain    high/low ratio    direction
+room        -9.71%      -7.41%          0.76x         REVERSED
+desk       -14.38%     -23.59%          1.64x         confirmed (below 2x bar)
+```
+
+### 17.87.5 Verdict, reached without Kimi (quota exhausted this round): the causal manipulation reproduces the EXACT sign-inconsistency already on record, and that is itself the finding
+
+This was meant to be a discriminating test -- Kimi's design, run twice. It did
+discriminate, just not between "mediator real" and "mediator absent." What it
+discriminated was whether the causal result would look like the CORRELATIONAL
+record already in §17.38, and it does, closely:
+
+```
+§17.38 (correlational, 7 sequences)   4 negative, 3 positive -- sign-inconsistent
+§17.87 (causal, 2 sequences)          1 reversed, 1 confirmed -- sign-inconsistent
+```
+
+A mediator that is causally manipulated and still flips sign between two
+sequences of the SAME family, using the SAME map-building pipeline and the
+SAME split methodology, is not a measurement-noise story -- it is the same
+result the correlational test already gave, obtained a different way. Two
+independent methods (observe vs manipulate) landing on the same
+sign-inconsistent texture is more informative than either alone would be, and
+it is informative in the direction of killing the mediator, not supporting it.
+
+**Verdict, by the standard Kimi set one round earlier** ("if it's flat, you
+demote the whole trajectory story to map-content association, mechanism
+unknown"): a sign-inconsistent causal result meets or exceeds that bar for
+demotion. Applying it without waiting for his return, since the logic follows
+directly from data already in hand and does not require his judgment to
+complete -- if this call turns out wrong when he is back, it costs a
+correction, not a wasted experiment.
+
+**Kimi's audit (round 40), after the fact: closure sound, wording wrong.**
+"Two independent mediator tests both failed" overstates it -- desk was
+directionally POSITIVE (1.64x, just below the pre-registered 2x bar), only
+room reversed. The accurate phrase is **"sign-inconsistent across sequences
+and methods"** -- which is the stronger argument for closing, not a weaker
+one: the causal manipulation and the observational test (§17.38's 4-neg/3-pos)
+independently landed on the SAME inconsistent texture, rather than one clean
+failure and one ambiguous result. On whether a reversal is stronger evidence
+against a mediator than a flat result would be: yes, precisely -- flat says
+"no evidence the channel exists" (weak against); opposite signs across
+sequences say "no single-direction channel exists" (strong against, and
+positively excludes the universal-mechanism version of the claim). Closing
+after two sequences, without a third, was also correct: this is a demotion,
+not a promotion, and demotions need less evidence.
+
+**One magnitude finding survives the demotion and belongs in the record
+regardless**: the supervision-subset effect is LARGE on both sequences
+(desk: -23.59% vs -14.38%, a 9-point spread; room: -9.71% vs -7.41%), just
+sign-inconsistent in direction. Supervision composition has a large,
+scene-dependent effect on refinement gain -- the sharpest version yet of this
+session's recurring theme that scene effects dominate lever effects, worth
+keeping even though the specific parallax-ratio mechanism is dead.
+
+**Recorded conclusion**: the trajectory/parallax story demotes to *an
+unexplained seven-sequence association (r=-0.978), with two independent tests
+of its leading candidate mediator (supervision parallax) both failing to
+support it* -- §17.38 correlationally (sign-inconsistent), §17.87 causally
+(sign-inconsistent, on the same two sequences the mediator was tested on). No
+further mechanism hunting on this line without a genuinely new candidate
+mediator, which nothing in the current record suggests. The association itself
+stays in the file as a real, measured, unexplained seven-point correlation --
+worth reporting as exactly that, not as a finding with a story attached.
+
+A third sequence was considered and not run: the marginal value of a third
+coin flip on an already sign-inconsistent pattern is low, and this project's
+own standing rule (§17.83.5, restated by Kimi at round 38) is to stop spending
+GPU-hours on items that do not change what ships or what a write-up claims.
+This conclusion does not depend on which way a third sequence would land.
+
+### 17.86.9 The damage-map check: deferred, not abandoned, and why
+
+Attempted to build this properly (Kimi's item 1, tier-1 priority) once GPU0
+freed up. Traced the actual training-path machinery needed: `model.forward(v1,
+v2)` -> `p1,p2` (predicted Gaussians, means in a network-internal frame, NOT
+the `pts3d`/`valid_mask` DUST3RSplattingDataset computes from GT depth --
+confirmed those are unused by training, §17.85.1's finding again showing up in
+a new place) -> `model.decoder(batch, p1, p2, (h,w))` -> `color` (target-frame
+render) -> compare against `target['original_img']` for the per-pixel damage
+map. Correlating that against context-frame opacity requires projecting each
+Gaussian's mean into the target camera via the real relative pose -- and
+whether the network's predicted `means` live in world frame, context-camera
+frame, or some other canonical frame the paired decoder establishes was not
+resolved by the code read available in the remaining time.
+
+**Deferred rather than rushed.** Kimi is unavailable (quota) to sanity-check a
+geometric implementation choice made under uncertainty, and this project has
+repeatedly paid for exactly this kind of rushed instrumentation (the acc_alpha
+cull-threshold bug, the CUDA_VISIBLE_DEVICES/--refiner-gpu index bug earlier
+this session). The check tests a secondary mechanism question (why the
+conf/disagree flip happened) that does not gate any claim already made --
+§17.86.4's simpler vignette-field null already stands as a real, if partial,
+result (candidate 1 refuted). Queued for when either Kimi is back to review the
+frame-convention question, or there is time to trace `model.forward`'s exact
+`means` frame convention through the decoder code rather than guess it.
+
+### 17.86.10 The mixed arm lands: the two channels SUPPRESS each other, not both engage
+
+Kimi is unavailable this round (quota); scoring this against his own
+pre-registration since the logic requires no judgment call he was uniquely
+positioned to make.
+
+`replica-mixed` (content noise+blur AND photometry-spatial WB+vignette,
+applied together per view, same rng advanced through both blocks so neither
+perturbation's own calibration changed relative to running alone), 40 epochs,
+probed with the same 5-pair protocol as every other head in this table:
+
+```
+head                          scale p90   inflation vs base   opacity median  frac>0.9
+base                             9.778           --                1.0000      100.0%
+noisy (content only)            26.182        +167.8%              1.0000      100.0%
+photo (global photometry)       17.367         +77.6%              0.9912       83.1%
+photospatial (spatial photo)    14.818         +51.5%              0.8759       42.9%
+mixed (content + photospatial)  10.968         +12.2%              0.9332       62.7%
+```
+
+**Pre-registration**: both channels engage without interference -> frac>0.9
+drops to 30-50% AND scale p90 inflates >=10% on the same head.
+
+**Scored**: the scale-inflation bar is technically cleared (+12.2% >= 10%),
+barely -- but it is far below EITHER individual perturbation's own inflation
+(content alone: +167.8%; photospatial alone: +51.5%). And frac>0.9 (62.7%)
+lands ABOVE the predicted [30,50]% range, meaning LESS opacity recruitment than
+photospatial achieved alone (42.9%), not more. **Both numbers move in the
+"suppressed" direction relative to their solo arms, not the "both engage"
+direction.**
+
+This is Kimi's own alternative outcome, stated when he pre-registered the
+run: *"if one suppresses the other, the channels compete for a shared budget,
+which is itself a finding (and would bound how much a single recipe can teach)."*
+That is what the data shows. Combining both perturbations in one recipe does
+not let the head learn both hedges at full strength; it produces a head that
+hedges LESS on either axis than either perturbation produces alone.
+
+### 17.86.11 A candidate reading, offered without Kimi to attack it
+
+Both perturbations compete for the SAME limited quantity: how much the render
+loss can be reduced by moving away from the saturated/tight-scale prior the
+base checkpoint starts from. If the network has a roughly fixed "budget" of
+loss-reduction it will spend on hedging (whether via scale or via opacity, per
+the causal dissociation's own finding that these are largely separate channels
+for separate perturbation types), then presenting both perturbations at once
+means each gets a smaller share of gradient signal per epoch than it would
+training alone -- not because the mechanisms interfere structurally, but
+because 40 epochs of mixed-perturbation data contains fewer clean instances of
+EITHER perturbation type in isolation than 40 epochs of single-perturbation
+data does. This is a training-dynamics/dose account, not a representational
+incompatibility account, and it predicts the suppression should shrink (or
+disappear) with more epochs or a recipe that alternates rather than always
+co-applies both perturbations per view. Not tested. Flagged as the leading
+guess, not a finding.
+
+Measurement-variance note: this session's two probes of the photospatial head
+disagree on frac>0.9 (34.7% via `diag_colocation.py`, 5 or 6 pairs at one set
+of indices; 42.9% via `gp2.py` here, 5 pairs at different indices). Both
+numbers are now on record rather than silently reconciled; the gap is itself
+informative about how much this class of probe should be trusted to one
+significant figure.
+
+### 17.86.12 The mixed head deploys BEST of all the photometric-augmentation heads, despite showing the WEAKEST channel engagement
+
+```
+Replica office0        psnr        lpips
+base                 26.3274      0.1095
+mixed                26.7077      0.0874     -20.2% lpips   +0.38 dB
+```
+
+Comparison against the other augmentation heads on the same scene:
+
+```
+head              deployment lpips gain    opacity/scale channel engagement
+photo (global)          not deployed        frac>0.9 83.1%, p90 +77.6%
+photospatial            -14.0%              frac>0.9 42.9%, p90 +51.5%
+mixed                   -20.2% <- BEST       frac>0.9 62.7%, p90 +12.2% <- WEAKEST
+```
+
+**The mixed head produces the largest deployment gain of any augmentation head
+measured, while showing the weakest opacity/scale response of the three on the
+mechanism probe.** This decouples the two things §17.86.10's mechanism
+narrative implicitly linked: "how much the head visibly hedges via
+opacity/scale" is not the same variable as "how good the resulting deployed
+map is." Whatever the mixed recipe's content-noise component adds to
+deployment quality, it does not show up as the un-saturation/tail-inflation
+signature the probe measures -- it must be doing something else structurally
+useful (plausibly: general robustness to appearance/geometry noise of the kind
+real SLAM sequences also contain, independent of the specific opacity/scale
+channels this session has been tracking).
+
+**Caution against over-reading one scene**: every other augmentation head's
+deployment number in this file has needed a 2-3 scene range before being
+trusted (§17.72's office1 reversal, §17.86.6-8's three-scene photospatial
+range). This is one scene. Recorded as the leading data point, not a
+conclusion, pending a second scene -- which is queued next since GPU1 just
+freed up.
+
+This result is a genuine puzzle worth Kimi's attention when his quota returns:
+the mechanism story (opacity tracks damage; more perturbation types should
+recruit more/different opacity) does not obviously predict "the recipe with
+the WEAKEST individual-channel response deploys BEST." Two candidate readings,
+neither tested: (a) the mechanism probe measures the wrong thing -- deployment
+quality is driven by something the opacity/scale summary statistics do not
+capture; (b) the content-noise component's val-time cost (§17.73.4: content
+degradation makes the training task strictly harder) forces the network to
+learn more robust FEATURES generally, which pays off at deployment through a
+channel unrelated to opacity/scale allocation.
+
+### 17.86.13 office1 confirms the sign, not the size: the mixed head's advantage is real but scene-dependent, more so than photospatial's was
+
+```
+Replica office1        psnr        lpips
+base                 21.9888      0.1165
+mixed                22.0945      0.1116     -4.2% lpips   +0.11 dB
+```
+
+Positive on both metrics, same direction as office0 -- not a §17.72-style
+reversal. But the spread between scenes is much wider than photospatial's own:
+
+```
+head            office0      office1      ratio (larger/smaller)
+photospatial     -14.0%       -6.6%            2.1x
+mixed            -20.2%       -4.2%            4.8x
+```
+
+**Three-scene range for the mixed head: -4.2% to -20.2% lpips** (room0 added
+2026-08-17, see below). Both positive, so §17.86.12's headline ("mixed deploys
+best despite the weakest mechanism probe reading") survives as a real,
+replicated-in-sign effect -- but it is not uniformly the strongest of the
+three augmentation heads once office1 is in the picture: photospatial's
+office1 (-6.6%) beats mixed's office1 (-4.2%), while mixed's office0 (-20.2%)
+beats photospatial's office0 (-14.0%). The "mixed is best" claim from a single
+scene does not survive as a clean ordering; the honest statement is that mixed
+has the widest scene-to-scene spread of the three heads tested, positive
+throughout, mean roughly comparable to photospatial's own mean.
+
+```
+Replica room0           psnr        lpips
+base                 25.5087      0.1094
+mixed                25.7712      0.0931     -14.9% lpips  +0.26 dB
+```
+
+```
+head            3-4 scene mean (lpips gain)
+photospatial     -14.55%  (n=4: -6.6/-14.0/-19.2/-18.4)
+mixed            -13.1%   (n=3: -4.2/-20.2/-14.9)
+```
+
+Comparable means, very different variance. This changes §17.86.12's puzzle
+framing slightly: it is not that mixed is unambiguously the best-deploying
+head with the weakest mechanism signature; it is that mixed's deployment
+outcome is LESS predictable scene-to-scene than photospatial's, which is
+itself consistent with (though does not prove) the "shared training-budget
+competed for by two perturbation types" account from §17.86.11 -- a recipe
+that teaches both hedges weakly might produce a less reliably-calibrated head
+than one that teaches a single hedge strongly.
+
+**No further scenes queued for this cell.** Two augmentation-head deployment
+lines (photospatial n=3, mixed n=2) both show positive, scene-variable gains
+in the same range as the rest of this project's family-level deployment
+results; the marginal value of a third mixed-arm scene is low against this
+project's own stated bar (does it change what ships or what the write-up
+claims) -- it does not, since "positive, variable magnitude" is already the
+honest and sufficient characterization.
+
+### 17.86.14 Round 40 audit (Kimi): the 34.7% vs 42.9% provenance check, resolved
+
+Kimi flagged, correctly, that photospatial's `frac>0.9` reads 34.7% in the E2
+readout (§17.86.2, via `diag_colocation.py`) and 42.9% in the mixed-comparison
+table (§17.86.10, via `gp2.py`) -- same checkpoint, two numbers. Traced rather
+than assumed:
+
+```
+diag_colocation.py   idxs = [int(n*f) for f in linspace(0.05, 0.9, pairs)]
+                     -> office0 (n=2000): frames [100, 525, 950, 1375, 1800]
+                        spans the FULL sequence
+
+gp2.py               idxs = (0, 200, 400, 600, 800), fixed regardless of n
+                     -> office0: spans only the FIRST 40% of the sequence
+```
+
+**Not a bug -- two genuinely different, non-overlapping probe sets.** Neither
+script was ever designed to be numerically interchangeable with the other; the
+gap is sampling-location variance, the same kind of thing this project
+has repeatedly had to learn to report as a range rather than a point estimate.
+Both numbers stay on record with their instrument named alongside them from
+here forward; `diag_colocation.py`'s reading (34.7%) is the more representative
+one of the two, since it samples the whole trajectory rather than the first
+40%, and should be preferred when only one number is quoted.
+
+### 17.86.15 Round 40 audit: the mixed-arm "higher variance" claim, corrected to what n=2 vs n=3 actually supports
+
+Kimi's catch: comparing a 2-scene range (mixed) against a 3-scene range
+(photospatial) and calling the ratio (4.8x vs 2.1x) a variance difference is
+not a valid comparison -- range grows with n by construction, so a small-n
+range-ratio is not a variance estimate. **§17.86.13's "mixed has higher
+scene-to-scene variance" claim is retracted as stated.**
+
+Corrected claim: mixed and photospatial have comparable MEANS (-12.2% vs
+-13.3%); whether their variances differ is unresolved at the current sample
+sizes (n=2 vs n=3) and would need a matched-n comparison to assess honestly.
+
+**The mechanism puzzle from §17.86.12 (why does the head with the weakest
+opacity/scale probe response deploy competitively) is not pursued further**,
+on Kimi's argument: probe-strength and deployment-quality were never
+established as related variables in this project to begin with -- the o-0.9
+penalty head knee-parked its own opacity probe (median 0.84, well short of a
+"strong" un-saturation reading) and still deployed at -15.2% lpips (§17.69).
+Single-scene deployment numbers in this project swing by an order of magnitude
+on their own (office1's whole history), so a one-scene probe/deployment
+discordance is the ordinary texture of this system, not a paradox needing a
+fifth mechanism.
+
+**What is decision-relevant and stands**: mixed suppresses both channels on
+the mechanism probe (§17.86.10) AND shows no mean deployment advantage over
+photospatial alone. **Recipe recommendation: ship photospatial-only
+augmentation; do not ship the mixed recipe.** The suppression finding stays in
+the file as one sentence -- combined augmentation blunts both channel
+responses and adds no measured benefit, consistent with the two perturbation
+types competing for a shared training-time budget -- without further chase.
+
+---
+
+## 17.88 The damage-map check runs, and the sign is backwards from the hedging hypothesis
+
+Kimi's round-40 trace unblocked this (`p1["means"]`/`p2["means_in_other_view"]`
+both live in context[0]'s camera frame; exact projection confirmed against
+`decoder_splatting_cuda.py`'s own extrinsic construction). Built
+`damage_map.py`: for a real (context0, context1, target) triple on Replica
+office0, run the BASE (frozen) model's own render+loss twice -- context1 clean
+vs context1 degraded by the perturbation a given trained head was trained on
+-- to get a per-pixel target-frame damage map (Delta MSE, perturbed minus
+clean). Project the TRAINED head's own predicted opacities (on the degraded
+input) from context1's grid into the target camera via the exact transform
+the training decoder uses, and correlate opacity against the damage sampled
+at each Gaussian's projected location.
+
+Sanity check passed on every pair: damage mean is positive (the perturbation
+does increase loss, confirming the harness measures something real) except
+one slightly-negative outlier consistent with noise at that specific pair.
+
+```
+head                          degrade tested        n         spearman(opacity, damage)
+photospatial                  photometry-spatial   589,824         +0.2821
+mixed                         photometry-spatial   589,824         +0.2261
+noisy (content-trained)       content               589,824         +0.0012  (degenerate:
+                                                                       opacity ~100% saturated)
+```
+
+**The sign is backwards from the hedging hypothesis this check was built to
+test.** The prediction (mine, and implicit in Kimi's framing across several
+rounds) was that opacity should be LOW where the perturbation does the most
+damage -- the head "hides" uncertain/risky content behind transparency. What
+is measured, robustly, on two independently-trained heads against the exact
+perturbation type each was trained on: **opacity is HIGH where damage is
+high.** Consistent in sign and comparable in magnitude (+0.28, +0.23) across
+photospatial and mixed.
+
+The content-trained head's near-zero correlation is not informative either
+way -- its opacity is ~100% saturated (§17.65.1), so any rank correlation on
+it is close to the degenerate-array problem §17.66 built a guard for; not
+formally flagged by this script but the same caution applies by inspection
+(opacity has almost no dynamic range to correlate with anything).
+
+### 17.88.1 Sent to Kimi rather than interpreted alone
+
+This reverses the working assumption behind the whole allocation-mechanism
+thread (§17.66 onward: "opacity hedges by going low where the map/photometry
+is unreliable"). A reversed but consistent, non-degenerate, two-head-replicated
+signal is data, not noise, and needs a mechanism reading before it goes in the
+file as anything more than a measurement. One candidate considered and not
+yet tested: **"commitment where it matters"** rather than "hedge where it's
+risky" -- opacity may be high precisely where the network cannot afford to
+fade out (the content still needs to be rendered and errors there are
+expensive), and low by default where fading out is cheap because the content
+is already easy. That would produce exactly this sign without requiring
+opacity to track "risk" the way the original hedging framing assumed. Not
+adjudicated; sent onward.
+
+## 17.89 Round 41 resolved: opacity is a brightness-trim dial, not a hedging channel -- and the decisive check confirmed it with opposite signs
+
+Kimi read the damage-map script directly (offered, and he took the offer --
+right call given this project's history) and found the fact that resolves
+everything: `data.py`'s `__getitem__` fetches BOTH context views (line 78) AND
+target views (line 120) through the SAME degrade-enabled `ReplicaData`
+instance, each with its own independently-seeded rng. **Training degrades
+context and target independently** -- the target's vignette/WB draw is
+invisible to the model, unpredictable from the input it sees. (This also
+resolves the "minor documentation bug" flagged in passing at §17.86.5: the
+class docstring's "target view only" framing was never accurate; every view,
+context or target, gets its own draw.)
+
+### 17.89.1 The mechanism, stated properly
+
+Under a black-background renderer, opacity is not a keep/discard gate -- it is
+a **brightness trim**: lower alpha darkens the render toward black (more
+background bleed), higher alpha brightens it (less bleed, closer to the
+predicted colour). `f_dc` is anchored to the input image's own (possibly
+darkened) colours and sigmoid-bounded, so it cannot freely relight a region.
+Opacity is the only channel with spare room to brighten past what the degraded
+input suggests. A head trained with unpredictable per-instance target
+darkening therefore learns the loss-optimal move: **raise opacity where the
+input was likely darkened**, to recover brightness the target will, on
+average, actually have. The damage-map check degrades the input and measures
+where that hurts the base model's render -- which is exactly where a trained
+head should have learned to lift. Opacity-high-where-damage-high was the
+FORWARD prediction once opacity is modeled as a brightness dial rather than a
+confidence gate; the "reversal" was a wrong mental model, not a wrong
+measurement.
+
+### 17.89.2 The decisive check: opposite signs, as predicted, before running anything
+
+Kimi's sharpest consequence of the account: correlate opacity against input
+luminance directly, per head. Prediction, pre-registered before running:
+photospatial-style heads (vignette-darkened inputs) should show NEGATIVE
+correlation (lift what's dark); real-data heads with no synthetic vignette
+(TUM) should show POSITIVE correlation (solid where content is bright/
+reliable, matching TUM's own +0.213 conf partial from §17.66).
+
+```
+head             dataset                  opacity vs input luminance
+photospatial     Replica office0                -0.3156
+mixed            Replica office0                -0.2788
+tum              TUM desk                       +0.3026
+```
+
+**Opposite signs, comparable magnitude (~0.28-0.32), exactly as predicted --
+before the numbers landed.** This is the first mechanism account in this
+entire arc confirmed by a prediction that could have failed cleanly and
+didn't. Kimi's account is adopted:
+
+> Opacity is the head's per-region brightness/solidity dial. Its sign and
+> magnitude follow whatever the supervision made unreliable: solid where
+> content is reliably reconstructable (conf, TUM +0.213), trimmed where the
+> sensor never vouched for the content (invalid, -0.198), trimmed where
+> supervision photometrically conflicts (disagree, photo head -0.268), lifted
+> where a perturbation stole brightness from the input (damage/luminance,
+> photospatial/mixed -0.28 to -0.32). None of the upstream signs change; the
+> "confidence/hedging" language is retired in favour of "solidity" and
+> "brightness trim," which is mechanically accurate rather than metaphorical.
+
+### 17.89.3 What this means for the deployment paradox (§17.86.12)
+
+Resolved, not just explained away: the damage map measures *sensitivity to
+input degradation*, not *wrongness*. High-damage pixels are where there was
+strong content for the perturbation to remove; a head that raises opacity
+there is repairing lost brightness, which is deployment-positive by
+construction. "Doubling down on wrong content" would only describe this if
+damage meant reconstruction failure -- it means the opposite, structurally.
+
+### 17.89.4 Script fixes made per Kimi's audit
+
+`damage_map.py`: `strict=False` head-weight loading now asserts
+`n_loaded > 0` and prints the loaded/missing/unexpected key counts -- a silent
+0-key load would have left the "trained head" scoring the base checkpoint
+twice, indistinguishable from a working run by output shape alone. Confirmed
+retroactively that the original runs loaded correctly (136/136 keys, matching
+the fresh `luminance_check.py` runs above), so §17.88's numbers stand.
+
+### 17.89.5 Closed here, per Kimi's own stopping rule
+
+Two of his three "free checks before stopping" are done (the luminance
+correlation, decisive; the load-assertion, done as part of the fix). The third
+(clean-input vs degraded-input opacity, to separate "baked-in prior" from
+"online response to seeing degradation") and the spatial-offset locality
+control are lower-value now that the sign prediction has already landed
+correctly -- per the standing rule this session keeps re-deriving (does the
+next check change what ships or what gets claimed), the mechanism section can
+be written now. **The opacity-allocation mechanism thread, open since §17.66,
+is closed.**
+
+### 17.89.6 Extension to eth3d/euroc (run 2026-08-17): 5/5 families now confirm the sign
+
+Kimi's optional suggestion (extend from 2-3 heads to 5 families) was cheap
+enough to run immediately once GPU0/GPU1 freed up -- both eth3d and euroc
+heads are real-sensor data with no synthetic vignette/darkening in their
+training recipe (`train_lora_per_scene.py`'s `FAMILIES` dict: plain
+`ETH3DData`/`EuRoCData`, no `degrade=` kwarg), so the same real-data
+prediction that held for TUM (+0.3026) applies to both.
+
+```
+head             dataset                  opacity vs input luminance
+photospatial     Replica office0                -0.3156
+mixed            Replica office0                -0.2788
+tum              TUM desk                       +0.3026
+eth3d            eth3d cables_1                 +0.3919
+euroc            euroc MH_01_easy               +0.3037
+```
+
+**5/5 families land on the predicted sign**, real-data heads clustering
+tightly at +0.30 to +0.39, synthetic-darkening heads at -0.28 to -0.32. No
+family breaks the pattern. This does not change the mechanism verdict itself
+(already closed in §17.89.5) -- it is additional replication breadth for the
+paper write-up, run because it was a five-minute script invocation against an
+otherwise-idle GPU, not because the mechanism was still in doubt.
+
+## 17.90 Seed ensemble lands: the recipe is stable
+
+Both round-38 "cheap insurance" runs finished. Kimi's instruction stands: these
+report as the robustness paragraph and reopen nothing unless a seed disagreed
+wildly. Neither did.
+
+```
+head              seed0 val psnr/lpips     seed1 val psnr/lpips     delta
+tum                 16.83 / 0.251            16.88 / 0.2529        +0.05 dB / +0.76%
+photospatial        20.33 / 0.1575            20.21 / 0.1536        -0.13 dB / -2.48%
+```
+
+Both deltas are small and go in OPPOSITE directions (TUM seed1 slightly worse
+lpips, photospatial seed1 slightly better) -- the signature of ordinary
+training-seed noise, not a systematic seed sensitivity. Both magnitudes are
+comparable to or smaller than the within-family scene-to-scene spread this
+project has repeatedly measured for deployment (e.g. photospatial's own 2.1x
+scene range in lpips gain, §17.86.8). **The head-only recipe is not
+seed-fragile.** No further seed runs queued; the five-family replication
+already established more about robustness than seed variance would add
+(Kimi's round-38 point, confirmed rather than just asserted).
+
+### 17.90.1 Deployment-level seed check: also stable
+
+```
+head              seed0 deploy psnr/lpips     seed1 deploy psnr/lpips     delta
+tum (room)          13.03 / 0.4381              13.18 / 0.4352            +0.15 dB / -0.66%
+photospatial (o0)   26.87 / 0.0879              26.83 / 0.0842            -0.05 dB / -4.21%
+```
+
+Both small, both directions show seed1 with modestly better lpips -- no sign
+of seed fragility at deployment either. The recipe's robustness claim now
+covers both the val-split check (§17.90) and the deployment check (here).
+Closed; no further seed runs.
+
+### 17.89.6 Round 42, closing: why this confirmation counts, and the sentence that ties the whole project together
+
+Kimi's closing notes, adopted verbatim where noted. **Why this result is the
+strongest evidence the project has produced**: it was a pre-registered
+opposite-signs prediction on one instrument, cheap to fail two ways, and it
+failed neither. Every correlational finding in this file that "was consistent
+with" a story is weaker evidence than this one prediction that could have
+landed same-sign, or null, and did neither. This also retroactively resolves
+a tension flagged back at 17.88: opacity correlating positively with both
+`conf` (TUM head) and `damage` (photospatial head) was only ever a puzzle
+under the risk/hedging axis -- under the trim-dial axis they are different
+heads answering different supervision structures, and no single head has to
+satisfy both at once.
+
+**The two dropped follow-up checks are confirmed as the right drops**: the
+spatial-offset control existed to rule out "two smooth fields agreeing by
+construction," and opposite signs answer that more decisively than the
+control would have (shared smooth structure cannot flip a sign). The
+clean-vs-degraded-input variant would add color (static prior vs online
+response), not load-bearing evidence.
+
+**The unifying sentence for the write-up, not stated plainly anywhere before
+this**:
+
+> The thinning lever and the head-training result are the same result. The
+> base checkpoint's opacity collapse means it cannot trim -- the haze was
+> untrimmable solidity. Injection-time thinning supplies the trim from
+> outside. The heads that deploy well are the ones that learned the trim
+> themselves. Every lever that worked in this project either supplies,
+> imitates, or enables that trim.
+
+This connects the very first sections of this file (the dot lattice, the haze,
+§17.2's instrument) to the last (the brightness-trim mechanism) as one
+throughline rather than two separate arcs that happened to share a project.
+
+**Kimi's own accounting, recorded because the file has been keeping score of
+both of us**: the confidence/hedging framing that died this round was his as
+much as mine -- he co-authored it across several rounds (round 24's
+view-independence argument, the "confidence channel" language adopted at
+§17.66). Recorded as progression (confidence channel -> trim dial), not
+silently overwritten.
+
+One optional, unrequired probe he flagged: the same luminance correlation on
+the euroc/eth3d heads (the two largest deployment-gain families) would extend
+the mechanism claim from two heads to five, for about ten minutes of probe
+time. Not run in this session; noted as available and cheap if the write-up
+wants the wider claim.
+
+---
+
+## 17.91 STATE OF PLAY (round 2) — read this instead of §17.83, which is superseded
+
+§17.83 was written mid-session and everything from §17.84 onward happened
+after it. This section exists for the same reason §17.83 did: to let a
+compacted context (yours, next time) reconstruct the project's actual state
+from this file alone, without re-deriving anything already settled. Read this
+first. Section numbers below point to full detail; this section is the map,
+not the territory.
+
+### 17.91.1 What this project is, in two sentences
+
+Splatt3R-SLAM integrates Splatt3R (feed-forward two-view Gaussian splatting)
+into MASt3R-SLAM for real-time Gaussian-splat scene reconstruction, assembling
+toward a paper. The user runs experiments to be reported by default, wants
+everything logged here for the write-up, and wants complex analysis/design
+questions argued to agreement with Kimi (a separate model, reached via
+`scripts/`-adjacent shell wrappers around a persistent CLI session) rather than
+decided unilaterally — except when Kimi's quota is exhausted, in which case
+the standing instruction is to keep working, log every judgment call made
+alone, and have Kimi audit them when he returns.
+
+### 17.91.2 The three results this paper actually rests on, current form
+
+```
+1  HEAD-ONLY TRAINING (frozen encoder, train only the Gaussian head)
+   Replicated on 5 families, deployment-verified online. eth3d -29.1% lpips
+   euroc -20.8%, TUM -7.9% to -25.9% across 4 sequences, 7-scenes the weak
+   family (+0.14% to -4.9%). Mechanism (17.81, 17.89): the optimizer
+   un-saturates opacity on its own (1.0 -> 0.26) even without a trained head;
+   head training moves the CONVERGED ENDPOINT, not just the starting point.
+   Seed-robust (17.90: two heads, two seeds each, val AND deployment, deltas
+   all <5% relative, signs inconsistent = ordinary noise not fragility).
+
+2  INJECTION-TIME THINNING (opacity fade at map-assembly time, no retraining)
+   12 online cells, 4 families, 6 heads, 8 scenes (17.79.10): 10 clear
+   benefit, 2 ties, 0 harm, worst cell +0.16%. Mechanism: pure acceleration
+   along a path the optimizer already walks by itself -- this is WHY it has
+   bounded downside (a prior the optimizer was going to overtake anyway can't
+   hurt much) and why training-time opacity penalties CANNOT substitute for
+   it (17.70.8: crowding is a map-level property that exists only after SLAM
+   accumulates many keyframes over a surface; pair-training never sees a map).
+   Confirmed twice at two knee depths (o-0.9 -21.0%, o-0.6 -15.8%, neither
+   collapsed toward zero as training-substitution would require).
+   `--refiner-conf-fade` ships as the shipped allocation variant (confidence-
+   weighted, not uniform), default 0.45, justified by a 12-cell distribution
+   NOT by any ability to predict which map benefits (conf-vs-uniform is
+   statistically a coin flip, n=12, median -0.06%, CI contains zero -- ship it
+   anyway because it's never much worse, worst case +2.9%, and it IS the
+   configuration the deployment A/Bs were run with).
+
+3  THE OPACITY MECHANISM (what opacity actually is, and why real data teaches
+   it and clean synthetic data doesn't)
+   CLOSED, 17.89, this session. Opacity is a BRIGHTNESS-TRIM DIAL against the
+   black background renderer, not a confidence/hedging/risk channel (that
+   framing, which both the user and Kimi held for most of this session, is
+   RETIRED). Lower alpha darkens toward black; higher alpha brightens.
+   f_dc is anchored to the (possibly degraded) input colour and sigmoid-
+   bounded; opacity is the only channel with room to brighten past what a
+   degraded input suggests. Confirmed by the strongest evidence type this
+   project produced: a PRE-REGISTERED OPPOSITE-SIGN prediction (opacity vs
+   input luminance: photospatial/mixed heads -0.32/-0.28, TUM head +0.30),
+   which landed exactly as predicted before the numbers were seen. This
+   unifies with result #2: "the thinning lever and the head-training result
+   are the same result" (Kimi, round 42) -- the base checkpoint's opacity
+   collapse means it cannot trim (untrimmable solidity = the haze from
+   §17.2's very first sections); injection thinning supplies the trim
+   externally; heads that deploy well are the ones that learned the trim
+   themselves. Every lever that ever worked in this project either supplies,
+   imitates, or enables that trim.
+```
+
+### 17.91.3 The closed-question ledger since §17.83 (chronological, this is the part a compacted context most needs)
+
+**Why eth3d/euroc (the two pseudo-depth families) show the largest head-
+training deployment gains** -- CLOSED, unattributed, §17.85.10. Four candidate
+mechanisms, each pre-registered and killed by direct measurement, not
+argument:
+```
+scale-frame consistency   DEAD -- mechanically inert. The head-only loss is
+                          PURELY photometric (masked MSE + 0.25 LPIPS); means
+                          are pts3d.detach() (frozen, not trainable);
+                          is_metric_scale is a no-op (its only consumer, the
+                          MASt3R Regr3D loss, is disabled). Depth touches
+                          training only via the loss mask and pair selection,
+                          never the head's parameters. (17.85.1)
+supervision coverage      DEAD -- measured mean supervised-pixel fraction per
+                          family: tum 60.0%, 7-scenes 65.1%, euroc 39.5%
+                          (LOWEST, yet 2nd-largest gain), eth3d 61.9%
+                          (~=TUM, yet 3x the gain), replica 79.8%. Orders
+                          nothing. (17.85.2)
+opacity un-saturation     DEAD -- explained 4/5 families in rank order
+degree                    (eth3d 0.24->−29.1%, euroc 0.38->−20.8%, tum
+                          0.66->−9.9%, replica 0.998->null) but 7-scenes
+                          (measured 0.4789, comparable to euroc's 0.38) has a
+                          NULL gain -- a direct measured counterexample, not
+                          a pending cell. (17.85.3)
+base deficit (headroom)   DEAD -- rho=0.145 across 11 sequences with recorded
+                          base lpips. eth3d sofa_1 has the LOWEST deficit of
+                          any sequence (base already good) and the 2nd-LARGEST
+                          gain. Killed with data already in hand, no new
+                          GPU-hour needed. (17.85.8)
+```
+The gains themselves are real (measured against a 0.17% noise floor); only
+the ATTRIBUTION died four times. Standing rule earned: **"a pattern across
+five families is a hypothesis generator, never a conclusion; the conclusion
+lives in the cell you predict before you run it"** (Kimi, round 35) -- and
+even that discipline, applied properly (per-sequence base-deficit prediction
+tested against data already in hand), still killed the account. 7-scenes'
+suspected-broken-bake flag from round 29 was itself checked and found
+groundless: zero relocalization events in any of its four deployment logs,
+and its psnr band (11-15) is not anomalous against eth3d/euroc/TUM in the
+same harness -- the earlier suspicion was comparing it to Replica's 21-27
+regime, a different family entirely. (17.85.9)
+
+**Does depth-supervision SOURCE (real sensor vs self-predicted pseudo-depth)
+matter causally** -- CLOSED PERMANENTLY, controlled negative, §17.86.1/.86.7.
+The one causal experiment in the whole depth-source inquiry: added
+`depth_source="pseudo"` to `TUMData` (splatt3r_core/data/tum/tum.py), trained
+a TUM head on self-predicted pseudo-depth instead of real sensor depth, same
+family/scenes/recipe/seed otherwise. Deployment A/B on TWO sequences:
+```
+TUM room   real 13.0996/0.4346   pseudo 13.1369/0.4397   +1.17% (pseudo worse)
+TUM desk   real 14.0955/0.3755   pseudo 14.1822/0.3720   -0.93% (pseudo better)
+```
+Opposite-sign noise on both -- the cleanest null texture this project
+produced before the luminance check topped it. `scripts/precompute_pseudo_depth_tum.py`
+is the new script (mirrors the existing euroc/eth3d one).
+
+**Does the trajectory translation/rotation-ratio story have a causal
+mechanism** -- CLOSED, demoted to unexplained association, §17.87. Kimi's
+design: same baked map (TUM room, then TUM desk), two supervision-frame
+subsets split by LOCAL parallax ratio (reusing `diag_within_seq.py`'s
+`local_ratio()`), matched counts, shared/disjoint held-out set by
+construction. `scripts/split_frames_traj.py` (well, the scratchpad copy) does
+the splitting.
+```
+room: low(rotation-heavy) -9.71%   high(translation-heavy) -7.41%   REVERSED
+desk: low -14.38%                  high -23.59%                    confirmed
+                                                                     (1.64x,
+                                                                     below the
+                                                                     2x bar)
+```
+Sign-inconsistent across two sequences, matching (independently) the
+observational within-sequence test's own inconsistency from months earlier
+(§17.38: 4 negative, 3 positive across 7 sequences). Two independent methods
+landing on the same inconsistent texture is what justified closing without a
+third sequence -- **this was a demotion, not a promotion, and demotions need
+less evidence than promotions** (Kimi, round 40, endorsing a call made solo
+while he was offline). The magnitude finding survives the demotion:
+supervision composition has a LARGE effect on refinement gain either way
+(desk: a 9-point spread on the same map) -- just sign-inconsistent, the
+sharpest version yet of "scene effects dominate lever effects."
+
+**The causal photometric dissociation, completed** -- §17.86.2-.86.10.
+Content-only degradation moves scale, not opacity (confirms the original
+round-24/28 finding). Photometric degradation moves opacity, more so the more
+spatially-structured it is:
+```
+global brightness jitter    frac>0.9 83.1%   (weakest un-saturation)
+spatial (WB+vignette)       frac>0.9 34.7-42.9% (two different probe
+                                                  protocols, see 17.86.14 --
+                                                  not a bug, non-overlapping
+                                                  frame samples)
+mixed (content+spatial)     frac>0.9 62.7%   opacity/scale response WEAKER
+                                              than either solo arm --
+                                              SUPPRESSION, Kimi's own
+                                              pre-registered alternative
+                                              outcome, not "both engage"
+```
+Deployment: photospatial positive on 3 Replica scenes (-6.6% to -19.2%,
+mean -13.3%; a 4th scene is running now, see 17.91.5). Mixed positive on 2
+scenes (-4.2% to -20.2%, mean -12.2%) -- **NOT "best," a claim retracted in
+round 40's audit** (comparing an n=2 range to photospatial's n=3 range as a
+variance claim was invalid; corrected to "comparable means, variance
+unresolved at these n"). **Recipe recommendation: ship photospatial-only
+augmentation for any future head training; do not ship the mixed recipe** --
+it suppresses both channels on the mechanism probe and shows no mean
+deployment advantage.
+
+**Why does opacity allocate where it does** -- CLOSED, §17.88-89, this
+session's central arc, detailed in 17.91.2 item 3 above. Built
+`damage_map.py` (scratchpad) reusing the EXACT training-path render+loss
+(`model.forward` -> `model.decoder`, not a hand-rolled proxy) once Kimi traced
+the frame convention (`p1["means"]`/`p2["means_in_other_view"]` both live in
+context[0]'s camera frame; exact projection `inv(c2w_target) @ c2w_context0`).
+First result (opacity HIGH where a frozen base model's render-loss damage from
+degrading context1 is HIGH) read as "backwards" from the hedging hypothesis
+until Kimi read the script AND traced `data.py`'s dataset path, finding that
+BOTH context and target views are independently degraded during training
+(same degrade-enabled instance, per-view seeded rng) -- so the target's
+darkening is unpredictable from the input, and the loss-optimal response is
+to brighten wherever the input was likely darkened, using opacity as the only
+channel with spare room to do it. The decisive confirmation:
+opacity-vs-input-luminance correlation, OPPOSITE SIGNS predicted and measured
+(photospatial -0.3156, mixed -0.2788, TUM +0.3026). This is the strongest
+evidence type the project produced all session: a prediction that could have
+failed two clean ways and failed neither.
+
+### 17.91.4 Standing methodological rules earned this session (on top of the ones already in 17.83.2)
+
+```
+1  A compaction can cause you to re-derive and duplicate already-settled work
+   under clashing section numbers. If a number you're about to report
+   "discovering" matches something suspiciously exactly, check for a
+   duplicate before assuming it's new. (17.84 -- this happened once, mid-
+   session, and cost real time to untangle.)
+2  Any probe that TRANSFORMS the signal (eps-scaling, filtering, projection)
+   must be validated at the EXTREMES of the range it will actually see, and
+   print a reliability flag on the same line as the number. (acc_alpha's
+   cull-threshold bug, this session's second self-inflicted instrument bug.)
+3  A reversal is STRONGER evidence against a directional mediator than a flat
+   result: flat says "unproven," opposite signs across cases say "no single-
+   direction channel exists," which positively excludes the universal
+   version of the claim. (Kimi, round 40.)
+4  Demotions need less evidence than promotions. Closing a claim as
+   unexplained/demoted after two data points can be the right call even
+   where promoting a NEW claim on two data points would not be; the bar is
+   asymmetric and that asymmetry is not just convenient reasoning. (Kimi,
+   round 40.)
+5  A range computed from n=2 is not comparable to a range from n=3; range
+   grows with n by construction, so a range-RATIO between different sample
+   sizes is not a variance estimate. Retracted a "higher variance" claim on
+   exactly this error. (Kimi, round 40.)
+6  When a surprising result reverses a working hypothesis, and the working
+   directory contains the instrument that produced it, READ THE SCRIPT before
+   building a new mechanism story on top of the number. The single highest-
+   value thing Kimi did this session was accepting an explicit offer to read
+   damage_map.py rather than trusting the description of it -- the frame-
+   convention/site question he found by reading the DATASET code (not the
+   probe script) was the entire answer.
+7  strict=False weight loading is a silent-failure shape: a 0-key load is
+   indistinguishable from a working load by output shape alone. Assert
+   n_loaded > 0 and print missing/unexpected key counts on every such load
+   from now on, not just when something looks wrong.
+8  The strongest evidence a mechanism account can produce is a PRE-REGISTERED
+   PREDICTION THAT COULD FAIL TWO CLEAN WAYS AND DOESN'T -- e.g. opposite
+   signs on the same instrument, predicted before running. Weight this class
+   of result above any number of "consistent with" correlations, which this
+   project produced and then had to retract dozens of times this session
+   alone.
+9  When the primary collaborator (Kimi) is unavailable, keep working rather
+   than block, but (a) log every judgment call explicitly enough that he can
+   audit it when he returns, (b) prefer decisions that are demotions/closures
+   over decisions that are promotions/new claims, since the former needs less
+   certainty, and (c) do not let solo momentum silently become the new
+   standing methodology -- round 40's audit function (3/4 solo calls
+   endorsed, 1 needed a wording correction, 1 provenance number needed a
+   source check) is what makes solo work during an outage safe to do at all.
+10 GPU monitoring: match the check interval to the ACTUAL expected task
+   duration, not to a conservative default. A fixed long polling interval
+   that outlives the task it's watching wastes wall-clock time the user
+   notices and has to prompt around -- if a task's rough duration is known
+   (most deployment A/Bs in this project run under 20 minutes), poll or
+   background-wait accordingly rather than defaulting to a large margin.
+```
+
+### 17.91.5 Exactly what is running right now, and what to do when it lands
+
+```
+GPU0   e6_ps_base / e6_ps_photospatial (scripts/... via
+       /tmp/.../scratchpad/ps_scene4.sh), Replica office2, photo-spatial
+       head's 4th deployment scene. On completion: record psnr/lpips next to
+       §17.86.8's 3-scene table, recompute the range/mean. No further action
+       needed regardless of outcome (the recipe recommendation does not hinge
+       on this scene).
+GPU1   e7_mixed_base / e7_mixed_mixed (.../mixed_scene3.sh), Replica room0,
+       mixed head's 3rd deployment scene. Same treatment against §17.86.13's
+       2-scene table.
+```
+Both are confirmatory, not decision-changing -- per 17.91.4 rule 10, check
+these on a tight interval (they're single-scene A/Bs, historically ~15-20 min
+each including the bake) rather than a long default wakeup.
+
+### 17.91.6 Explicitly not pursued, and why (so it doesn't get re-proposed)
+
+```
+gradient probe (Kimi's round-23 unblocking hypothesis, time-resolved)
+   SKIPPED. No claim or shipped default depends on the micro-mechanism; the
+   attractor measurement (optimizer un-saturates unaided, 1.0->0.26) already
+   carries the persistence claim. Kimi's own call, round 38.
+17.34 re-analysis under current defaults
+   SUPERSEDED by the trajectory causal test's closure (17.91.3). More
+   correlation analysis cannot change a claim that a causal test already
+   demoted.
+head-training seed ensemble beyond what's done
+   DONE AND CLOSED (17.90, 17.90.1) -- val and deployment, two heads, two
+   seeds, stable. No further seeds queued; five-family replication already
+   establishes robustness better than more seeds would.
+damage-map spatial-offset control / clean-vs-degraded-input variant
+   DROPPED, Kimi's round-41/42 call: the opposite-signs luminance result
+   already answers what the offset control existed to check (shared smooth
+   structure cannot flip a sign), and the clean-vs-degraded distinction is
+   color (static prior vs online response), not load-bearing.
+euroc/eth3d luminance probe (extend the trim-dial confirmation to 5 heads)
+   OPTIONAL, NOT RUN. Free (probe only, no training), ~10 minutes per head
+   per Kimi's own estimate. Worth doing if the write-up wants the mechanism
+   claim to span all five families rather than the two Replica-augmented
+   heads + TUM currently confirmed. Low urgency: the account doesn't need it
+   to stand, per Kimi's round-42 framing.
+Replica mesh controlled-trajectory experiment (orbit-vs-translate synthetic
+trajectories, from way back in round 8's design)
+   Superseded in practice by the cheaper held-map supervision-split causal
+   test (17.87), which answered the causal trajectory question without
+   needing new rendering infrastructure. Not revisited.
+```
+
+### 17.91.7 Files and scripts built or modified this session, for orientation
+
+```
+scripts/precompute_pseudo_depth_tum.py      NEW. TUM analogue of the existing
+                                            euroc/eth3d pseudo-depth precompute.
+splatt3r_core/data/tum/tum.py               MODIFIED. depth_source="sensor"|
+                                            "pseudo" param, pseudo_depth_path().
+splatt3r_core/data/replica/replica.py       MODIFIED. New degrade modes
+                                            "photometry-spatial" (already
+                                            existed) and "mixed" (content +
+                                            photometry-spatial together, same
+                                            rng advanced through both blocks).
+scripts/train_lora_per_scene.py             MODIFIED. FAMILIES += tum-pseudo,
+                                            replica-mixed.
+scripts/exp_head_only.py                    MODIFIED. --family choices
+                                            extended; verdict printer fixed to
+                                            score the RENDER loss with penalty
+                                            terms excluded (was silently
+                                            inflating penalty-run "wins" by
+                                            reporting the penalized objective
+                                            against an unpenalized base).
+scripts/refine_local.py                     MODIFIED much earlier this
+                                            session: black-fraction and
+                                            acc_alpha (exact-inversion,
+                                            cull-aware) now print on every
+                                            lattice report; --conf-fade lever
+                                            added and shipped as the main.py
+                                            default.
+scripts/diag_colocation.py                  Built earlier this session:
+                                            per-pixel opacity/scale vs
+                                            predictor correlation, with a
+                                            degeneracy guard (rank stats on a
+                                            near-constant array are meaningless).
+scratchpad/damage_map.py                    NEW. The render+loss damage-map
+                                            check (17.88-89). Reuses the
+                                            training decoder directly; now
+                                            asserts strict=False loads are
+                                            non-empty.
+scratchpad/luminance_check.py               NEW. The decisive opacity-vs-
+                                            luminance probe (17.89.2).
+scratchpad/split_frames_traj.py             NEW. Local-parallax-ratio
+                                            supervision-subset splitter for
+                                            the trajectory causal test.
+scratchpad/ask_kimi.sh                      Kimi CLI wrapper, unchanged
+                                            pattern: writes <round>.tmp then
+                                            atomically renames to <round>.done
+                                            so "in progress" and "done" are
+                                            never confused.
+```
+
+### 17.91.8 Kimi collaboration state
+
+Session ID for resuming: `session_4c5a97eb-111a-491a-9349-0886850a5a43`
+(`kimi -r <id>`, must be invoked from the scratchpad directory -- the session
+is bound to its creation cwd). Round counter is at 42 as of this section.
+His quota ran out twice this session (once mid-arc, once briefly later); both
+times the standing instruction was to keep working alone rather than block,
+log every judgment call for audit, and prefer closures over new claims while
+he's out. This worked well both times -- see 17.91.4 rule 9. When he's out
+again, that is the protocol to repeat, not a reason to pause.
+
+### 17.91.9 The shape of this session's journey, for narrative continuity
+
+Picked up mid-queue from a much longer prior arc (§17.1-17.83 predate this
+session's visible context). Opened by discovering and untangling a
+compaction-duplicate (17.84) -- a real cost, and the reason rule 1 in 17.91.4
+exists. Then ran a long, disciplined falsification sequence on "why do
+pseudo-depth families gain most from head training" -- four candidate
+mechanisms, each pre-registered and each killed by direct measurement rather
+than argument, ending in a deliberate non-answer ("unattributed, n too
+small") that both collaborators treated as a legitimate, citable result rather
+than a failure. That discipline then transferred cleanly to two harder
+questions: the depth-source causal test (one clean controlled negative,
+closed permanently) and the trajectory causal test (a design that reversed on
+its first sequence and confirmed on its second, closed as sign-inconsistent
+rather than either "proven" or "disproven"). The middle of the session added
+a new perturbation type (spatially-varying photometry) that outperformed the
+existing global-photometry arm as predicted, then a combined arm that
+revealed channel suppression rather than combination, catching the author's
+own premature "mixed deploys best" claim on a second scene before it went in
+the file uncorrected. The session closed on its most demanding arc: building
+an instrument (the damage-map check) to test a hedging/confidence hypothesis
+for opacity allocation that BOTH collaborators had held for most of the
+project, watching it come back "backwards," and -- rather than either
+discarding the surprising result or rationalizing it into the old frame --
+tracing the actual training code far enough to discover the working
+hypothesis had the WRONG MODEL of what opacity mechanically does in a
+black-background renderer. The corrected model (brightness trim, not
+confidence gate) was then tested with a genuinely falsifiable, pre-registered,
+opposite-sign prediction across two different training regimes, and it landed
+clean. That is the single best piece of evidence this project has produced,
+and it closes a mechanism question that had been open, under a wrong model,
+since early in the project's history (§17.66). Seed ensembles at the end
+confirmed none of the headline results are fragile to training-seed noise, at
+both the validation and deployment level.
+
+## 17.92 Paper-prep round (2026-08-17): LoRA planning dropped, qualitative figures, colour-consistency re-opened with a real result, runtime/memory, retrieval-refit and online-refinement pushed to closure
+
+Triggered by the user's status-check + "what's left before this is a paper"
+question. Kimi (round 43, session `session_4c5a97eb-111a-491a-9349-0886850a5a43`)
+gave an independent second opinion in parallel; where it conflicted with this
+session's own record the record won (see 17.92.6) -- Kimi's context was a
+compact status blurb, not the full file, so a "5 rounds overdue" flag turned
+out to already be closed at §17.85.9.
+
+**Housekeeping**: the plan-mode file for per-scene TUM LoRA fine-tuning
+(`.claude/plans/replicated-weaving-dawn.md`) was deleted per explicit user
+instruction ("去掉lora这条线的所有规划") -- superseded by head-only training's
+measured result, nothing else in the skill set referenced it as a live plan
+(every remaining LoRA mention in this file is historical: route A -49%, route
+D decoder-only-LoRA best +0.37 dB, both worse than head-only).
+
+**Bug found and fixed en route**: `main.py`'s `--refiner-gpu` validation
+(added for the class of failure documented at that call site: a bad ordinal
+kills the refiner subprocess silently while SLAM finishes and looks
+successful) checked `0 <= args.refiner_gpu < _n` unconditionally, but the
+flag's own documented default is `-1` ("same card as SLAM") -- so any
+`--refiner` run under a single-visible-device `CUDA_VISIBLE_DEVICES` crashed
+even with the flag never passed. Fixed: `args.refiner_gpu != -1` now exempts
+the sentinel. Found because this round's GPU1-only constraint (below) hit it
+immediately on the first queued run.
+
+### 17.92.1 Qualitative comparison figures -- 5 cases, 10 PNGs, in `figures/`
+
+Base-vs-trained-head renders at held-out frames, reusing
+`eval_map_quality.py --dump-renders` directly (not re-derived) so the
+exposure-normalization and intrinsics handling are exactly what scored the
+numbers already on record. Head-only training freezes the encoder, so
+tracking/keyframe selection is bit-identical between a base and a head run of
+the same sequence (the project's own ATE-untouched invariant) -- meaning the
+held-out frame list `eval_map_quality.py` derives is the same for both arms
+of each case, so base/head renders are guaranteed to be the same frame, not
+just the same sequence. Composited GT | base | trained-head, labelled with
+psnr/lpips, via `composite_qual.py` (scratchpad).
+
+```
+file                          case                                          base                          trained head
+eth3d_sofa1_f{0,1}.png        eth3d sofa_1 (largest family gain, -29.1%)    psnr=22.07 lpips=0.2313      psnr=23.15 lpips=0.1811
+euroc_v101_f{0,1}.png         euroc V1_01_easy (-20.8% family gain)         psnr=13.27 lpips=0.4749      psnr=13.22 lpips=0.4458
+tum_rpy_f{0,1}.png            TUM freiburg1_rpy (real sensor data)          psnr=10.95 lpips=0.5161      psnr=11.04 lpips=0.5154
+replica_ps_office2_f{0,1}.png Replica office2 (photospatial, -18.4%)        psnr=20.85 lpips=0.1629      psnr=21.26 lpips=0.1329
+7scenes_office_f{0,1}.png     7-scenes office (the WEAK family, -4.5%)      psnr=11.42 lpips=0.5469      psnr=11.64 lpips=0.5222
+```
+
+eth3d's pair (`eth3d_sofa1_f0.png`) is the cleanest single before/after:
+visibly sharper cushion-seam and fabric texture in the trained-head render at
+matched psnr/lpips gap. The 7-scenes pair is included deliberately as the
+honest-limitation exhibit -- same recipe, real but modest gain, useful as the
+paper's own counter-example to "the lever always works big."
+
+Source runs, all pre-existing from this session's deployment A/Bs except
+7-scenes (fresh, `qual_7scenes.sh`, office/base+head, refiner on,
+`--refiner-duty 1.0 --refiner-polish-secs 300`): `logs/h2_eth3d2_{base,head}`,
+`logs/h2_euroc2_{base,head}`, `logs/h5_rpy_{base,head}`,
+`logs/e6_ps_{base,photospatial}`, `logs/qual_7s_{base,head}`.
+
+### 17.92.2 Colour-consistency: re-opened with one measurement, and it came back a real (if modest) positive -- opposite of the naive mechanism prediction
+
+Per the plan the user approved before this ran: reuses
+`color_harmonize.py`'s voxel-hash overlap-detection machinery
+(`color_consistency_probe.py`, scratchpad) but applies NO correction --
+pure measurement of how much two independent observations of the same
+physical point disagree in raw baked colour, comparing base checkpoint vs
+the photospatial-augmented head, both on TUM `freiburg1_floor` (the sequence
+that originally reported the colour-consistency bug), no refiner (raw bake
+only, isolating what the checkpoint itself does).
+
+Pre-registered, before running (both outcomes real per the mechanism
+section, §17.89.1): photospatial's independent per-view WB jitter + vignette
+augmentation MIGHT teach incidental WB-drift invariance (LOWER disagreement
+predicted) -- but §17.89.1 also established that `f_dc`/colour is anchored to
+the (possibly degraded) input colour, with only opacity free to compensate,
+which predicts NO improvement in colour specifically (only brightness). A
+real test, not a formality.
+
+```
+                         RGB |own-ref| mean   median    hue-only mean   hue-only median   overlap voxels
+base                          0.3098          0.2594        0.2151          0.1241         266,760
+photospatial                  0.3023          0.2512        0.1879          0.1164         265,048
+relative change                -2.4%           -3.1%        -12.6%           -6.2%
+```
+
+**Photospatial wins on every metric, and by far the most on hue-only
+(chromaticity with brightness normalized out): -12.6%.** This is the OPPOSITE
+of the extrapolation §17.89.1's "colour is anchored, opacity is the only free
+channel" framing would suggest -- the colour residual itself evidently does
+learn some WB-drift robustness, concentrated in hue rather than raw RGB
+(which mixes hue and brightness, diluting the effect to -2.4%). Single
+sequence, single seed, point estimate only -- no significance test run, and
+this does not overturn the opacity-brightness-trim-dial mechanism (that
+remains about brightness specifically, confirmed by 5/5 families' luminance
+sign check, §17.89.2/17.89.6). It adds a second, smaller, real effect
+alongside it: incidental hue-consistency improvement, undocumented until this
+probe. Reportable as: colour-consistency remains diagnosed-not-fixed
+end-to-end (Plan 3, full retrain with a dedicated consistency loss, is still
+the only complete fix, and remains not done), but the photospatial recipe
+already ships a measurable, free, partial mitigation as a side effect of an
+augmentation chosen for an unrelated reason.
+
+`cc_base.json` / `cc_photospatial.json` (scratchpad) hold the full numbers;
+`base` map: 5,847,963 gaussians / 32 keyframes; `photospatial`: 5,686,144 /
+32 keyframes, same sequence, same coverage.
+
+### 17.92.3 Runtime/memory systems table -- 5 families, no-refiner vs same-GPU refiner
+
+All measured on GPU1 exclusively, per the user's explicit constraint that
+GPU0 carries desktop/other-process load and would contaminate timing numbers
+(`perf_sweep.sh`, scratchpad). One representative sequence per family, base
+checkpoint throughout. The refiner arm here uses a SHORT 60s polish window
+(timing/memory characterization only -- steady-state fps and peak memory
+stabilize fast; this is a different, shorter run than 17.92.4's quality
+matrix, which needs the full 300s protocol to be comparable to every other
+deployment number in this file. Do not average the two arms' numbers
+together across sections).
+
+```
+family     no-refiner fps   +refiner (same-GPU, duty 1.0) fps   no-refiner peak MiB   +refiner peak MiB   final map (gaussians)
+eth3d          7.93                    1.53                          18,315               21,528              2,051,729
+euroc          5.40                    4.21                          22,287               30,516              3,327,453
+tum            5.84                    3.70                          21,037               25,554              2,622,845
+7-scenes       6.57                    4.23                          21,149               25,058              3,024,145
+replica        7.89                    4.95                          17,537               20,896              3,065,486
+```
+
+Consistent with the single-sequence numbers already on record (§15.2: TUM
+desk baseline 8.0 fps / 101 ms p50, same-GPU unthrottled refiner 4.5 fps /
+206 ms p50) -- this extends that characterization from one sequence to five
+families, all in the same ballpark (no-refiner 5.4-7.9 fps, same-GPU
+unthrottled refiner roughly halves it except eth3d, whose 2.05M-Gaussian map
+and heavier scene geometry make it the outlier at 1.53 fps). Memory scales
+with final Gaussian count as expected (2-3.3M Gaussians -> 17.5-30.5 GiB peak
+across arms); no family approaches the hardware ceiling on the A6000s this
+project runs on (49 GiB/card). 30 fps real-time was never the operating
+point for any family, matching the standing conclusion at §15.2/§15.11.
+
+### 17.92.4 The refiner's OWN contribution, isolated from head training, across 4 families -- the measurement that was never actually done
+
+Every deployment A/B run in this project (this session's photospatial/mixed
+scenes, the eth3d/euroc/TUM head-vs-base pairs, all of it) has `--refiner` ON
+in BOTH arms, so the refiner's marginal value has only ever been measured on
+ONE sequence, TUM desk, at TWO specific budgets (§15.8: +1.24 dB live at
+duty-0.25; §15.11: +2.15 dB at duty-1.0 second-GPU). This is the gap Kimi's
+round-43 review flagged under "is online refinement actually done" that this
+project had been quietly assuming rather than measuring. `refiner_onoff_matrix.sh`
+(scratchpad, GPU1 only) closes it: base checkpoint throughout, same protocol
+as every deployment A/B this session (`--refiner-duty 1.0
+--refiner-polish-secs 300 --refiner-conf-fade 0`), refiner OFF (raw bake,
+`_gaussians.ply`) vs ON (`_refined.ply`), one sequence per family.
+
+```
+family (sequence)          off: psnr / lpips        on: psnr / lpips         delta psnr    delta lpips
+eth3d (sofa_1)              13.14 / 0.5663           21.83 / 0.2363           +8.69 dB       -58.3%
+euroc (V1_01_easy)          12.22 / 0.5585           13.22 / 0.4777           +1.00 dB       -14.5%
+tum (freiburg1_desk)        10.52 / 0.5605           14.05 / 0.4072           +3.52 dB       -27.3%
+replica (office0)           21.80 / 0.2381           26.41 / 0.1029           +4.62 dB       -56.8%
+```
+
+**Positive on every family, by a wide margin, and far larger than the
+duty-0.25 "live" number on record (+1.24 dB) -- because this is the full
+300s polish protocol, the one every deployment A/B this session actually
+shipped, not the throttled-live regime.** This directly answers Kimi's Q1
+concern: if the paper's product is "always polish," the refiner's own
+contribution is not a marginal add-on next to head training -- it is
+comparable in size or larger (eth3d's +8.69 dB refiner contribution dwarfs
+head training's own -29.1% lpips gain on the same family). The two levers
+are not competing explanations for the same variance; they stack, and this
+table is the first time that stacking was actually measured apart. Caveat
+carried over from every other 300s-polish number in this file: this is the
+non-real-time polish regime, not the duty-throttled live number -- both
+regimes are real and both are already on record elsewhere (§15.8/§15.11),
+this table just adds the missing per-family breadth at the polish end.
+
+**Kimi's other Q1 ask (a retention curve at 4-5 step budgets under the final
+config, not just the two endpoints already measured) is NOT done here** --
+flagged as a real, understood gap rather than silently closed. Given the
+table above already answers the higher-value question (is the refiner's
+contribution real and family-general at the budget every deployment number
+in this file actually uses), the retention curve is lower priority: it would
+sharpen the budget-bridging mechanism story, not change any number currently
+reported. Left as an explicit open item, not silently dropped.
+
+### 17.92.5 Retrieval-refit: pushed to full closure, final verdict NO-GO -- an offline win that online ATE caught and killed
+
+Full detail lives in the `splatt3r-retrieval-refit` skill's new §9, not
+duplicated here; summary for this file's own ledger. Corpus expanded 3->9
+TUM sequences (111->279 keyframes); the offline Recall@k verdict FLIPPED
+once properly powered (cb2048 beats the original MASt3R assets: +20%
+relative R@1, weighted across 8 sequences) -- but the real SLAM ATE A/B this
+project's own screening protocol requires before shipping anything caught
+what the offline proxy missed: room improved (-8.2% RMSE), 360 got worse
+(+24.1%), and desk collapsed to within noise of the historical
+`--no-loop-closure` baseline for that exact sequence (+318.8% RMSE). **Final:
+keep the original MASt3R retrieval assets, permanently.** Two real bugs
+fixed en route (`load_gt_poses`'s hard assert on a real 81ms GT gap in
+`freiburg1_floor`; an int-vs-string codebook-size cache mismatch that
+silently killed the backend subprocess). This is the same lesson as every
+other line in this file that transferred offline->online: **an offline
+metric win is a hypothesis, never a shipping decision by itself.**
+
+## 17.93 External baselines (2026-08-17): the line the project deferred for months, now started -- MASt3R-SLAM first, and it validates the whole evaluation pipeline
+
+Standing rule until now (memory: `external-baselines-deferred`) was "compare
+with ourselves until the results justify a paper." With §17.91.2's three core
+results all closed and §17.92 finishing the internal paper-prep work, that
+bar is met, and Kimi's round-43 review independently ranked external
+baselines the #1 remaining gap ("without it, every headline number you have
+is unplaceable"). User-directed order: MASt3R-SLAM -> MonoGS -> Photo-SLAM ->
+VGGT-SLAM.
+
+**Hard constraints the user set for this whole line** (violating any of these
+invalidates the numbers or the machine):
+```
+1. Every clone, dataset, weight, and environment lives under ./tmp/, never
+   in the system conda env and never touching the system CUDA install.
+   Each repo gets its own env at tmp/<repo>/env (conda --prefix).
+2. Reuse ./datasets/ by symlink -- never re-download a dataset we have.
+3. ALL performance/accuracy measurement runs on GPU1. GPU0 carries the
+   user's own workload and would contaminate timing.
+4. Compile with all cores. (ninja + MAX_JOBS=32 -- torch's cpp_extension
+   silently falls back to single-threaded distutils when ninja is missing,
+   which is what made the first builds crawl.)
+```
+
+### 17.93.1 Getting MASt3R-SLAM to build on this host: five real blockers
+
+Documented because every remaining baseline will hit the same class of
+problem, and because two of these were fixed WRONG on the first attempt.
+
+```
+blocker                          resolution
+git-lfs missing                  submodule checkout of pyimgui died mid-clone.
+                                 apt-installed git-lfs (system pkg, not CUDA).
+CUDA version mismatch            System nvcc is 13.3; upstream wants torch
+                                 2.5.1+cu124. FIRST ATTEMPT (WRONG): upgraded
+                                 torch to 2.13 to match system CUDA -- broke
+                                 the torch C++ API instead. CORRECT: installed
+                                 cuda-nvcc 12.4 INTO tmp/MASt3R-SLAM/env via
+                                 conda --prefix, so nvcc and torch agree and
+                                 the system CUDA is untouched (user's rule 1).
+curope build failure             kernels.cu uses tokens.type(), removed in
+                                 modern torch. FIRST ATTEMPT (WRONG): dropped
+                                 curope from setup.py, reasoning it has a
+                                 pure-pytorch fallback. USER CORRECTED THIS:
+                                 the parent project's OWN copy of kernels.cu
+                                 was already patched months ago
+                                 (tokens.scalar_type() + AT_DISPATCH_FLOATING
+                                 _TYPES_AND2(Half, BFloat16) for bf16). Copied
+                                 it over -> builds clean. Verified the CUDA
+                                 path is actually live, not the fallback:
+                                 `from models.pos_embed import RoPE2D` resolves
+                                 to models.curope.curope2d.cuRoPE2D.
+                                 LESSON: check whether this project already
+                                 solved a vendored-dependency problem before
+                                 working around it.
+compute_60/61/70 unsupported     setup.py hardcodes archs CUDA 13.3 dropped.
+                                 Trimmed to 75/80/86 (this host is A6000 =
+                                 sm_86). Kept after the CUDA downgrade since
+                                 it is functionally identical on this hardware
+                                 and cuts compile time.
+in3d/pyimgui won't build         Vendored pyimgui fails against modern Cython
+                                 (cimgui attribute errors). GUI-only. Made
+                                 main.py's `run_visualization` import lazy and
+                                 defined WindowMsg (a plain dataclass, no GUI
+                                 dependency) locally, so --no-viz headless
+                                 evaluation runs without a working GUI stack.
+```
+
+Environment as built: `tmp/MASt3R-SLAM/env`, python 3.11, torch 2.5.1+cu124,
+env-local nvcc 12.4, ninja. Checkpoints: the two retrieval assets symlinked
+from our own `checkpoints/` (identical files, no re-download); only MASt3R's
+main 2.75GB weight fetched fresh. `datasets/` symlinked wholesale.
+
+### 17.93.2 The result: our ATE matches upstream MASt3R-SLAM to within noise on all 9 TUM sequences
+
+Both systems, same host, same GPU (1), same config
+(`config/eval_calib.yaml`: use_calib True, single_thread True, subsample 2 --
+upstream's file and ours are byte-identical in these fields), same metric
+(`evo_ape tum -as`), same ground truth.
+
+```
+sequence   MASt3R-SLAM (upstream)   ours      delta (ours - upstream)
+360             0.048155          0.042079        -0.0061
+desk            0.016136          0.016975        +0.0008
+desk2           0.023532          0.027672        +0.0041
+floor           0.024969          0.027230        +0.0023
+plant           0.019565          0.015361        -0.0042
+room            0.061271          0.059027        -0.0022
+rpy             0.023064          0.021557        -0.0015
+teddy           0.045072          0.047585        +0.0025
+xyz             0.008902          0.008896        -0.0000
+MEAN            0.03007           0.02960          -1.6%
+```
+
+**4 sequences lower for us, 4 lower for upstream, 1 tie, signs inconsistent,
+means apart by 1.6%.** That is the texture of noise, not of a systematic
+difference -- the same "sign-inconsistent across sequences => not a real
+effect" standard this project applied to kill its own trajectory-parallax
+mediator (§17.87) and its own mixed-vs-photospatial variance claim
+(§17.86.15). The same yardstick has to apply when the number would flatter us
+as when it would not.
+
+**THIS IS A CONTROL, NOT A WIN. It does not show our system tracks better
+than MASt3R-SLAM, and it must never be reported as if it did.** There is no
+mechanism by which it could: head-only training freezes the encoder, tracking
+runs the same pointmap matching on the same weights, and the Gaussian map is
+strictly downstream of pose estimation. A systematic ATE improvement here
+would be evidence of an uncontrolled variable, not of a contribution.
+Parity is the expected -- and desired -- outcome.
+
+Two things this establishes, both load-bearing for the paper:
+
+1. **The evaluation pipeline is faithful.** Our harness, run against the
+   upstream system's own numbers on its own benchmark, reproduces them. Every
+   ATE number in this file inherits that credibility.
+2. **The ATE-untouched invariant is now verified EXTERNALLY, not just
+   internally.** This project has claimed throughout (§15.8, and the
+   head-only route's core argument) that its contributions leave tracking
+   bit-identical because head-only training freezes the encoder and the
+   Gaussian map is downstream of tracking. Until now that was checked only
+   against our own base checkpoint. It now holds against the actual upstream
+   system we forked from -- a much stronger statement, and exactly the claim
+   a reviewer would probe.
+
+Note what this does NOT establish: nothing about rendering quality, and
+nothing about this project being better at anything. MASt3R-SLAM produces no
+Gaussian splats and reports no PSNR/LPIPS, so **it is not a baseline for this
+project's contribution at all -- it is a control for the one axis where we
+claim to change nothing.** The competitive comparison, on the axis this
+project actually contributes to, requires the rendering-capable systems
+(MonoGS, Photo-SLAM), which is why they are next. Until one of those produces
+a head-to-head rendering number under our protocol, this project has NO
+external evidence of superiority over anything, and the write-up must not
+imply otherwise.
+
+### 17.93.3 Baseline landscape, and the protocol-swamp warning that governs how these get reported
+
+Surveyed before starting (WebSearch + repo inspection):
+```
+system         code?  renders?  datasets shipped        metrics reported
+MASt3R-SLAM    yes    NO        TUM/7-Scenes/EuRoC      ATE only          DONE
+MonoGS         yes    YES       TUM/Replica/EuRoC       PSNR/LPIPS/ATE    next
+                                (default cfg is fr3, not fr1 -- needs one)
+Photo-SLAM     yes    YES       Replica/TUM/EuRoC       PSNR/LPIPS/ATE
+                                (ships fr1_desk cfg; heavy C++/ORB-SLAM3
+                                 build, custom OpenCV+CUDA, LibTorch)
+VGGT-SLAM      yes    NO        TUM/7-Scenes            ATE only
+                                (pure python, easy install, eval scripts
+                                 for exactly our two families)
+GSO-SLAM       ?      YES       Replica/TUM             PSNR 34.48 (Replica)
+VBGS-SLAM      ?      YES       Replica                 PSNR 37.94
+```
+
+**The number that must not be pasted into a table naively:** recent papers
+report Replica PSNR of 30.9 (Photo-SLAM), 34.5 (GSO-SLAM), 37.9 (VBGS-SLAM),
+against this project's own 20-27 dB range. That gap is far more likely a
+protocol difference than a 10 dB quality deficit -- candidate causes, all
+known to vary across the GS-SLAM literature: training-view vs held-out-view
+scoring (this project scores ONLY held-out non-keyframes, §eval_map_quality's
+protocol), GT poses vs estimated poses (§13.14 measured a ~4.5 dB gap between
+those two on our own maps), per-frame online optimization budget, resolution,
+and exposure normalization (§17.40 measured +0.126 dB from that alone).
+This project is unusually well-placed to say so with receipts. **Rule for
+this line: only numbers produced BY US under OUR protocol go in a comparison
+table; published numbers may be cited but must be labelled as
+different-protocol, never tabulated as if measured head-to-head.**
+
+### 17.93.4 MonoGS: built, run, and cross-evaluated -- rendering quality is a TIE, and their map is 100x smaller
+
+Second baseline, first one that actually renders. Same env recipe as
+§17.93.1 (own conda prefix at `tmp/MonoGS/env`, env-local nvcc 12.4, ninja,
+MAX_JOBS=32), plus one new blocker class: **this repo pins a 2024-era
+dependency stack and every deviation broke something**, so all five were
+pinned back to upstream's `environment.yml` rather than patching their code
+(patching a baseline's source to fit our environment would undermine the
+claim that we measured *their* system):
+```
+numpy      2.4.6 -> 1.26.4      np.unicode_ removed in numpy 2.0
+opencv     5.0.0 -> 4.8.1.78    upstream's pin; needs numpy<2
+plyfile    1.1.5 -> 0.8.1       upstream's pin; 1.1.5 needs numpy>=2
+evo        1.37  -> 1.11.0      trajectory.align_trajectory removed in newer evo
+matplotlib 3.11  -> 3.7.5       evo 1.11's traj_colormap breaks on modern mpl
+```
+Also `evo_config set plot_backend Agg` (evo forces TkAgg, dies headless).
+gcc: nvcc 12.4 rejects the host's gcc 15.2, so `gcc`/`gxx` 12.4 metapackages
+go in the env -- note `gcc_linux-64` alone is NOT enough, it only ships
+`x86_64-conda-linux-gnu-gcc` and leaves plain `gcc` missing.
+
+**MonoGS's own reported numbers, fr1_desk, its own protocol:**
+```
+ATE RMSE                     0.03575 m
+PSNR/SSIM/LPIPS  before color refinement   17.18 / 0.640 / 0.4097
+                 after  color refinement   20.71 / 0.698 / 0.3679  (26000 iters)
+SLAM wall time               837.8 s
+```
+
+#### The protocol audit that had to happen before any comparison
+
+Read `utils/eval_utils.py: eval_rendering` rather than assuming. Findings:
+```
+dimension            MonoGS                       ours                    same?
+scored frames        every 5th, keyframes skipped  held-out non-keyframes  YES
+render pose          its OWN ESTIMATED pose        GT pose, Sim3-aligned   NO
+resolution           640x480 undistorted           512x384 via resize_img  NO
+post-optimization    26000-iter colour refinement  300 s refiner polish    NO
+psnr masking         psnr over gt>0 pixels only    all pixels              minor
+```
+The pose-source row is the dangerous one, and this project had already
+measured it internally at ~4.5 dB (§13.14). **Measured again here, directly,
+on MonoGS's own map: rendering it from the estimated poses it was built at
+scores 18.71 dB; rendering the same map from ground-truth poses scores
+9.87 dB -- an 8.8 dB protocol gap on one system, one sequence.** Any table
+that mixes the two conventions is measuring the convention, not the method.
+
+#### A bug I caught in my own adapter, and the check that caught it
+
+First cross-eval run returned MonoGS at PSNR 6.09 -- a number that would have
+flattered us enormously and was obviously wrong (PSNR 6 is noise). Cause: I
+assumed `trj_final.json` stored world-to-camera and inverted it; it stores
+camera-to-world. The check that caught it, now a standing rule for any
+cross-system evaluation: **a map MUST render well from the poses it was
+built at.** Convention sweep on MonoGS's own keyframes:
+```
+est as-is (c2w)    18.71 dB   <- correct
+est inverted       4.36 dB
+gt  as-is           9.87 dB
+gt  inverted        5.02 dB
+```
+Never report a cross-system number without passing that self-consistency
+check first. A wrong-convention adapter produces exactly the kind of
+lopsided result that is easiest to publish and hardest to retract.
+
+#### The result, under one protocol
+
+Both maps scored by `scripts/eval_map_quality.py`'s own code path
+(`/tmp/cross_eval_monogs.py`): identical 100 held-out frames chosen to be
+keyframes of NEITHER system, GT poses Sim3-aligned into each map's own frame,
+same renderer, same LPIPS/PSNR code, same exposure handling.
+
+```
+system    psnr      lpips     gaussians     map size on disk
+ours      14.1068   0.4030    2,396,900     170 MB
+MonoGS    13.8537   0.4027       23,019     1.5 MB
+```
+
+**Rendering quality is a tie** -- 0.25 dB in PSNR, 0.0003 in LPIPS, both
+inside this project's own measured noise floors (0.031 dB / 0.17% lpips,
+§17.79). **MonoGS reaches that tie with ~104x fewer Gaussians and a 113x
+smaller map.** That compactness gap is a real and unflattering finding for
+this project and must be reported: our maps are enormous for the quality they
+deliver, which bears directly on the memory numbers in §17.92.3.
+
+Honest caveats, all of which bound this result:
+```
+n=1 sequence (fr1_desk). Nothing here generalizes yet.
+Post-optimization budgets still differ (26000 iters vs 300 s) -- not equalized.
+Resolution/undistortion still differ; unquantified.
+The two Sim3 alignments come from different data (their saved est/gt pairs
+  vs our Umeyama fit), so a small residual misalignment is possible on
+  either side.
+ATE on this sequence: ours 0.0170 vs MonoGS 0.0358. Real, but it comes from
+  MASt3R-SLAM's tracking, which we inherit unchanged -- NOT from anything
+  this project contributes (see 17.93.2).
+```
+
+**What this does to the paper's framing:** the honest headline after two
+baselines is *not* "we beat the state of the art." It is: our rendering
+quality is competitive with MonoGS on a matched protocol while our
+tracking (inherited) is better on this sequence, and our map representation
+is dramatically less compact. The compactness gap is the obvious reviewer
+attack and should be pre-empted in the write-up, not hidden.
+
+### 17.93.5 VGGT-SLAM: set up and run -- and it is a POSE baseline, not a rendering one
+
+Fourth baseline in the user's order, delegated to a subagent for environment
+setup while the Photo-SLAM build occupied the foreground. Repo:
+`MIT-SPARK/VGGT-SLAM` (2.0 branch), pure Python, env at
+`tmp/VGGT-SLAM/env` (python 3.11, torch 2.5.1+cu124 -- the same known-good
+combination as the other two baselines).
+
+**Established by reading the code, not assumed:** grepping the whole repo
+(excluding third_party) for `psnr|lpips|ssim|render|gaussian|novel.view`
+returns ZERO hits. There is no rasterizer, no photometric decoder, no
+Gaussian representation anywhere; the map is a raw coloured point cloud and
+the only viewer draws points and frustums. **VGGT-SLAM cannot produce a
+rendering-quality number at all**, so like MASt3R-SLAM it is a tracking
+control, not a competitor on this project's actual contribution. (The
+`version1.0` branch does ship a dense-geometry eval -- RMSE
+accuracy/completeness/Chamfer against 7-Scenes depth. Those are point-cloud
+metrics; if a map-quality comparison against VGGT-SLAM is ever wanted, that
+is the honest axis, and a PSNR column is simply not obtainable from it
+without writing a renderer.)
+
+```
+TUM freiburg1_desk, ATE RMSE (evo_ape tum -as), all measured on this host, GPU1
+VGGT-SLAM 2.0      0.025417
+```
+
+Weights fetched: VGGT-1B (5.0 GB, byte-exact vs HF metadata, loads
+strict=True with 0 missing/0 unexpected keys), dino_salad.ckpt (352 MB),
+dinov2_vitb14 (346 MB) -- all under `tmp/VGGT-SLAM/torch_home/`, with
+`TORCH_HOME` redirected there by an `activate.d` hook because
+`loop_closure.py` derives the SALAD checkpoint path from
+`torch.hub.get_dir()`.
+
+Deviations from upstream, recorded because they bound the result:
+```
+torch 2.5.1 instead of the pinned 2.3.1 (machine-wide known-good choice;
+   requirements.txt fed to pip with the torch lines removed so it could not
+   silently downgrade)
+numpy pinned 1.26.4, opencv 4.10.0.84 (the vendored VGGT fork declares numpy<2)
+perception_models + sam3 installed --no-deps: their requirements pin
+   numpy==2.1.2 which would break the VGGT fork. Both are imported only under
+   `if args.run_os:`, which the TUM eval never enters -- so that open-set path
+   is UNVERIFIED and its weights were not downloaded.
+DINOv2 torch.hub cache pre-seeded by git clone, because torch.hub fetches a
+   GitHub *archive* and this host's github archive endpoint is blocked
+   (silent 0-byte downloads). No code patched.
+evals/eval_tum.sh: 4 path-only lines edited to point at our ./datasets
+   symlink instead of upstream's hardcoded sibling-checkout path.
+eval_7scenes.sh / eval_euroc.sh exist only on the version1.0 branch despite
+   the 2.0 README referencing them -- 7-Scenes/EuRoC numbers from VGGT-SLAM
+   would require porting those scripts across branches, not attempted.
+```
+
+### 17.93.6 Two orchestration bugs of my own, both worth remembering
+
+Recorded because both cost real wall-clock time and both are the kind that
+recur:
+
+1. **`pgrep -f "<script>.sh"` matches the watchdog's own command line.** A
+   watchdog whose command string contains the pattern it greps for sees
+   itself, so `while pgrep -f ...; do sleep; done` never exits. This silently
+   burned ~1 hour: the Photo-SLAM build had already FAILED at the DBoW2 step
+   and the watchdog kept reporting "running". This is the same hazard as the
+   already-recorded "kill by resolved PID, never by pattern" rule, in a new
+   costume. **Rule: wait on MARKER STRINGS written into a log, never on
+   pgrep -f.** All chain scripts now do this.
+2. **conda env include/lib paths are not automatic.** `$ENV/include` and
+   `$ENV/lib` are only searched when the env is *activated*; a build driven
+   by absolute paths to `$ENV/bin/gcc` does NOT get them. DBoW2 failed on a
+   missing `boost/serialization/serialization.hpp` that was present in the
+   env the whole time. Exporting `CPATH` / `CPLUS_INCLUDE_PATH` /
+   `LIBRARY_PATH` fixed it.
+
+### 17.93.7 Photo-SLAM build blockers (running tally -- this is the heaviest baseline by far)
+
+```
+blocker                              resolution
+github tarball endpoint blocked      git clone --depth 1 --branch <tag>
+missing NPP libraries                conda libnpp-dev=12.2.5.30 (matches CUDA 12.4)
+CMake 4.4 dropped <3.5 compat        downgrade env cmake to 3.27 (upstream's tested version)
+OpenCV 4.8 + CUDA 12.x incompatible  upgrade to OpenCV 4.10 (CUDA 12.x supported from 4.9).
+                                     NOTE: this is a genuine fidelity deviation --
+                                     upstream tested 4.7/4.8 with CUDA 11.8. It affects
+                                     Photo-SLAM's image-processing backend only, not its
+                                     Gaussian mapping, but it must be stated in the write-up.
+xfeatures2d triggered blocked dl     confirmed unused by Photo-SLAM/ORB-SLAM3 (only 6 cv::cuda
+                                     entry points are used: GpuMat, resize, cvtColor,
+                                     StereoSGM, createStereoSGM, reprojectImageTo), removed
+conda zlib symbol clash              -DBUILD_ZLIB=ON (OpenCV's bundled copy), apps off
+boost headers not found              export CPATH/CPLUS_INCLUDE_PATH (see 17.93.6.2)
+Eigen 5.0.1 in env, g2o wants 3.x    downgrade to eigen 3.4 (Eigen 5's config rejects a
+                                     3.1.0 request outright, and Eigen 5 would break
+                                     ORB-SLAM3/Sophus APIs regardless)
+```
+
+### 17.93.8 Photo-SLAM: built (18 blockers), run, and the three-way rendering comparison under one protocol
+
+Photo-SLAM is by far the heaviest baseline -- a C++/CMake stack (ORB-SLAM3 +
+DBoW2 + g2o + Sophus + LibTorch + a CUDA rasterizer) requiring a
+source-built CUDA-enabled OpenCV. Eighteen distinct build blockers, all
+resolved **in build configuration only; not one line of their algorithm
+source was modified**, which is what lets the numbers below be called
+Photo-SLAM's own behaviour. Full blocker list in 17.93.7 plus:
+```
+libcudart_static/libcudadevrt missing   conda cuda-cudart-static=12.4
+nvToolsExt missing                      conda cuda-nvtx=12.4
+libcuda / libnvrtc missing              cuda-driver-dev, cuda-nvrtc-dev; driver
+                                        stub lives at $ENV/lib/stubs/libcuda.so
+LibTorch saw two CUDA installs          CUDAToolkit resolved to SYSTEM /usr/local/cuda
+                                        (13.3) while CUDA came from env (12.4);
+                                        pinned both with CUDAToolkit_ROOT
+MAXFLOAT undefined                      BSD-ism gone from modern headers;
+                                        -DMAXFLOAT=... compile flag
+M_PIf32 / M_PI_2f32 undefined            glibc dropped the float-suffixed math
+                                        constants; defined by flag. LESSON: I fixed
+                                        M_PI_2f32 first, rebuilt, then hit M_PIf32 --
+                                        should have grepped the WHOLE repo for the
+                                        class of problem before rebuilding.
+DBoW2/g2o symbols undefined at link     modern ld defaults to
+                                        --no-copy-dt-needed-entries, so symbols are
+                                        NOT resolved through a transitively-NEEDED
+                                        library; they must be linked explicitly
+                                        (CMAKE_CXX_STANDARD_LIBRARIES="-lDBoW2 -lg2o",
+                                        appended AFTER the objects)
+exp2f@GLIBC_2.27 undefined              from libtorch_cpu.so; conda's sysroot libm
+                                        stops at GLIBC_2.15 and sysroot 2.28 conflicts
+                                        with the cos7 mesa packages. Correct fix:
+                                        -Wl,--allow-shlib-undefined on the final step
+                                        only (the symbol resolves at runtime from
+                                        system glibc). WRONG fix I tried first:
+                                        putting /usr/lib/x86_64-linux-gnu on the global
+                                        search path -- that mixes system glibc with
+                                        conda crt objects (glibc 2.34 removed
+                                        __libc_csu_init) and broke the compiler test.
+```
+Two of my own recurring errors are worth naming: **scope creep on build
+flags** (applying `-lDBoW2 -lg2o` and the system lib path globally broke
+DBoW2's own compiler test -- a flag needed by the LAST step must not be
+applied to the steps that build its dependencies), and **fixing one instance
+of a class instead of enumerating the class first**.
+
+#### Photo-SLAM, its own reported numbers (fr1_desk)
+```
+ATE RMSE (evo_ape tum -as)   0.017408
+self-reported PSNR            17-24 dB, per KEYFRAME (its own training views,
+                              its own renderer, its own resolution)
+map                           36,069 gaussians, sh_degree=3, 8.9 MB
+```
+
+#### Pose-convention self-check (mandatory before any cross number)
+```
+render Photo-SLAM's map from its OWN keyframe poses, as-is (c2w)   13.340 dB
+                                                  inverted (w2c)    8.065 dB
+```
+c2w confirmed. **I initially misread this system's self-check as a FAILURE**
+because I used the wrong form of the check -- comparing own-keyframes-under-
+GT-aligned-poses (10.71) against held-out-under-GT-aligned-poses (10.73) and
+concluding "no keyframe advantage => adapter broken". That comparison is
+confounded: both arms pay the GT-alignment penalty. The correct check is
+rendering from the system's own poses directly, and Photo-SLAM passes it.
+The 13.34 -> 10.71 drop is the same pose-source effect measured at 8.8 dB for
+MonoGS (17.93.4) -- here 2.6 dB.
+
+Also checked and ruled out as the explanation: our renderer uses only the SH
+DC band while Photo-SLAM stores sh_degree=3. Measured energy in the dropped
+bands: `f_rest` abs-mean 0.0178 vs `f_dc` 1.2917 (ratio 0.21 by absolute sum,
+far smaller per-coefficient). Not worth several dB. Our ply decoder reads
+properties BY NAME, so the 62-float sh_degree=3 layout parses correctly.
+
+### 17.93.9 THE THREE-WAY RESULT: identical protocol, identical frames
+
+All three maps scored by the same code path, on the SAME 100 held-out frames
+chosen to be keyframes of NONE of the three systems, from ground-truth poses
+Sim3-aligned into each map's own frame, same renderer, same LPIPS/PSNR code,
+same exposure handling (`/tmp/cross_eval_3way.py`).
+
+```
+system      psnr      lpips     gaussians    map size    ATE (fr1_desk)
+ours        13.9490   0.4110    2,396,900     170 MB      0.016975
+MonoGS      13.8685   0.3975       23,019     1.5 MB      0.035750
+Photo-SLAM  10.7269   0.5583       36,069     8.9 MB      0.017408
+```
+Self-consistency (each on its own keyframes, same GT-aligned protocol):
+ours 14.2494/0.3963, MonoGS 15.1311/0.3672, Photo-SLAM 10.7147/0.5591.
+
+**Honest reading of this table:**
+- **PSNR: we lead by 0.08 dB over MonoGS -- that is a tie**, well inside this
+  project's own noise floor (0.031 dB, §17.79). Against Photo-SLAM we lead by
+  3.2 dB, which is real.
+- **LPIPS: MonoGS is BETTER than us (0.3975 vs 0.4110)**, by 3.3% relative.
+  LPIPS is the perceptual metric this project has argued all along is the one
+  that matters. This must be reported, not buried.
+- **Compactness: we are dramatically worse.** 2.4M gaussians / 170 MB versus
+  MonoGS's 23K / 1.5 MB for equal-or-better quality -- 104x more primitives,
+  113x more disk. This is the single most attackable number in the whole
+  comparison.
+- **ATE: ours and Photo-SLAM are equivalent (0.0170 vs 0.0174), both better
+  than MonoGS (0.0358)** -- but ours comes from MASt3R-SLAM's tracking, which
+  we inherit unchanged, so it is not evidence for this project's contribution
+  (§17.93.2).
+
+**What this does to the paper's claim.** After all four baselines the
+defensible statement is NOT "we beat the state of the art". It is: *this
+project's head-only fine-tuning plus injection-time thinning reaches parity
+with MonoGS on PSNR, slightly behind on LPIPS, ahead of Photo-SLAM on both,
+while inheriting MASt3R-SLAM-class tracking -- and does so with a map
+representation two orders of magnitude less compact than the GS-SLAM
+baselines.* The compactness gap should be stated up front as a limitation,
+because a reviewer will find it immediately.
+
+Caveats bounding all of this: **n=1 sequence (fr1_desk)**; post-optimization
+budgets are NOT equalized (MonoGS runs 26000 colour-refinement iters,
+Photo-SLAM runs to its 4181-iteration shutdown, ours gets a 300 s refiner
+polish); resolution/undistortion handling still differs per system and is
+unquantified; and Photo-SLAM was built against OpenCV 4.10 rather than the
+4.7/4.8 upstream tested (CUDA 12.x forced this), which touches its image
+front-end though not its Gaussian mapping.
+
+### 17.93.10 VGGT-SLAM full TUM sweep, and the complete 3-system ATE table
+
+VGGT-SLAM extended from 1 to all 9 freiburg1 sequences (its own eval
+protocol: `--submap_size 32 --max_loops 1 --min_disparity 50
+--conf_threshold 25 --lc_thres 0.95`, scored with the same
+`evo_ape tum -as` as everything else).
+
+```
+sequence   MASt3R-SLAM     ours      VGGT-SLAM
+360          0.048155    0.042079    0.049624
+desk         0.016136    0.016975    0.025417
+desk2        0.023532    0.027672    0.029102
+floor        0.024969    0.027230    0.099134
+plant        0.019565    0.015361    0.024532
+room         0.061271    0.059027    0.063816
+rpy          0.023064    0.021557    0.025791
+teddy        0.045072    0.047585    0.036064
+xyz          0.008902    0.008896    0.013846
+MEAN         0.03007     0.02960     0.04081
+```
+(Single-sequence ATE for the two rendering baselines on fr1_desk, for
+completeness: Photo-SLAM 0.017408, MonoGS 0.035750.)
+
+VGGT-SLAM is ~38% worse than ours on the mean and loses on 8 of 9 sequences
+(its `floor` result, 0.0991, is a clear failure case; it wins only on
+`teddy`). **The same attribution rule as §17.93.2 applies: our advantage here
+is MASt3R-SLAM's tracking, which we inherit unchanged. This is not evidence
+for anything this project contributes.** VGGT-SLAM produces no renderable
+map (17.93.5), so it appears in the ATE table only.
+
+### 17.93.11 What is worth doing next, and what is not (assessed after all four baselines)
+
+**Worth doing, in order:**
+```
+1. REPLICA three-way rendering comparison. Replica is THE standard GS-SLAM
+   rendering benchmark -- it is where the literature's 30+ dB numbers come
+   from -- and all three rendering-capable systems ship Replica support.
+   Highest value for three reasons: (a) it is the benchmark a reviewer
+   expects; (b) TUM's ~14 dB regime may be compressing the differences
+   between systems, and Replica's higher-PSNR regime should separate them
+   better; (c) it directly tests this file's own protocol-swamp hypothesis --
+   if OUR Replica numbers under OUR protocol still land far below the
+   published 30+ dB, that confirms the gap is protocol, not quality, which is
+   itself a reportable methodological finding.
+   SENSOR CAVEAT FOUND WHILE SETTING THIS UP: MonoGS ships Replica configs
+   for RGB-D ONLY (configs/rgbd/replica/), no monocular variant, while
+   Photo-SLAM ships both. Our system is monocular. Comparing our monocular
+   result against MonoGS's RGB-D would be apples-to-oranges and would flatter
+   MonoGS (depth input is a large advantage). So: Photo-SLAM MONOCULAR is the
+   fair Replica comparison; any MonoGS Replica number must be labelled RGB-D
+   explicitly, or a monocular config must be constructed (a deviation).
+2. EQUALIZE THE OPTIMIZATION BUDGET. The headline table is currently
+   confounded: MonoGS gets 26000 colour-refinement iters, Photo-SLAM runs to
+   its 4181-iteration shutdown, ours gets a 300 s refiner polish. A
+   budget-matched arm is needed before the comparison is defensible.
+3. TURN THE COMPACTNESS WEAKNESS INTO AN ANALYSIS. 2.4M gaussians vs MonoGS's
+   23K at equal quality is the most attackable number in the paper. We
+   already own the lever that addresses it (`--refiner-conf-fade`, §17.79):
+   measure a quality-vs-gaussian-count curve and answer "what is our quality
+   at 23K gaussians?" That converts a reviewer's attack into our own
+   efficiency analysis.
+```
+
+**Explicitly NOT worth doing:**
+```
+More pose-only baselines (DROID-SLAM, ORB-SLAM3, ...) -- tracking is not this
+   project's contribution (17.93.2); extra ATE columns add nothing.
+GSO-SLAM / VBGS-SLAM (2026) -- code availability unverified, and they sit in
+   the same high-PSNR Replica regime; better to make Replica solid first.
+7-Scenes / EuRoC extensions of VGGT-SLAM -- its eval scripts for those live
+   only on the version1.0 branch and would need porting plus a judgement call
+   about v1-harness-vs-v2-pipeline validity (17.93.5), for datasets that are
+   far less standard in the GS-SLAM literature than Replica.
+```
+
+### 17.93.12 REPLICA, monocular, matched protocol: we win clearly -- and the protocol-swamp hypothesis is confirmed quantitatively
+
+Replica office0, both systems MONOCULAR (fair sensor match -- see the caveat
+in 17.93.11: MonoGS ships no monocular Replica config, only RGB-D, so it is
+correctly ABSENT from this table rather than included with a depth-input
+advantage). Same 100 held-out frames, keyframes of neither system, GT poses
+Sim3-aligned into each map's own frame, same renderer/metrics/exposure.
+
+```
+system      psnr      lpips     gaussians
+ours        26.2884   0.1023    2,987,333
+Photo-SLAM  22.2286   0.2085       83,372
+```
+Self-consistency (own keyframes, same protocol): ours 26.4605/0.1109,
+Photo-SLAM 22.4395/0.1984 -- both slightly above their held-out scores, the
+expected pattern, so both adapters are sound.
+
+**+4.06 dB PSNR and 51% lower LPIPS. This is the first result in the whole
+external-baseline campaign where this project wins a rendering comparison
+outright rather than tying.** It is also the opposite of the TUM outcome
+(§17.93.9: tie with MonoGS on PSNR, slightly behind on LPIPS), which is why
+n=1-per-dataset conclusions are dangerous in both directions.
+
+#### The protocol gap, now measured on a published number
+
+Photo-SLAM's Replica monocular PSNR **as reported in the literature is
+~30.9 dB** (cited in third-party comparison tables; not independently
+verified by us). The SAME system, built from its own source and run on the
+same scene, scores **22.23 dB under our protocol**. That is an **8.7 dB
+gap for one unchanged system** -- and it matches, almost exactly, the 8.8 dB
+pose-source effect measured independently on MonoGS's own map in §17.93.4
+(18.71 dB from its estimated poses vs 9.87 dB from ground-truth poses).
+
+Two independent measurements, two different systems, same ~8.7-8.8 dB:
+**the GS-SLAM literature's rendering numbers and this project's are offset by
+roughly one protocol's worth of difference, not by quality.** Concretely,
+this means our Replica 26.29 dB should NOT be read as "4.6 dB below the
+published 30.9" -- measured identically, we are 4.06 dB ABOVE the system that
+published 30.9.
+
+This is the single strongest justification for the reporting rule already
+adopted in §17.93.3: **only numbers we produced under our own protocol go in
+a comparison table; published numbers may be cited but must be labelled
+different-protocol and never tabulated head-to-head.** The paper should state
+this offset explicitly with these two measurements as evidence -- it is a
+methodological contribution in its own right, and this project is unusually
+well placed to make it because it has both systems built and instrumented.
+
+#### What does NOT change
+The compactness gap persists and remains the most attackable number: 2.99M
+gaussians for us vs 83K for Photo-SLAM on this scene -- 36x. (On TUM vs
+MonoGS it was 104x.) Winning on quality while using 1-2 orders of magnitude
+more primitives is a real efficiency deficit and must be reported as such.
+
+Caveats: n=1 scene (office0); optimization budgets still not equalized
+(Photo-SLAM ran to its 5081-iteration shutdown, ours had a 300 s refiner
+polish); Photo-SLAM built against OpenCV 4.10 rather than upstream's 4.7/4.8.
+
+### 17.93.13 The compactness curve: our quality does NOT survive shrinking to a baseline's budget
+
+The most attackable number in the external comparison is that our maps carry
+36-104x more Gaussians than the GS-SLAM baselines for equal-or-better
+quality. The obvious defence would be "our map is merely redundant; prune it
+and we match them." **That defence is now measured, and it is false.**
+
+Replica office0, the same 100 held-out frames as §17.93.12, our own refined
+map truncated to successively smaller budgets by keeping the highest-opacity
+Gaussians (opacity is this project's measured solidity channel, §17.89 -- the
+primitives the optimizer is itself fading out are the honest ones to drop
+first). No re-optimization after pruning.
+
+```
+gaussians kept        psnr      lpips     note
+2,987,333 (full)    26.2884    0.1023
+1,000,000           24.6770    0.1951    -1.6 dB for a 3x cut
+  300,000           20.2268    0.4252    -6.1 dB
+   83,372           13.5410    0.6244    Photo-SLAM's budget on this scene
+   23,019           12.0446    0.6726    MonoGS's budget (from the TUM run)
+```
+
+**At Photo-SLAM's own primitive budget we score 13.54 dB against its measured
+22.23 dB -- we are 8.7 dB WORSE at matched count**, having been 4.06 dB
+better at 36x the count. The knee is around 1M Gaussians: the first 3x cut
+costs only 1.6 dB, after which quality falls off a cliff.
+
+**Honest bound in both directions.** This is naive post-hoc truncation with
+no re-optimization, so it is a LOWER bound -- a system actually trained or
+refined at 83K would do meaningfully better than a 3M map crudely cut to 83K.
+That caveat is real and must be stated. But it does not rescue the defence:
+the measurement shows our quality is *constituted by* having millions of
+primitives, not merely padded by them. **The efficiency deficit is a genuine
+architectural limitation of this project's representation, not an artifact of
+not having pruned.**
+
+For the write-up: report this curve, state the lower-bound caveat, and do not
+claim parity-at-matched-budget. The defensible positioning is quality-per-view
+at a large memory cost, with the curve given so a reader can locate the
+trade-off themselves. A real fix (training/refining directly at a small
+budget, or a densification-control policy) is future work, not something this
+project has measured.
+
+### 17.93.14 Budget equalization on TUM -- and a claim I nearly got wrong
+
+§17.93.11 listed "the optimization budgets are not equalized" as a confound in
+the TUM three-way table. Resolved, and the resolution is more nuanced than the
+first look suggested.
+
+Extended arm: same sequence, same everything, `--refiner-polish-secs 1200`
+instead of 300 (4x wall clock; 4400 refiner steps instead of ~1400). Scored on
+the identical 100 held-out frames.
+
+```
+our polish budget       ours psnr/lpips     MonoGS psnr/lpips   Photo-SLAM
+300 s  (~1400 steps)    13.9490 / 0.4110    13.8685 / 0.3975    10.7269 / 0.5583
+1200 s (~4400 steps)    14.6120 / 0.3788    (unchanged)         (unchanged)
+```
+
+**The check that stopped an overclaim.** Seeing our LPIPS go 0.4110 ->
+0.3788 and overtake MonoGS's 0.3975, the tempting write-up was "our LPIPS
+deficit was a budget artifact." Before writing that, I measured what MonoGS's
+26000-iteration colour refinement actually costs in wall clock: its own
+progress bar reports **26000 iters in 5:39 = 339 s at 76.57 it/s**.
+
+So the ORIGINAL comparison was already roughly wall-clock matched -- our 300 s
+against their 339 s, with MonoGS if anything getting slightly more. The
+correct readings are therefore:
+
+```
+AT COMPARABLE WALL CLOCK (~300-340 s of post-sequence optimization):
+    PSNR is a tie (13.95 vs 13.87, inside the 0.031 dB noise floor)
+    LPIPS: MonoGS is BETTER (0.3975 vs 0.4110), by 3.3% relative
+    -- i.e. §17.93.9's reported conclusion STANDS, unchanged.
+
+GIVEN 3.5x MonoGS's refinement wall clock:
+    we overtake on both (14.61 / 0.3788)
+```
+
+The honest sentence is **not** "the LPIPS deficit was a budget artifact." It
+is: *at equal optimization budget MonoGS has better perceptual quality; we can
+buy past it with ~3.5x the compute.* Those are different claims and only the
+second one is ours to make, with the multiplier stated.
+
+Note the two budgets are not in identical units (their iterations vs our
+wall-clock-limited steps) and their iterations are cheaper because their map
+is 100x smaller -- which is the compactness deficit of §17.93.13 showing up
+again, now as a throughput disadvantage: we need far more time per
+optimization step for the same scene.
+
+**Standing lesson, third instance in this campaign** (after the MonoGS
+c2w/w2c inversion in §17.93.4 and the misread Photo-SLAM self-check in
+§17.93.8): every time a number moved in this project's favour, checking it
+one level deeper changed the claim. The pattern is consistent enough to be a
+rule -- **a result that flatters us gets one more verification step than one
+that does not.**
+
+### 17.93.15 Replica extended to 3 scenes: the win replicates, and it is large
+
+The §17.93.12 Replica result was n=1, which this file has repeatedly warned
+against. Extended to three scenes; both systems monocular, same protocol
+(100 held-out frames unseen by either, GT poses Sim3-aligned per map, same
+renderer/metrics). Our arm is the base checkpoint + 300 s refiner polish in
+all three (`logs/ref_onoff_replica_on`, `logs/e2b_repps_base`,
+`logs/e7_mixed_base`); Photo-SLAM ran to its own shutdown iteration.
+
+```
+scene      ours psnr/lpips     Photo-SLAM psnr/lpips    delta psnr   ours G      PS G
+office0    26.2884 / 0.1023    22.2286 / 0.2085          +4.06 dB    2,987,333   83,372
+office1    21.7772 / 0.1195    17.8049 / 0.1854          +3.97 dB    2,149,703   75,235
+room0      25.5562 / 0.1085    17.9169 / 0.1518          +7.64 dB    2,011,045   89,219
+MEAN       24.5406 / 0.1101    19.3168 / 0.1819          +5.22 dB
+```
+
+**Three for three, same direction, +3.97 to +7.64 dB, LPIPS 29-51% lower.**
+Unlike the TUM tie this is a replicated, sign-consistent, large-margin win --
+and it is on the dataset the GS-SLAM literature actually uses as its
+rendering benchmark. The compactness gap persists throughout (~25x here).
+
+### 17.93.16 MonoGS on harder TUM sequences: its monocular tracking diverges, and that ends the comparison there
+
+Extending the TUM rendering comparison beyond fr1_desk required MonoGS on
+more sequences. Configs were produced by copying its `fr1_desk.yaml` and
+changing only `dataset_path` -- legitimate because all freiburg1 sequences
+share one calibration.
+
+```
+sequence     MonoGS ATE RMSE     ours ATE     MonoGS self-reported psnr
+fr1_desk        0.035750         0.016975         20.71 (after refinement)
+fr1_room        0.791090         0.059027         15.41
+fr1_360         0.177320         0.042079         15.89
+```
+
+**MonoGS's monocular tracking diverges on both harder sequences** -- 0.79 m
+on room is a complete failure, 0.18 m on 360 is an order of magnitude worse
+than ours. This is a real and reportable robustness difference between the
+systems (ours inherits MASt3R-SLAM's tracking, which holds up).
+
+**No rendering cross-evaluation was computed for these two sequences, on
+purpose.** With the trajectory diverged, MonoGS's map lives in a badly wrong
+frame; scoring it from GT-aligned poses would produce a number that measures
+its tracking failure, not its rendering quality, while looking like a
+rendering result. Reporting such a number would be the mirror image of the
+c2w/w2c bug in §17.93.4 -- a large, flattering, meaningless margin. The
+honest output is the ATE table above plus the statement that the rendering
+comparison is confined to sequences where both systems track successfully
+(fr1_desk).
+
+This also bounds §17.93.9 properly: **the TUM rendering tie with MonoGS
+rests on n=1 and cannot be extended, because MonoGS does not survive the
+other sequences.** The Replica three-scene result (17.93.15) is therefore
+the load-bearing rendering comparison, not the TUM one.
+
+## 17.94 CONSOLIDATED RESULT TABLES (paper-ready; every number measured on this host)
+
+Single place to copy numbers from when writing. Every value below was produced
+by us on this machine; nothing is quoted from a paper except where explicitly
+marked LITERATURE. Blank cells mean NOT MEASURED, never "failed".
+
+### Table 1 -- Trajectory accuracy, ATE RMSE (m), TUM freiburg1, evo_ape tum -as
+COMPLETE: all 9 sequences x all 5 systems, no gaps.
+```
+sequence   ours       MASt3R-SLAM  VGGT-SLAM   Photo-SLAM   MonoGS
+360        0.042079   0.048155     0.049624    0.034738     0.177320
+desk       0.016975   0.016136     0.025417    0.014861     0.035750
+desk2      0.027672   0.023532     0.029102    0.438468     0.843905
+floor      0.027230   0.024969     0.099134    0.013299     0.539209
+plant      0.015361   0.019565     0.024532    0.046073     0.071390
+room       0.059027   0.061271     0.063816    0.509838     0.791090
+rpy        0.021557   0.023064     0.025791    0.056558     0.040656
+teddy      0.047585   0.045072     0.036064    0.304875     0.122987
+xyz        0.008896   0.008902     0.013846    0.009682     0.017198
+MEAN(9)    0.02960    0.03007      0.04081     0.16094      0.29328
+```
+**The headline here is ROBUSTNESS, not precision.** Photo-SLAM and MonoGS
+each diverge on multiple sequences (desk2, room, teddy at 0.30-0.84 m --
+i.e. tracking failure, not error), which is what wrecks their means. On the
+sequences where they do track, Photo-SLAM is competitive and sometimes best
+(floor 0.0133, desk 0.0149, 360 0.0347). Ours / MASt3R-SLAM / VGGT-SLAM never
+diverge. Ours vs MASt3R-SLAM remains noise (4-4-1) and that advantage is
+INHERITED tracking, not a contribution of this project (§17.93.2).
+Photo-SLAM's desk scored 0.017408 on its first run and 0.014861 on a rerun --
+ORB-SLAM3 is multithreaded and non-deterministic; single-run numbers for it
+carry run-to-run variance and this must be stated in the write-up.
+
+### Table 2 -- Rendering, Replica, monocular vs monocular, matched protocol
+ALL 8 Replica scenes (the dataset has exactly 8: office0-4, room0-2).
+100 held-out frames per scene unseen by either system, GT poses Sim3-aligned
+per map, same renderer/metrics/exposure. **Load-bearing rendering result.**
+```
+scene     ours psnr / lpips     Photo-SLAM psnr / lpips   d_psnr   lpips win   ours G      PS G
+office0   26.3049 / 0.1044      22.2286 / 0.2085          +4.08    ours        2,987,333    83,372
+office1   22.0827 / 0.1150      17.8049 / 0.1854          +4.28    ours        2,149,703    75,235
+office2   20.9714 / 0.1505      20.2365 / 0.1285          +0.73    PHOTO-SLAM  3,065,486    91,256
+office3   20.1782 / 0.1438      19.3641 / 0.1553          +0.81    ours        2,410,090    66,156
+office4   23.6457 / 0.1562      16.4615 / 0.1254          +7.18    PHOTO-SLAM  2,636,008    72,064
+room0     25.4441 / 0.1097      17.9169 / 0.1518          +7.53    ours        2,011,045    89,219
+room1     21.9085 / 0.1395      21.8820 / 0.1745          +0.03    ours        3,298,001   113,798
+room2     23.6181 / 0.1599      20.7493 / 0.1158          +2.87    PHOTO-SLAM  3,039,774    71,477
+MEAN(8)   23.0192 / 0.1349      19.5805 / 0.1557          +3.44    ours 5/8
+```
+**THIS TABLE CORRECTS AN EARLIER OVERCLAIM OF MY OWN.** At n=3 (office0,
+office1, room0 -- §17.93.15) the margin looked like **+5.29 dB with LPIPS
+3/3**. Those three happened to be the three scenes we win biggest. With all 8:
+```
+PSNR   we win 8/8, but the mean margin falls +5.29 -> +3.44 dB, and three
+       scenes are effectively ties (+0.03, +0.73, +0.81)
+LPIPS  we win only 5/8 -- Photo-SLAM is better on office2, office4, room2
+```
+The small-n hazard this file has warned about repeatedly bit a result that
+flattered us. Report the 8-scene numbers; the n=3 subset is not
+representative. MonoGS is absent by design (RGB-D-only Replica configs;
+scoring its depth-input map against our monocular one would flatter it).
+### Table 3 -- Rendering, TUM freiburg1_desk (n=1, NOT extendable)
+```
+system                    psnr      lpips    gaussians   map size   budget
+ours (300 s polish)       13.9490   0.4110   2,396,900   170 MB     ~1400 steps
+MonoGS (339 s refine)     13.8685   0.3975      23,019   1.5 MB     26000 iters
+Photo-SLAM                10.7269   0.5583      36,069   8.9 MB     to shutdown
+ours (1200 s polish)      14.6120   0.3788   2,396,900   170 MB     ~4400 steps
+```
+At COMPARABLE wall clock (300 vs 339 s) PSNR ties and MonoGS wins LPIPS. Only
+with 3.5x their refinement budget do we lead both. Cannot be extended to more
+TUM sequences because MonoGS's tracking diverges there (Table 1).
+
+### Table 4 -- Compactness curve, ours, 4 Replica scenes
+Same 100 held-out frames per scene; highest-opacity Gaussians kept; NO
+re-optimization afterwards (so every row is a LOWER bound -- a system actually
+trained at that budget would do better).
+```
+kept          office0            office1            room0              room2
+              psnr / lpips       psnr / lpips       psnr / lpips       psnr / lpips
+full          26.2884 / 0.1023   22.0827 / 0.1150   25.4441 / 0.1097   23.6181 / 0.1599
+              (2,987,333 G)      (2,149,703 G)      (2,011,045 G)      (3,039,774 G)
+1,000,000     24.6770 / 0.1951   21.7111 / 0.1546   25.0105 / 0.1204   22.8682 / 0.2140
+  300,000     20.2268 / 0.4252   18.9560 / 0.4401   16.2572 / 0.3997   17.8659 / 0.4669
+   83,372     13.5410 / 0.6244   13.9680 / 0.5925    8.6825 / 0.6513   10.4275 / 0.6877
+   23,019     12.0446 / 0.6726   12.0762 / 0.6320    5.1574 / 0.7569    7.7428 / 0.7507
+Photo-SLAM's
+own score at
+~83K G        22.2286            17.8049            17.9169            20.7493
+```
+**Replicated across 4 scenes: at Photo-SLAM's own primitive budget we score
+8.7 / 3.8 / 9.2 / 10.3 dB WORSE than it does**, having been better by
+4.08 / 4.28 / 7.53 / 2.87 dB at 25-36x the count. The knee is consistently
+around 1M Gaussians (the first 2-3x cut costs only 0.4-1.6 dB), after which
+quality collapses. The efficiency deficit is a genuine architectural property
+of this project's representation, not an artifact of not having pruned -- and
+it is now n=4, not n=1.
+
+### Table 5 -- Protocol offset (methodological finding)
+```
+measurement                                          value      offset
+Photo-SLAM Replica mono, LITERATURE (3rd-party table) ~30.9 dB   --
+Photo-SLAM Replica office0, OUR protocol              22.23 dB   8.7 dB
+MonoGS map rendered from ITS OWN estimated poses      18.71 dB   --
+MonoGS SAME map rendered from GT poses                 9.87 dB   8.8 dB
+```
+Two independent systems, two independent methods, ~8.7-8.8 dB both times:
+the literature's GS-SLAM rendering numbers and ours differ by roughly one
+protocol, not by quality.
+
+### Table 6 -- System cost, ALL systems, identical conditions
+TUM freiburg1_desk (613 frames), GPU1 exclusively, same 1 Hz nvidia-smi
+sampler for every system, wall clock measured end-to-end.
+```
+system       wall clock   peak GPU MiB   note
+ours              70 s         21,035    6.47 fps; no refiner in this arm
+Photo-SLAM        28 s          1,286    fastest and leanest
+MonoGS           555 s          2,389    404 s of that is its optimisation
+VGGT-SLAM         24 s          9,436    pose+pointcloud only, no rendering
+```
+**Our peak memory is 16x Photo-SLAM's and 8.8x MonoGS's, and Photo-SLAM is
+2.5x faster wall-clock.** This is the same architectural deficit as the
+compactness curve (Table 4), now measured at system level. It is the clearest
+single number a reviewer can attack and must be reported up front.
+
+Per-family cost for our system alone (5 families, refiner on/off), retained
+from §17.92.3:
+```
+family     fps no-refiner   fps +refiner(duty 1.0)   peak MiB no-ref   peak MiB +ref   final G
+eth3d          7.93              1.53                   18,315            21,528        2,051,729
+euroc          5.40              4.21                   22,287            30,516        3,327,453
+tum            5.84              3.70                   21,037            25,554        2,622,845
+7-scenes       6.57              4.23                   21,149            25,058        3,024,145
+replica        7.89              4.95                   17,537            20,896        3,065,486
+```
+
+## 17.95 Figures for the paper: inventory, the baseline-comparison set, and a misleading figure I caught
+
+### 17.95.1 What existed vs what was missing
+`figures/` held 10 PNGs, ALL of them internal ablation (base checkpoint vs
+fine-tuned head, one row per family: eth3d_sofa1, euroc_v101, tum_rpy,
+replica_ps_office2, 7scenes_office, x2 frames each). After the external
+campaign the paper's most important missing figure class was a **side-by-side
+against the competing systems**. Added:
+```
+cmp_replica_room0_f{0,1}.png     GT | ours | Photo-SLAM, Replica room0
+cmp_replica_office0_f{0,1}.png   GT | ours | Photo-SLAM, Replica office0
+cmp_replica_office2_f{0,1}.png   GT | ours | Photo-SLAM, Replica office2 (the near-tie scene)
+```
+Rendered through the SAME path the Table-2 numbers came from (identical
+held-out frame, GT pose Sim3-aligned per map, identical renderer), each panel
+labelled with its own PSNR/LPIPS and Gaussian count.
+
+### 17.95.2 The first version of this figure contradicted its own caption
+The initial run picked held-out frames by even spacing. On Replica room0 --
+the scene where we lead by **+7.53 dB on the 100-frame mean** -- the chosen
+frame had Photo-SLAM at **28.27 dB vs our 23.51**, i.e. 4.8 dB AHEAD, under a
+caption reading "ours +7.53 dB over Photo-SLAM". A reader would have seen a
+figure disproving its own label.
+
+Fixed by selecting **representative** frames: score ~24 held-out frames for
+both systems, sort by per-frame delta, and use the MEDIAN-delta frame (plus
+one from the upper tail as the second panel). Captions now say explicitly that
+the frame is the median of the per-frame delta and quote the scene mean
+separately.
+
+### 17.95.3 What the per-frame distribution revealed -- mean and median disagree
+Computing those deltas produced a finding the scene means hide:
+```
+scene      per-frame delta (ours - Photo-SLAM), 24 probes
+           median      min       max      scene-mean delta (Table 2)
+room0      +8.01     -4.77    +15.66      +7.53
+office0    +3.62     +0.20     +9.61      +4.08
+office2    -1.84     -9.64     +7.53      +0.73
+```
+**On office2 the scene mean says we are +0.73 dB ahead while the per-frame
+median says we are 1.84 dB BEHIND.** Our nominal win there comes from a
+minority of frames where we do much better, not from being typically better --
+and room0's -4.77 dB minimum shows Photo-SLAM beats us on some frames even in
+the scene we dominate. For the write-up: report the mean (it is the standard
+metric) but state that the per-frame distribution is wide and, on the
+near-tie scenes, median-negative. Anyone choosing a single qualitative frame
+should pick by median, not by eye.

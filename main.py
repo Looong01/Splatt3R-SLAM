@@ -109,7 +109,7 @@ def run_backend(cfg, model, states, keyframes, K):
 
     device = keyframes.device
     factor_graph = FactorGraph(model, keyframes, K, device)
-    retrieval_database = load_retriever(model)
+    retrieval_database = load_retriever(model, retriever_path=cfg.get("retriever_path"))
 
     mode = states.get_mode()
     while mode is not Mode.TERMINATED:
@@ -181,6 +181,13 @@ def run_backend(cfg, model, states, keyframes, K):
         with states.lock:
             if len(states.global_optimizer_tasks) > 0:
                 idx = states.global_optimizer_tasks.pop(0)
+
+
+# The one thinning dose that ships on. 0.45 is the top of the measured range
+# (skill 17.66.10), NOT a located optimum -- conf-fade's advantage over uniform
+# was still growing at the last dose tested, and doses above 0.5 both go
+# untested and stop being dose-matched, because the 0.1 floor begins to clip.
+CONF_FADE_DEFAULT = 0.45
 
 
 if __name__ == "__main__":
@@ -296,6 +303,14 @@ if __name__ == "__main__":
         "the database and is unaffected. Intended for ablation experiments.",
     )
     parser.add_argument(
+        "--retriever-path",
+        default=None,
+        help="Path to a retrieval whitening .pth (with a matching "
+        "<name>_codebook.pkl sibling, see splatt3r-retrieval-refit skill "
+        "section 5). Default None reproduces current behaviour exactly: "
+        "the original MASt3R retrieval assets.",
+    )
+    parser.add_argument(
         "--dump-retrieval-features",
         default=None,
         metavar="DIR",
@@ -352,17 +367,50 @@ if __name__ == "__main__":
              "the thinning prior (skill 17.56): the elongation selector it "
              "replaces was shown to contribute nothing, and on a deep fade to "
              "be actively worse. Arm it when the map's accumulated alpha is "
-             "high and the head has not un-saturated itself; it carries a "
-             "measured lattice cost (17.59) that neither psnr nor lpips sees.",
+             "high and the head has not un-saturated itself. See "
+             "--refiner-conf-fade for a strictly better allocation of the same "
+             "dose. (An earlier version of this help claimed a measured lattice "
+             "cost from 17.59; that was RETRACTED in 17.63 -- the images show "
+             "thinning REDUCES the visible lattice.)",
+    )
+    parser.add_argument(
+        "--refiner-conf-fade",
+        type=float,
+        default=None,               # resolved to CONF_FADE_DEFAULT below
+        help=f"thin by the same mean dose as --refiner-uniform-fade but allocate "
+             f"it by the backbone's own confidence: opacity *= "
+             f"1-D*2*(1-rank(conf)), floored at 0.1. DEFAULT "
+             f"{CONF_FADE_DEFAULT}; pass 0 to disable. WHAT IS ACTUALLY "
+             f"ESTABLISHED: turning thinning ON is decisive -- across 8 Replica "
+             f"scenes, faded beats unfaded by -32%% to -34%% lpips, paired "
+             f"p<1e-4. Choosing THIS allocation over the uniform one is NOT: "
+             f"over 12 maps on two families conf wins 7, mean -1.7%%, MEDIAN "
+             f"-0.06%%, 95%% CI -4.0%% to +0.6%% -- the interval contains zero "
+             f"and both paired tests sit at p>0.2 (17.78). It is the default "
+             f"because it is the configuration the deployment A/Bs were run "
+             f"with and it is never much worse (worst case +2.9%%), NOT because "
+             f"it is measurably better. --refiner-uniform-fade "
+             f"{CONF_FADE_DEFAULT} is an equally defensible choice and is "
+             f"simpler. Do not spend effort tuning between them; spend it on "
+             f"whether thinning is on at all, which is where the effect is. The dose {CONF_FADE_DEFAULT} is the top of the measured "
+             f"range and not a located optimum; doses above 0.5 are untested "
+             f"AND stop being dose-matched to uniform, "
+             f"because the 0.1 floor starts clipping. Supersedes "
+             f"--refiner-uniform-fade; setting that one explicitly turns this "
+             f"off.",
     )
     parser.add_argument(
         "--refiner-scale-cap",
         type=float,
         default=0.0,
-        help="clamp injected Gaussian scales to at most this many metres. "
-             "Head training inflates the scale tail on 4 of 5 families (p90 "
-             "ratio 2.2-3.3 vs base); the cap is the clean lever -- it costs no "
-             "lattice, unlike the fade. Anchor it to the BASE checkpoint's p90.",
+        help="clamp injected Gaussian scales to at most this many metres, "
+             "anchored to the BASE checkpoint's p90 on the deployment family. "
+             "Measured -3.5%% to -16.7%% lpips across four families, but it COSTS "
+             "psnr in every one (-0.1 to -0.5 dB) and raises black fraction, so "
+             "it is not a free win. Do NOT try to predict whether it pays from "
+             "the head's p90 ratio: that diagnostic was tested on four cells and "
+             "carries no predictive information (17.67, 17.68). Measure it per "
+             "map with an offline on/off arm.",
     )
     parser.add_argument(
         "--refiner-polish-patience",
@@ -496,6 +544,40 @@ if __name__ == "__main__":
             "elongation criterion is defined against the measured lattice "
             "pitch, which is only computed when the band limit is on. "
             "--refiner-aa-sigma 0.5 is the measured setting.")
+    # --refiner-gpu indexes VISIBLE devices, so under CUDA_VISIBLE_DEVICES=1 the
+    # only valid value is 0. Getting this wrong raises "invalid device ordinal"
+    # INSIDE the refiner subprocess, which kills the refiner while SLAM runs to
+    # completion and writes every artifact except the refined map -- a full
+    # sequence that looks successful and silently measures the unrefined
+    # baseline. Same failure shape as the --refiner-streak-opacity case below,
+    # and the third time this class has cost a run.
+    if args.refiner:
+        import torch as _t
+        _n = _t.cuda.device_count()
+        if args.refiner_gpu is not None and args.refiner_gpu != -1 and not (0 <= args.refiner_gpu < _n):
+            parser.error(
+                f"--refiner-gpu {args.refiner_gpu} is not a visible device: "
+                f"torch sees {_n} ({', '.join(f'cuda:{i}' for i in range(_n))}). "
+                f"Note this indexes VISIBLE devices -- with CUDA_VISIBLE_DEVICES "
+                f"set to a single card, the only valid value is 0.")
+    # conf-fade is on by default, so a bare `--refiner-uniform-fade 0.45` must
+    # not trip the mutual-exclusion check -- the user asked for one lever, not
+    # two. Explicitly choosing the uniform allocation turns the default off;
+    # only setting BOTH explicitly is the error, because the two multiply and
+    # the combined dose lands well past where thinning turns harmful (17.56).
+    if args.refiner_uniform_fade > 0:
+        if args.refiner_conf_fade is not None and args.refiner_conf_fade > 0:
+            parser.error(
+                "--refiner-conf-fade and --refiner-uniform-fade are two "
+                "allocations of the SAME thinning dose, not two levers to "
+                "stack. Together they multiply, so the effective dose is far "
+                "past what either was measured at and past the point where "
+                "thinning turns harmful (17.56). Pick one; --refiner-conf-fade "
+                "was measured better or equal on every map tested "
+                "(17.66.7-17.66.11).")
+        args.refiner_conf_fade = 0.0
+    elif args.refiner_conf_fade is None:
+        args.refiner_conf_fade = CONF_FADE_DEFAULT
     if args.refiner_polish_tol > 0 and args.refiner_polish_secs <= 0:
         parser.error("--refiner-polish-tol only does something during the "
                      "polish phase; set --refiner-polish-secs as well.")
@@ -507,6 +589,7 @@ if __name__ == "__main__":
     # Injected before the backend process is spawned below, so run_backend
     # picks it up via set_global_config(cfg).
     config["no_loop_closure"] = args.no_loop_closure
+    config["retriever_path"] = args.retriever_path
     print(args.dataset)
     print(config)
 
@@ -680,6 +763,7 @@ if __name__ == "__main__":
                             polish_tol=args.refiner_polish_tol,
                             polish_patience=args.refiner_polish_patience,
                             uniform_fade=args.refiner_uniform_fade,
+                            conf_fade=args.refiner_conf_fade,
                             scale_cap=args.refiner_scale_cap,
                             snapshot=snapshot),
             )

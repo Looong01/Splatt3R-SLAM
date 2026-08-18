@@ -164,6 +164,12 @@ class EuRoCData:
             "dataset": "euroc",
             "label": f"euroc/{sequence}",
             "instance": f"{view_idx}",
-            "is_metric_scale": False,  # pseudo-depth is the model's own scale, not real metres
+            "is_metric_scale": False,  # pseudo-depth is the model's own scale, not real metres.
+            # NOTE (round 34): this flag is INERT in the head-only training path --
+            # its only consumer is the MASt3R Regr3D loss, which is disabled
+            # (mast3r_loss_weight=None) for head-only recipes. Depth never supervises
+            # the Gaussian head at all there (means are pts3d.detach()); it only feeds
+            # calculate_in_frustum_mask/compute_coverage. Kept for the disabled loss's
+            # sake and for any future recipe that re-enables it.
             "sky_mask": depthmap <= 0.0,
         }

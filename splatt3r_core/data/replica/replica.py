@@ -53,7 +53,7 @@ REPLICA_DEPTH_SCALE = 6553.5
 class ReplicaData:
     def __init__(self, family_root, stage, val_fraction=0.15, max_scenes=None,
                  degrade=None):
-        """degrade: None | "content" | "photometry".
+        """degrade: None | "content" | "photometry" | "photometry-spatial" | "mixed".
 
         Kimi's round-24 causal test for why the Replica head never learned to
         use partial opacity. His corrected channel: on clean rendered images the
@@ -68,7 +68,20 @@ class ReplicaData:
                       view-independent and cannot hedge per-view brightness,
                       so this predicts NO un-saturation.
 
-        If content un-saturates and photometry does not, the channel is proven.
+        Measured (17.73): content did NOT un-saturate (100.0%); photometry
+        PARTIALLY did (99.4% -> 52.1% frac>0.99). Kimi's round-33 model for why
+        it was only partial: a per-Gaussian colour residual can serve a GLOBAL
+        brightness shift almost exactly (one scalar/channel), so the head barely
+        needs opacity for it. A SPATIALLY-VARYING photometric effect -- one
+        whose correction depends on where a point lands in the TARGET frame,
+        not just on which source pixel produced it -- is a much harder mapping
+        for a per-source-pixel colour predictor to learn exactly, so it should
+        recruit more of the opacity channel. `photometry-spatial` tests that:
+
+          photometry-spatial   per-channel WB jitter + radial vignetting on
+                                ONE view. Pre-registered (round 33): frac>0.9
+                                drops to 30-60%, well below plain photometry's
+                                83.1% and still above TUM's unaided 12.5%.
         """
         self.degrade = degrade
         self.stage = stage
@@ -154,6 +167,56 @@ class ReplicaData:
             g = float(rng.uniform(0.8, 1.25))
             rgb_image = np.clip(rgb_image.astype(np.float32) * g, 0, 255
                                 ).astype(np.uint8)
+        elif self.degrade == "photometry-spatial":
+            rng = np.random.default_rng(abs(hash((sequence, view_idx))) % 2**32)
+            h, w = rgb_image.shape[:2]
+            img = rgb_image.astype(np.float32)
+            # per-channel WB jitter: still close to f_dc-servable (one scalar
+            # per channel), kept mild so the spatial term below is what drives
+            # any additional effect.
+            wb = rng.uniform(0.9, 1.1, size=3).astype(np.float32)
+            img = img * wb[None, None, :]
+            # radial vignetting, jittered centre: darkens toward the image
+            # edge by an amount that depends on TARGET-frame position, not on
+            # which source pixel produced the point -- the effect a per-source
+            # -pixel colour residual cannot anticipate without knowing where
+            # in the OTHER view's frame this point will land.
+            cy = h * float(rng.uniform(0.35, 0.65))
+            cx = w * float(rng.uniform(0.35, 0.65))
+            yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+            r2 = ((yy - cy) / h) ** 2 + ((xx - cx) / w) ** 2
+            r2 = r2 / r2.max().clip(min=1e-6)
+            v = float(rng.uniform(0.25, 0.55))
+            falloff = (1.0 - v * r2)[:, :, None]
+            img = img * falloff
+            rgb_image = np.clip(img, 0, 255).astype(np.uint8)
+        elif self.degrade == "mixed":
+            # Round 37: the missing cell of the dissociation 2x2 (content-only,
+            # photometry-spatial-only, neither=base already run; this is both
+            # at once). Same rng object advanced through both blocks in
+            # sequence, so applying them together does not change either
+            # perturbation's own per-frame draw relative to running it alone
+            # -- the calibration each was measured at is preserved.
+            rng = np.random.default_rng(abs(hash((sequence, view_idx))) % 2**32)
+            k = int(rng.integers(0, 3)) * 2 + 1
+            if k > 1:
+                rgb_image = cv2.GaussianBlur(rgb_image, (k, k), 0)
+            rgb_image = np.clip(rgb_image.astype(np.float32)
+                                + rng.normal(0, 6.0, rgb_image.shape), 0, 255
+                                ).astype(np.uint8)
+            h, w = rgb_image.shape[:2]
+            img = rgb_image.astype(np.float32)
+            wb = rng.uniform(0.9, 1.1, size=3).astype(np.float32)
+            img = img * wb[None, None, :]
+            cy = h * float(rng.uniform(0.35, 0.65))
+            cx = w * float(rng.uniform(0.35, 0.65))
+            yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+            r2 = ((yy - cy) / h) ** 2 + ((xx - cx) / w) ** 2
+            r2 = r2 / r2.max().clip(min=1e-6)
+            v = float(rng.uniform(0.25, 0.55))
+            falloff = (1.0 - v * r2)[:, :, None]
+            img = img * falloff
+            rgb_image = np.clip(img, 0, 255).astype(np.uint8)
         if NORMALIZE_EXPOSURE:
             rgb_image = self.exposure_lock.apply(rgb_image, sequence)
 
