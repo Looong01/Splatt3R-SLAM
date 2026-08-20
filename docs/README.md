@@ -15,7 +15,11 @@
 > 渲染指标与本文协议之间存在约 **8.7 dB 的系统性协议偏移**(两个系统独立复现),因此
 > 文献数字**不可**与本文数字并列成表。
 
-原始权威记录:`.claude/skills/` 六份 skill(`splatt3r-finetuning-experiments`
+论文稿在 [`Thesis/`](Thesis/)(CVPR 格式,12 页,已编译验证),其写作状态、公式出处、
+结构决策与开放项记录在 skill `splatt3r-thesis-writing`——**改动 `docs/Thesis/` 下
+任何内容前先读它**。
+
+原始权威记录:`.claude/skills/` 七份 skill(`splatt3r-finetuning-experiments`
 已逾 14000 行)。其中论文素材集中在:§16(9 条 claim + 天花板 + 方法学陷阱)、
 §17.93(外部 baseline 全过程)、§17.94(六张成稿数据表)、§17.95(图表清单与选帧规则)。
 

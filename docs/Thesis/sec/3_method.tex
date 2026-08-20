@@ -1,0 +1,255 @@
+\section{Preliminaries}
+\label{sec:prelim}
+
+\subsection{Feed-forward pointmaps and Gaussians}
+DUSt3R~\cite{wang2024dust3r} maps an uncalibrated image pair
+$I^i, I^j \in \mathbb{R}^{H\times W\times 3}$ to pointmaps
+$X^i_i, X^j_i \in \mathbb{R}^{H\times W\times 3}$ with confidences
+$C^i_i, C^j_i$, where $X^i_j$ denotes the pointmap of image $i$ expressed in
+the frame of camera $j$. MASt3R~\cite{leroy2024mast3r} adds a matching head
+producing features $D^i_i, D^j_i \in \mathbb{R}^{H\times W\times d}$. We write
+$F_M(I^i, I^j)$ for one forward pass.
+
+Splatt3R~\cite{smart2024splatt3r} adds a third head, in parallel to the
+pointmap and matching heads and using the same DPT decoder, which emits for
+every pixel a rotation quaternion $q\in\mathbb{R}^4$, a scale
+$s\in\mathbb{R}^3$, spherical-harmonic coefficients
+$S\in\mathbb{R}^{3\times d}$, an opacity $\alpha\in\mathbb{R}$ and a mean
+offset $\Delta\in\mathbb{R}^3$, so that the Gaussian centre is
+\begin{equation}
+\mu \;=\; x + \Delta, \qquad x \in X^i_i .
+\label{eq:mu}
+\end{equation}
+Quaternions are normalised, scales and offsets pass through an exponential and
+opacities through a sigmoid. Critically for this paper, \emph{only the Gaussian
+head is trained}: the encoder and decoder remain those of the pre-trained
+MASt3R model, and all Gaussian parameters are predicted in the first image's
+camera frame, avoiding any ground-truth transformation at inference.
+
+The covariance follows the standard 3DGS~\cite{kerbl20233dgs} parameterisation
+\begin{equation}
+\Sigma \;=\; R(q)\,\mathrm{diag}(s)^2\,R(q)^\top ,
+\label{eq:cov}
+\end{equation}
+and a view with world-to-camera $W$ and projective Jacobian $J$ renders with
+the projected covariance $\Sigma' = J W \Sigma W^\top J^\top$, compositing
+front-to-back:
+\begin{equation}
+c \;=\; \sum_{k} c_k\,\alpha_k \prod_{l<k}\bigl(1-\alpha_l\bigr).
+\label{eq:alphacomp}
+\end{equation}
+\Cref{eq:alphacomp} is the reason opacity behaves as it does in our analysis
+(\cref{sec:method:mech}): with a black background, the residual transmittance
+$\prod_l (1-\alpha_l)$ contributes zero radiance, so lowering $\alpha$ darkens
+a region and raising it brightens it.
+
+Splatt3R is supervised only by novel-view renderings, under a mask $M$ of
+pixels visible in at least one context view:
+\begin{equation}
+\mathcal{L} = \lambda_{\text{MSE}}\,\mathcal{L}_{\text{MSE}}(M\!\odot\!\hat{I}, M\!\odot\!I)
+            + \lambda_{\text{LP}}\,\mathcal{L}_{\text{LPIPS}}(M\!\odot\!\hat{I}, M\!\odot\!I),
+\label{eq:splatt3rloss}
+\end{equation}
+with $\lambda_{\text{LP}}{=}0.25$ in the released configuration. Two properties
+of \cref{eq:splatt3rloss} drive our method. It is \emph{purely photometric} ---
+depth enters only through the mask $M$ and through pair selection, never
+through a gradient on geometry --- and it is \emph{pairwise}: the loss never
+observes more than two context views, hence never observes a fused map.
+
+\subsection{SLAM back-end}
+We inherit MASt3R-SLAM's~\cite{murai2025mast3rslam} front- and back-end
+unchanged. Poses are $\mathrm{Sim}(3)$ to absorb the scale inconsistency of
+network predictions,
+\begin{equation}
+T=\begin{bmatrix} sR & t\\ 0 & 1\end{bmatrix},\qquad
+T \leftarrow \tau \oplus T \triangleq \mathrm{Exp}(\tau)\circ T ,
+\label{eq:sim3}
+\end{equation}
+with $\tau\in\mathfrak{sim}(3)$. Under a generic central-camera assumption a
+pointmap induces its own camera model through the ray map
+$\psi(X^i_i)$ (unit-norm normalisation), and tracking minimises a ray error
+rather than a 3D point error, because
+$\lVert\psi_1-\psi_2\rVert^2 = 2(1-\cos\theta)$ is bounded and therefore
+robust to the depth errors that pointmap prediction frequently exhibits. The
+canonical keyframe pointmap is maintained by a confidence-weighted running
+average,
+\begin{equation}
+\tilde X^k_k \leftarrow
+\frac{\tilde C^k_k \tilde X^k_k + C^f_k\, T_{kf} X^f_k}{\tilde C^k_k + C^f_k},
+\qquad
+\tilde C^k_k \leftarrow \tilde C^k_k + C^f_k .
+\label{eq:fusion}
+\end{equation}
+Loop closures enter a $\mathrm{Sim}(3)$ pose graph solved by Gauss--Newton.
+We modify none of this; the consequence is that our tracking is identical to
+MASt3R-SLAM by construction, which \cref{sec:exp:ate} verifies externally.
+
+\section{Method}
+\label{sec:method}
+
+\subsection{System}
+We replace the pointmap prediction with Splatt3R, so each keyframe pair yields
+a per-pixel Gaussian in one forward pass. Keyframe Gaussians are stored in
+their anchor keyframe's local frame and composed into the world through that
+keyframe's \emph{current} pose,
+\begin{equation}
+\mu^{W} = A_k\,\mu^{k} + b_k, \qquad
+\Sigma^{W} = A_k\,\Sigma^{k}\,A_k^{\top},
+\label{eq:anchor}
+\end{equation}
+where $[A_k\,|\,b_k]$ is the $\mathrm{Sim}(3)$ matrix of keyframe $k$. Because
+the composition reads the pose at render time, a loop closure that updates
+$T_{WC_k}$ moves the map with it at no cost and without re-baking --- the
+property our refinement design depends on
+(\cref{sec:method:refiner}).
+
+\subsection{Where adaptation is admissible}
+\label{sec:method:head}
+
+Splatt3R trains its head against \emph{frozen} encoder features, making the
+head a function of one specific feature distribution. We measured what happens
+when that distribution moves:
+
+\begin{itemize}\itemsep2pt
+\item \textbf{Encoder LoRA}~\cite{hu2022lora} ($r{=}8$, $\alpha{=}16$ on
+      \texttt{qkv}/\texttt{proj}/\texttt{fc1}/\texttt{fc2}, $46.6$M trainable):
+      $-49\%$ reconstruction quality against the released checkpoint, with
+      predicted scales exploding by $1821\times$. The failure is immediate,
+      not a late-training instability.
+\item \textbf{Decoder-only LoRA}: $+0.37$\dB{} at epoch~1, then collapse to
+      $-1.61$\dB{} by epoch~5 with a $12\times$ climb in the $99$th-percentile
+      scale.
+\item \textbf{Head-only} (encoder and decoder bit-frozen, only
+      \texttt{gaussian\_dpt} trainable): improves, and is what we keep.
+\end{itemize}
+
+The interpretation is structural rather than a matter of hyper-parameters. The
+scale head is exponentially parameterised, $s = \exp(\hat{s})$, so it is
+unconstrained above; feeding the head out-of-distribution features perturbs
+$\hat{s}$ in a regime where the photometric loss of \cref{eq:splatt3rloss} is
+nearly flat --- a large, nearly transparent Gaussian and a small opaque one
+render almost identically at the supervision views. Geometry is therefore free
+to diverge while the loss barely moves, which is exactly the observed
+signature (quality collapse with scale explosion). Head-only training keeps
+$46.6$M parameters frozen and trains the $158$M-parameter head with the
+upstream objective and Adam~\cite{kingma2015adam}, per dataset family.
+
+\subsection{Injection-time thinning}
+\label{sec:method:thin}
+
+A SLAM map covers each surface with predictions from many keyframes. Under
+\cref{eq:alphacomp} with a black background, a surface covered by many
+over-solid Gaussians composites to haze rather than to a sharper surface. We
+therefore fade opacity at the moment a Gaussian enters the map, in proportion
+to how little the pointmap confidence vouches for it.
+
+Confidences are not calibrated across keyframes, so we rank-normalise
+\emph{within} each keyframe. For a keyframe with $N$ Gaussians and confidence
+values $\{c_n\}$, let $r_n$ be the rank of $c_n$ and
+$\hat{c}_n = r_n/(N-1) \in [0,1]$. The injected opacity is
+\begin{equation}
+\alpha'_n \;=\; \alpha_n \cdot
+\mathrm{clip}\Bigl(1 - 2\lambda\,(1-\hat{c}_n),\; 0.1,\; 1\Bigr),
+\label{eq:thin}
+\end{equation}
+with dose $\lambda{=}0.45$ shipped. The lower clip at $0.1$ is deliberate: it
+keeps \cref{eq:thin} a \emph{thinning} prior rather than a deletion prior, so
+that even the least-confident Gaussian retains gradient and the refiner can
+recover it if the photometric evidence supports it.
+
+\paragraph{Why a training-time penalty cannot substitute.}
+An opacity penalty added to \cref{eq:splatt3rloss} would be a different
+intervention, because crowding \emph{does not exist} at training time: it is a
+property of the assembled map, which forms only after SLAM accumulates
+keyframes over a surface, and \cref{eq:splatt3rloss} never sees more than two
+context views. Consistent with this, we measured that the refiner
+un-saturates opacity on its own even with an untrained head (median
+$1.0\rightarrow0.26$), identifying thinning as an \emph{acceleration along a
+path the optimiser already walks} --- which also explains its bounded
+downside, since a prior the optimiser would have reached anyway cannot do much
+harm. A dose--response check at two thinning depths (opacity knees $0.9$ and
+$0.6$) gave $-21.0\%$ and $-15.8\%$ LPIPS; neither collapsed toward zero, as a
+training-substitutable effect would require.
+
+\subsection{Online map refinement}
+\label{sec:method:refiner}
+
+Prediction gives a good initialisation, not a converged map. We add a third
+process that photometrically refines the assembled map \emph{while SLAM runs}.
+
+\paragraph{Parameterisation.}
+Gaussians are optimised in their anchor keyframe's local frame in
+pre-activation form --- $\log s$, unnormalised $q$, $\mathrm{logit}\,\alpha$,
+and the SH DC term --- so that scales stay positive and opacity stays in
+$(0,1)$ without constraints, and composed to the world by
+\cref{eq:anchor} at every step. Per-group Adam rates follow the 3DGS
+reference, with the positional rate scaled by scene extent:
+$\eta_\mu = 1.6\!\times\!10^{-4}\!\cdot\!\mathrm{extent}$,
+$\eta_{f_{dc}} = 2.5\!\times\!10^{-3}$, $\eta_\alpha = 5\!\times\!10^{-2}$,
+$\eta_s = 5\!\times\!10^{-3}$, $\eta_q = 1\!\times\!10^{-3}$.
+
+\paragraph{Objective.}
+Supervision views are tracked frames, so the refiner optimises
+\begin{equation}
+\mathcal{L}_{\text{ref}} = (1-\lambda_{D})\,\lVert \hat{I}-I \rVert_1
+                          + \lambda_{D}\,\bigl(1-\mathrm{SSIM}(\hat{I},I)\bigr),
+\qquad \lambda_{D}=0.2 ,
+\label{eq:refloss}
+\end{equation}
+i.e.\ the 3DGS objective rather than \cref{eq:splatt3rloss}: LPIPS is a
+reporting metric here, not a training signal, so that our evaluation metric is
+not also our loss.
+
+\paragraph{Anchor-carried supervision.}
+Each supervision frame is stored as an image together with
+$(\text{anchor index}, T_{\text{anchor},f})$ rather than a world pose. Its
+world pose is recomposed through the anchor's \emph{current} pose at sample
+time, so supervision follows loop closures exactly as the map does under
+\cref{eq:anchor}. Frames are held in CPU shared memory, which is what allows
+the refiner to run on a second GPU without pinning both processes to one card.
+
+\paragraph{Sampling.}
+Supervision is drawn from a reservoir of $200$ frames spanning the whole
+sequence plus a ring of the $64$ most recent, with a recent fraction of $0.3$.
+We measured uniform-over-history to dominate a recency-weighted schedule
+(held-out early/late split: $14.40/14.09/14.72$ uniform versus
+$14.06/13.79/14.35$ recent-only), because causal arrival already biases the
+pool toward recent views.
+
+\paragraph{Scheduling.}
+Sharing one GPU, the refiner holds a duty cycle $d$ by sleeping
+$\mathrm{EMA}[\Delta t]\,(1-d)/d$ after each step, so optimisation steps are
+dropped but never frames. Refiner load on the \emph{same} card doubles tracker
+latency ($101\!\rightarrow\!206$\,ms p50); on a second card it is noise
+($103$\,ms), which is the configuration we deploy. After the sequence ends an
+optional polish phase continues with the final poses.
+
+\paragraph{Frozen centres.}
+We hold $\mu$ fixed during refinement. The centres come from the network's
+pointmap, and photometric gradients degrade them: because the loss of
+\cref{eq:refloss} is evaluated at the supervision views themselves, moving a
+centre can reduce training error while worsening the geometry seen from new
+viewpoints. This was measured optimal at both online ($\sim$300-step) and
+offline (3000-step) budgets.
+
+\subsection{What opacity is}
+\label{sec:method:mech}
+
+The two preceding levers are, we argue, one phenomenon. Consider what the
+architecture permits. The DC colour is anchored to the input pixel plus a
+small learned residual and is sigmoid-bounded, so it cannot brighten a region
+much past what its input pixel suggests. Under \cref{eq:alphacomp} with a black
+background, $\alpha$ can: lowering it darkens toward black, raising it
+brightens by admitting less background. Opacity is therefore the only channel
+with headroom to \emph{lift} content --- a brightness-trim dial, not the
+confidence or hedging gate it is usually taken to be.
+
+This makes a falsifiable, sign-specific prediction. Let $\ell$ be input
+luminance and $\rho$ the Spearman correlation between $\alpha$ and $\ell$ over
+predicted Gaussians. A head trained with independently darkened inputs
+(synthetic vignetting and white-balance jitter, where the target view's
+darkening cannot be inferred from the input) must learn to lift what the input
+darkened, so $\rho<0$. A head trained on real sensor data with no synthetic
+darkening should instead place solid Gaussians on bright, reliably
+reconstructable content, so $\rho>0$. We registered both signs before
+measuring; \cref{sec:exp:mech} reports the result.

@@ -1,0 +1,100 @@
+\section{Introduction}
+\label{sec:intro}
+
+Dense visual SLAM has converged on 3D Gaussian splatting~\cite{kerbl20233dgs}
+as its map representation, because Gaussians render photorealistically in real
+time where neural fields~\cite{mildenhall2020nerf} do not. The dominant
+designs --- MonoGS~\cite{matsuki2024monogs},
+Photo-SLAM~\cite{huang2024photoslam}, SplaTAM~\cite{keetha2024splatam} ---
+obtain their Gaussians by \emph{per-scene optimisation}: primitives are
+initialised, then densified and refined by gradient descent against the
+incoming frames.
+
+A different route has become available. Feed-forward reconstruction networks
+predict geometry directly from images without optimisation:
+DUSt3R~\cite{wang2024dust3r} regresses pointmaps from an image pair,
+MASt3R~\cite{leroy2024mast3r} adds matching, and
+Splatt3R~\cite{smart2024splatt3r} extends MASt3R with a head that emits a full
+Gaussian per pixel --- position, covariance, colour and opacity --- in a single
+forward pass. MASt3R-SLAM~\cite{murai2025mast3rslam} shows that the MASt3R
+prior supports real-time dense tracking. The combination is therefore
+attractive: a SLAM system whose map appears at the speed of a forward pass.
+
+The difficulty is a mismatch of regimes. Splatt3R is trained on
+\emph{curated image pairs}, and its loss sees exactly two views at a time. A
+SLAM system does something categorically different: it fuses hundreds of
+keyframes onto the same physical surfaces, so every surface is covered many
+times over, by predictions made from different viewpoints, at different
+exposures, with different confidences. Nothing in pairwise training observes
+this crowding. Our starting observation is that a checkpoint which is
+excellent per pair can nonetheless produce a fused map that is hazy and
+over-solid --- and that fixing this is not a matter of training longer.
+
+This paper asks what actually has to change, and reports the answer as three
+results.
+
+\paragraph{Where adaptation is admissible.}
+The obvious move --- adapt the backbone to the target domain --- fails
+decisively. Encoder LoRA~\cite{hu2022lora} degrades reconstruction by $49\%$
+with a $1821\times$ scale explosion, and decoder-only LoRA improves for one
+epoch then collapses. The reason is structural: Splatt3R's Gaussian head was
+trained against \emph{frozen} encoder features, and perturbing those features
+feeds the head inputs it has never seen. Training only the Gaussian head, with
+the encoder bit-frozen, improves deployed map quality across five dataset
+families. Because the encoder is untouched, tracking is unchanged by
+construction --- a property we verify externally rather than assume.
+
+\paragraph{A training-free lever, and why training cannot replace it.}
+Fading each Gaussian's opacity at the moment it is injected into the map, in
+proportion to how little the pointmap vouches for it, improves the online map
+in $10$ of $12$ cells across four families, six heads and eight scenes, with
+two ties and \emph{no} harmful cell. This is not a heuristic that a better
+loss would subsume: crowding is a map-level property that only exists after
+many keyframes accumulate, and a pair-training objective never sees a map. We
+support this with a dose--response experiment at two thinning depths.
+
+\paragraph{What opacity is.}
+Both preceding results turn out to be the same result. We show that opacity in
+this architecture is a \emph{brightness-trim dial} against the
+black-background rasteriser, not the confidence or hedging channel it is
+usually assumed to be: because the colour term is anchored to the (possibly
+degraded) input pixel and is sigmoid-bounded, opacity is the only channel with
+headroom to brighten. The decisive evidence is a pre-registered opposite-sign
+prediction --- heads trained under synthetic darkening should correlate opacity
+\emph{negatively} with input luminance, real-sensor heads \emph{positively} ---
+which holds on all five families. Under this account the base checkpoint's
+collapsed opacity means it \emph{cannot} trim; injection-time thinning supplies
+the trim externally; and heads that deploy well are the ones that learned it.
+
+\paragraph{An honest comparison, and what it cost us.}
+We built MASt3R-SLAM, MonoGS, Photo-SLAM and VGGT-SLAM~\cite{maggio2025vggtslam}
+from source and evaluated every system --- ours included --- through a single
+protocol, on held-out views that are keyframes of no system. Two findings
+emerged that we did not set out to make.
+
+First, \emph{published GS-SLAM rendering numbers are not comparable to ours},
+and the gap is quantifiable. Running Photo-SLAM ourselves on Replica office0
+gives $22.2$\dB{} where third-party tables report ${\sim}30.9$\dB{} for the
+same system. We independently reproduce an $8.8$\dB{} gap on MonoGS between
+rendering its own map from its own estimated poses versus ground-truth poses.
+Two systems, two methods, the same ${\sim}8.7$\dB{}: the literature and this
+paper differ by one protocol's worth of evaluation choices.
+
+Second, several of our own claims weakened when pushed. A three-scene Replica
+subset suggested a $+5.29$\dB{} advantage; completing all eight scenes reduced
+it to $+3.44$\dB{} and revealed that we win LPIPS on only $5/8$. On TUM at
+matched compute we \emph{tie} MonoGS on PSNR and \emph{lose} on LPIPS. And our
+maps carry $25$--$100\times$ more Gaussians at $8$--$16\times$ the peak memory;
+pruned to a baseline's budget our quality falls $8.7$--$10.3$\dB{}
+\emph{below} it, so the size is constitutive rather than redundant. We report
+these as measured results, with the curve, rather than as caveats.
+
+Our contributions are: (i) a head-only adaptation recipe for feed-forward
+Gaussian SLAM, with the negative encoder-adaptation result that motivates it;
+(ii) an injection-time thinning lever with a dose--response argument for why
+training cannot substitute for it; (iii) a falsifiable mechanism for opacity,
+confirmed by a pre-registered opposite-sign prediction on $5/5$ families;
+(iv) a single-protocol comparison against four locally-built systems, with a
+quantified protocol offset that we believe affects how this literature should
+be read; and (v) a measured account of the efficiency deficit our
+representation carries.

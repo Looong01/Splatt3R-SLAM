@@ -1,0 +1,58 @@
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Feed-forward 3D reconstruction.}
+DUSt3R~\cite{wang2024dust3r} recasts two-view stereo as direct regression of
+aligned pointmaps, removing explicit correspondence search;
+MASt3R~\cite{leroy2024mast3r} adds a matching head and metric scale, and
+VGGT~\cite{wang2025vggt} generalises the formulation to many views.
+Splatt3R~\cite{smart2024splatt3r} builds on MASt3R by freezing the encoder and
+decoder and training only a Gaussian head that emits, per pixel, a covariance,
+spherical-harmonic colour and opacity (\cref{eq:mu}--\cref{eq:splatt3rloss}).
+That freezing decision is not incidental for us: it is the reason the head is
+brittle to any change in its input features, which we quantify in
+\cref{sec:method:head}. A second consequence matters equally: because
+\cref{eq:splatt3rloss} is masked, purely photometric and strictly pairwise, the
+training objective is blind to every property that only emerges when hundreds
+of keyframes are fused --- which is precisely the regime a SLAM map occupies.
+
+\paragraph{Gaussian-splatting SLAM.}
+MonoGS~\cite{matsuki2024monogs} optimises Gaussians and camera poses jointly by
+gradient descent from monocular video. Photo-SLAM~\cite{huang2024photoslam}
+couples ORB-SLAM3~\cite{campos2021orbslam3} tracking with a
+Gaussian mapping thread. SplaTAM~\cite{keetha2024splatam} and
+Gaussian-SLAM~\cite{yugay2023gaussianslam} take related routes with RGB-D
+input. All of these obtain map primitives by per-scene optimisation, and their
+map quality is therefore a function of the optimisation budget they are given
+--- a dependency we make explicit when comparing
+(\cref{sec:experiments}). Our system differs in that primitives arrive
+\emph{predicted}: the optimiser refines an initialisation that is already
+approximately correct, rather than creating structure.
+
+\paragraph{Feed-forward priors inside SLAM.}
+DROID-SLAM~\cite{teed2021droidslam} established learned dense optimisation for
+tracking. MASt3R-SLAM~\cite{murai2025mast3rslam} uses the MASt3R prior for
+real-time dense tracking and pointmap fusion, and is the system we build on;
+we inherit its tracking front-end unmodified, which is why our trajectory
+accuracy matches it and why we are explicit that trajectory accuracy is
+\emph{not} a contribution of this work.
+VGGT-SLAM~\cite{maggio2025vggtslam} aligns VGGT submaps on the $SL(4)$
+manifold; it produces poses and a point cloud but no renderable map, so in our
+comparison it serves as a tracking control rather than a rendering baseline.
+
+\paragraph{Parameter-efficient adaptation.}
+LoRA~\cite{hu2022lora} is the default tool for adapting a large frozen
+backbone. Our experience is a cautionary counterexample: for a pipeline whose
+downstream head was \emph{trained against frozen features}, perturbing the
+backbone is not a mild intervention, and we measure a $49\%$ collapse. The
+useful adaptation surface in such architectures is the head itself.
+
+\paragraph{Evaluation practice.}
+Rendering quality in this literature is reported as PSNR/LPIPS~\cite{zhang2018lpips}
+and trajectory accuracy as ATE after Sim(3) alignment~\cite{umeyama1991},
+typically via evo~\cite{grupp2017evo}. The details underneath those names vary
+substantially between papers --- whether scoring views are training or held-out,
+whether rendering uses estimated or ground-truth poses, resolution,
+undistortion, and post-sequence optimisation budget. \Cref{sec:protocol} shows
+that these choices are worth roughly $8.7$\dB{} on unchanged systems, which is
+larger than most reported inter-method differences.

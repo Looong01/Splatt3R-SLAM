@@ -1,0 +1,134 @@
+\section{Evaluation Protocol}
+\label{sec:protocol}
+
+Every number in this paper was produced by us on one machine
+($2{\times}$RTX~A6000). All four comparison systems were built from source
+locally; \emph{no number is copied from a paper}. This section states the
+protocol before the results, because we will show that the protocol is worth
+more than most of the differences it is used to measure.
+
+\subsection{One protocol for every system}
+Rendering quality is scored identically for all systems:
+\begin{itemize}\itemsep2pt
+\item \textbf{Scoring views:} $100$ held-out frames per scene, selected to be
+      keyframes of \emph{no} participating system, so every scored view is
+      genuinely unseen by all of them.
+\item \textbf{Rendering pose:} ground-truth pose, Sim(3)-aligned~\cite{umeyama1991}
+      into each map's own (arbitrary, monocular) frame.
+\item \textbf{Renderer and metrics:} one code path, one PSNR and one
+      LPIPS~\cite{zhang2018lpips} implementation, one exposure-normalisation
+      setting, for every system.
+\item \textbf{Sensor parity:} monocular against monocular.
+\end{itemize}
+Trajectory accuracy is ATE~RMSE via \texttt{evo\_ape tum -as}~\cite{grupp2017evo}.
+
+\paragraph{Datasets.} Rendering is evaluated on all eight
+Replica~\cite{straub2019replica} scenes and on TUM
+RGB-D~\cite{sturm2012tum} \texttt{freiburg1}; trajectory accuracy on all nine
+TUM \texttt{freiburg1} sequences. Head-only adaptation
+(\cref{sec:exp:head}) additionally uses EuRoC~\cite{burri2016euroc},
+ETH3D~\cite{schops2017eth3d} and 7-Scenes~\cite{shotton2013scenecoord},
+giving five dataset families in total.
+
+\paragraph{Alignment.}
+Each monocular map lives in its own arbitrary $\mathrm{Sim}(3)$ frame, so
+ground-truth poses must be transported into it. We fit
+$(s,R,t)$ by Umeyama's closed-form solution~\cite{umeyama1991} on the
+estimated/ground-truth camera-centre pairs and invert it,
+\begin{equation}
+R_{\text{map}} = R^{\top} R_{\text{gt}},\qquad
+t_{\text{map}} = R^{\top}\bigl(t_{\text{gt}}-t\bigr)/s ,
+\label{eq:align}
+\end{equation}
+noting that the $1/s$ belongs to the translation only --- folding it into the
+rotation block yields a non-orthonormal matrix that silently corrupts every
+rendered viewpoint. Systems that log both estimated and ground-truth keyframe
+poses (MonoGS) are aligned from those pairs directly; the rest from their
+trajectory files.
+
+\subsection{A mandatory self-consistency check}
+\label{sec:protocol:selfcheck}
+Before any cross-system number is reported we require that \emph{a map must
+render well from the poses it was built at}. This is not a formality. Our first
+MonoGS adapter assumed its logged trajectory was world-to-camera when it is
+camera-to-world; the inverted convention scored MonoGS at $4.36$\dB{} against
+$18.71$\dB{} for the correct one, and would have produced a large, flattering,
+publishable-looking margin. We adopted the rule that a result which favours us
+receives one more verification step than one that does not; it changed our
+conclusion three separate times.
+
+\subsection{The protocol offset}
+\label{sec:protocol:offset}
+
+Two independent measurements quantify how much the protocol is worth on
+\emph{unchanged} systems.
+
+\noindent\textbf{(i) Same system, our protocol versus the literature.}
+Photo-SLAM built from its own source scores $22.23$\dB{} on Replica office0
+under our protocol; third-party comparison tables report ${\sim}30.9$\dB{} for
+Photo-SLAM on monocular Replica. Offset: $\mathbf{8.7}$\dB{}.
+
+\noindent\textbf{(ii) Same map, two pose sources.}
+Taking MonoGS's own output map and changing only the rendering pose:
+$18.71$\dB{} from its own estimated poses, $9.87$\dB{} from ground-truth poses.
+Offset: $\mathbf{8.8}$\dB{}.
+
+Two different systems, two different methods, essentially the same figure. We
+conclude that GS-SLAM rendering numbers in the literature and ours differ by
+approximately one protocol's worth of evaluation choices --- scoring on
+training versus held-out views, estimated versus ground-truth poses,
+resolution, undistortion, and post-sequence optimisation budget --- rather than
+by quality. Concretely, our Replica $23.0$\dB{} mean should \emph{not} be read
+as trailing a published $30.9$\dB{}: measured identically, we are ahead of the
+system that published it.
+
+\paragraph{What the offset is made of.}
+We can attribute part of it directly. Scoring the \emph{same} map from
+estimated versus ground-truth poses is worth $8.8$\dB{} on MonoGS and
+$2.6$\dB{} on Photo-SLAM, the difference between the two reflecting how much
+each system's map has co-adapted to its own pose error. Beyond pose source,
+the protocols we found differ in: whether keyframes are excluded from scoring
+(MonoGS excludes its own; Photo-SLAM's self-reported PSNR is computed
+\emph{on} its keyframes), resolution ($640\!\times\!480$ undistorted versus our
+$512\!\times\!384$), masking (PSNR over $I_{gt}>0$ pixels only), and
+post-sequence optimisation budget ($26{,}000$ iterations for MonoGS versus our
+$300$\,s polish). We do not claim to have decomposed the offset exactly; we
+claim that it is large, reproducible, and larger than most reported
+inter-method differences.
+
+\paragraph{Reporting rule.} We therefore tabulate only numbers we produced
+under one protocol. Published numbers are cited in text where relevant but are
+never placed in a comparison table beside our own. We recommend this practice
+generally for this literature.
+
+\subsection{Systems compared}
+\Cref{tab:systems} lists what each system can contribute. Two of the four
+produce no renderable map and therefore appear only in the trajectory table;
+MonoGS ships RGB-D-only Replica configurations, so including it there against
+our monocular system would give it a depth-input advantage and we omit it
+rather than report an unfair win.
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}llcl@{}}
+\toprule
+System & Type & Rend. & Role here \\
+\midrule
+Ours & mono 3DGS & \checkmark & --- \\
+Photo-SLAM & mono 3DGS & \checkmark & rendering \\
+MonoGS & mono 3DGS & \checkmark & rendering (TUM) \\
+MASt3R-SLAM & mono dense & --- & tracking control \\
+VGGT-SLAM & pose+cloud & --- & tracking control \\
+\bottomrule
+\end{tabular}
+\caption{Systems compared: Photo-SLAM~\cite{huang2024photoslam},
+MonoGS~\cite{matsuki2024monogs}, MASt3R-SLAM~\cite{murai2025mast3rslam},
+VGGT-SLAM~\cite{maggio2025vggtslam}. The latter two produce no renderable map
+--- we verified by source inspection that the VGGT-SLAM repository contains no
+rasteriser or photometric metric --- so they appear only in the trajectory
+table. MASt3R-SLAM is the system we inherit tracking from, making it a control
+rather than an opponent.}
+\label{tab:systems}
+\end{table}

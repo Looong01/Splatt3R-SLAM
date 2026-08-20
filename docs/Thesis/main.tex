@@ -1,0 +1,69 @@
+% ---------------------------------------------------------------------------
+% Splatt3R-SLAM -- CVPR-format manuscript
+%
+% Build:  latexmk -pdf main.tex        (or: pdflatex -> bibtex -> pdflatex x2)
+%
+% Fonts: this document deliberately uses ONLY the Type 1 fonts bundled with
+% every TeX Live / MiKTeX distribution (URW Nimbus Roman via the `times`
+% package required by cvpr.sty, plus Nimbus Sans and Computer Modern math).
+% No system font is referenced, so the PDF builds byte-comparably on Linux
+% and Windows with pdflatex. Do NOT switch to XeLaTeX/fontspec: that would
+% pull in OS-installed fonts and break cross-platform reproducibility.
+% ---------------------------------------------------------------------------
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+%%%%%%%%% PAPER TYPE  (pick one)
+% \usepackage{cvpr}              % review mode: line numbers + anonymous
+\usepackage[final]{cvpr}         % camera-ready / preprint
+% \usepackage[pagenumbers]{cvpr} % preprint with page numbers
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{cuted}
+
+\definecolor{cvprblue}{rgb}{0.21,0.49,0.74}
+\usepackage[pagebackref,breaklinks,colorlinks,citecolor=cvprblue]{hyperref}
+
+\def\paperID{****}
+\def\confName{CVPR}
+\def\confYear{2026}
+
+% Convenience macros used throughout the tables.
+\newcommand{\best}[1]{\textbf{#1}}
+\newcommand{\dB}{\,dB}
+\newcommand{\up}{$\uparrow$}
+\newcommand{\dn}{$\downarrow$}
+
+\begin{document}
+
+\title{Splatt3R-SLAM: Feed-Forward Gaussian Splatting for Real-Time Dense SLAM,\\
+and an Honest Account of What It Costs}
+
+\author{Zelong Li\\
+{\tt\small loong.li2@student.uva.nl}\\
+{\tt\small +31\,6\,3023\,2998}
+}
+
+\maketitle
+\input{fig/teaser}
+
+\input{sec/0_abstract}
+\input{sec/1_intro}
+\input{sec/2_related}
+\input{sec/3_method}
+\input{sec/4_protocol}
+\input{sec/5_experiments}
+\input{sec/6_limitations}
+\input{sec/7_conclusion}
+
+{
+    \small
+    \bibliographystyle{ieeenat_fullname}
+    \bibliography{main}
+}
+
+\end{document}

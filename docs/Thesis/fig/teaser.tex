@@ -1,0 +1,15 @@
+\begin{strip}
+  \centering
+  \includegraphics[width=\linewidth]{fig/cmp_replica_room0_f0.png}
+  \captionof{figure}{\textbf{Novel-view rendering on Replica room0, all three
+  panels scored under one protocol} (\cref{sec:protocol}): a held-out frame
+  that is a keyframe of neither system, rendered from the ground-truth pose
+  Sim(3)-aligned into each map's own frame, through one renderer and one
+  metric implementation. The frame shown is the \emph{median} of the per-frame
+  $\Delta$PSNR distribution, not a hand-picked one --- an arbitrarily chosen
+  frame on this scene can reverse the ordering
+  (\cref{sec:exp:replica}). Our map reaches this quality with
+  $2.0$M Gaussians against Photo-SLAM's $89$K; \cref{sec:lim:compact} shows
+  that the size is load-bearing rather than redundant.}
+  \label{fig:teaser}
+\end{strip}

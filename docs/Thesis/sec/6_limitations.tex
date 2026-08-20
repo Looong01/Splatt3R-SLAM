@@ -1,0 +1,68 @@
+\section{Limitations}
+\label{sec:limitations}
+
+\subsection{The map is not compact, and the size is load-bearing}
+\label{sec:lim:compact}
+Our maps carry $25$--$100\times$ more primitives than the GS-SLAM baselines at
+$8$--$16\times$ the peak GPU memory. The natural defence would be that this is
+redundancy --- prune it and parity remains. We tested that defence and it is
+false.
+
+\Cref{tab:curve} truncates our own refined maps to successively smaller budgets
+by keeping the highest-opacity Gaussians (the ones the optimiser is itself
+fading are the honest ones to drop first), re-scoring on the identical
+held-out frames with no re-optimisation afterwards.
+
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Gaussians kept & office0 & office1 & room0 & room2 \\
+\midrule
+full ($\sim$2--3M)     & 26.29 & 22.08 & 25.44 & 23.62 \\
+1{,}000{,}000          & 24.68 & 21.71 & 25.01 & 22.87 \\
+300{,}000              & 20.23 & 18.96 & 16.26 & 17.87 \\
+83{,}372               & 13.54 & 13.97 & \phantom{0}8.68 & 10.43 \\
+23{,}019               & 12.04 & 12.08 & \phantom{0}5.16 & \phantom{0}7.74 \\
+\midrule
+\emph{Photo-SLAM at $\sim$83K} & \emph{22.23} & \emph{17.80} & \emph{17.92} & \emph{20.75} \\
+\bottomrule
+\end{tabular}
+\caption{PSNR versus map budget, four Replica scenes. At Photo-SLAM's own
+primitive budget we are $8.7$/$3.8$/$9.2$/$10.3$\dB{} \emph{worse} than it,
+having been $4.08$/$4.28$/$7.53$/$2.87$\dB{} better at $25$--$36\times$ the
+count. The knee sits consistently near $1$M Gaussians.}
+\label{tab:curve}
+\end{table}
+
+We state the bound in both directions. This is naive post-hoc truncation
+without re-optimisation, so every row is a \emph{lower} bound --- a system
+actually trained or refined at that budget would do meaningfully better. But
+the caveat does not rescue the defence: the measurement shows our quality is
+\emph{constituted by} having millions of primitives rather than padded by them.
+Training or refining directly at a small budget, or a densification-control
+policy, is future work we have not done.
+
+\subsection{Scope of the comparison}
+Rendering on TUM is $n{=}1$ and cannot be extended, because MonoGS's monocular
+tracking diverges on the remaining sequences. Optimisation budgets are matched
+by wall clock on TUM but not on Replica, where Photo-SLAM runs to its own
+shutdown iteration. Resolution and undistortion handling still differ per
+system and we have not quantified their residual effect. Photo-SLAM was built
+against OpenCV~4.10 rather than the 4.7/4.8 its authors tested, because our
+CUDA~12.4 requirement forces it; this touches its image front-end but not its
+Gaussian mapping.
+
+\subsection{Unresolved threads}
+Three questions we could not close, stated rather than omitted. The
+cross-family variation in head-only gains survived four falsified attributions
+and remains unexplained. Cross-frame colour consistency is diagnosed but not
+fixed --- our photospatial augmentation happens to reduce hue disagreement by
+$12.6\%$ on the sequence that originally exposed the bug, which is a
+side-effect rather than a solution, since the single-view objective contains
+nothing that penalises cross-view inconsistency. Refitting the loop-closure
+retrieval assets on Splatt3R features looked favourable offline (Recall@1
+$+20\%$ relative) but regressed catastrophically on one of three sequences in
+real SLAM, and was rejected --- one more instance of an offline metric win that
+did not survive the online check.

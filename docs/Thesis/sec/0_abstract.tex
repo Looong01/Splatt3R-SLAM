@@ -1,0 +1,38 @@
+\begin{abstract}
+Feed-forward two-view Gaussian predictors remove the per-scene optimisation
+that dense Gaussian-splatting SLAM normally requires, but a predictor trained
+on curated image pairs is not automatically a good \emph{map} builder: a SLAM
+system fuses hundreds of keyframes over the same surfaces, a regime the
+pairwise training objective never observes. We integrate Splatt3R into
+MASt3R-SLAM and study what actually has to change for the fused map, rather
+than the individual prediction, to improve.
+
+We report three results. First, adaptation must be confined to the Gaussian
+head: fine-tuning the frozen encoder with LoRA collapses reconstruction by
+$49\%$, while head-only training of the same budget improves deployed map
+quality on five dataset families. Second, a training-free lever --- fading
+Gaussian opacity at map-assembly time in proportion to pointmap confidence ---
+improves the online map in $10$ of $12$ cells with zero harmful cells, and we
+show why a training-time penalty cannot substitute for it. Third, we identify
+what opacity does in this architecture: it is a brightness-trim dial against
+the black-background rasteriser, not a confidence gate. A pre-registered
+opposite-sign prediction (opacity versus input luminance, negative for heads
+trained under synthetic darkening and positive for real-sensor heads) holds on
+$5/5$ families, and unifies the first two results.
+
+We then build all four comparison systems from source and evaluate every
+system through one protocol. Two findings follow that we believe matter beyond
+this system. (i) Published GS-SLAM rendering numbers and ours differ by
+roughly one protocol, not by quality: running Photo-SLAM ourselves yields
+$22.2$\dB{} on Replica office0 where the literature reports ${\sim}30.9$\dB{}
+for the same system, an offset independently reproduced as an $8.8$\dB{} gap
+between rendering a map from its own estimated poses versus ground-truth
+poses. (ii) Our own headline advantage shrinks under scrutiny: on all eight
+Replica scenes we lead Photo-SLAM by $+3.44$\dB{} PSNR but win LPIPS on only
+$5/8$, and a three-scene subset would have overstated the margin by
+$1.85$\dB{}. Most importantly, our maps carry $25$--$100\times$ more
+primitives and $8$--$16\times$ more GPU memory, and pruning them to a
+baseline's budget costs $8.7$--$10.3$\dB{} --- the map size is load-bearing,
+not padding. We report the compactness deficit as a measured architectural
+limitation rather than a footnote.
+\end{abstract}

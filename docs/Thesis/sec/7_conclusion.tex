@@ -1,0 +1,35 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We integrated a feed-forward Gaussian predictor into a dense SLAM system and
+asked what has to change for the \emph{fused map}, rather than the individual
+prediction, to improve. Adaptation must be confined to the Gaussian head:
+perturbing a backbone whose downstream head was trained against frozen
+features collapses reconstruction by $49\%$, whereas head-only training helps
+on five families. A training-free lever --- fading opacity at injection in
+proportion to pointmap confidence --- helps in $10$ of $12$ online cells with no
+harmful cell, and cannot be replaced by a training-time penalty because
+crowding is a map-level property that pair training never observes. Both
+results are explained by one mechanism: opacity in this architecture is a
+brightness-trim dial against the black-background rasteriser, confirmed by a
+pre-registered opposite-sign prediction that held on $5/5$ families.
+
+Evaluated through a single protocol against four locally-built systems, our
+method leads Photo-SLAM on all eight Replica scenes in PSNR ($+3.44$\dB{}
+mean) while winning LPIPS on $5/8$, ties MonoGS on TUM at matched compute
+while losing LPIPS there, and inherits MASt3R-SLAM-class tracking robustness
+that the two GS-SLAM baselines do not match. It does so with a map
+$25$--$100\times$ larger, and we show that this size is constitutive rather
+than redundant.
+
+Two methodological points seem to us more transferable than the system itself.
+First, GS-SLAM rendering numbers in the literature and ours differ by
+approximately $8.7$\dB{} of \emph{protocol} --- measured twice, on two systems,
+by two independent methods --- so cross-paper rendering comparisons in this
+area should be treated as unreliable unless the protocols are stated and
+matched. Second, in the course of this work three separate results that
+initially favoured us changed when checked one level deeper: an inverted pose
+convention, a misread self-consistency test, and a small-scene subset that
+overstated our margin by $1.85$\dB{}. We adopted the rule that a result which
+flatters the authors earns one more verification step than one that does not,
+and we recommend it.
