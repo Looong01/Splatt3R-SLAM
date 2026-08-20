@@ -14262,3 +14262,73 @@ the scene we dominate. For the write-up: report the mean (it is the standard
 metric) but state that the per-frame distribution is wide and, on the
 near-tie scenes, median-negative. Anyone choosing a single qualitative frame
 should pick by median, not by eye.
+
+## 17.96 "Should we ride on VGGT-SLAM's front-end?" -- asked 2026-08-20, answered NO from data we already had
+
+User question: VGGT-SLAM only does the front end (no rendering) -- can our
+improvements be combined with the gain from its front end, and is it
+necessary? Answered from measurements already in this file rather than by
+running anything new; the whole chain existed and had simply never been
+written into the paper.
+
+**Two directions, and they have different answers.**
+
+Direction A -- put our contributions on top of VGGT-SLAM. Dead on arrival for
+a reason that is embarrassing to state but decisive: *we have nothing to give
+a front end*. Every contribution of this project (head-only adaptation,
+injection-time thinning, the online refiner, anchor-carried composition) is
+strictly downstream of the pose; §17.93.2 and Table 1 already establish our
+ATE is MASt3R-SLAM's, inherited, 4-4-1 = noise. And the trade goes the wrong
+way: VGGT-SLAM's mean ATE is 0.04081 against our 0.02960 (worse on 8/9, with
+`floor` at 0.0991 a clear failure). Swapping front ends would *lose* tracking
+to buy a geometry property whose value is measured below.
+
+Direction B -- import the joint-context advantage into our system. This is the
+substantive version, and this file has already run it four times:
+
+```
+stage            what was tried                          result
+17.45  joint-16 vs pairwise scale disagreement    5.35% -> 1.68% (6.4x), 7/7,
+                                                   but VGGT *pairwise* = 10.82%
+                                                   (2.0x WORSE than incumbent)
+17.47  averaging m partners instead of coupling   5.16% -> 3.06%, saturates 2x
+                                                   above target. Route killed.
+17.48  VGGT-16 as external referee on baked map   geometry 6.35x better,
+                                                   PSNR 12.35 -> 11.50 (-0.86),
+                                                   polish does not recover
+17.49  referee as prior + free kf poses in refiner monotone the WRONG way,
+                                                   13.74 -> 13.38 as w 0.05->0.5
+```
+
+**The mechanism, which is the part worth carrying into any future round:**
+rendered quality in a trajectory-anchored map is not governed by absolute
+geometric accuracy. SLAM fits each keyframe's pose to that keyframe's own
+biased pointmap, so the per-cluster scale error is largely common-mode with
+the pose; photometry is blind to common-mode depth error at these baselines
+(4.5% = 0.66 px at 0.057 m) but not to two clusters disagreeing about a
+surface. So a *more accurate* front end, applied to the map alone, converts an
+absorbed error into a differential one. The photometric fit asks for 0.8%
+where the sensor says 6.5%, Spearman +0.06 -- they do not even agree in rank.
+
+**Verdict: not necessary, and not the highest-value use of effort.** The front
+end is neither our contribution nor our weakness. Our attackable numbers are
+compactness (2-3M Gaussians vs 83K, Table 4) and cost (21,035 MiB peak, Table
+6) -- and a joint front end makes the second one *worse*: VGGT-SLAM already
+sits at 9,436 MiB while rendering nothing, and VGGT-1B is 5.0 GB of weights.
+The only version of this question that is scientifically live is the one
+§17.48 named: solve poses and per-keyframe scales *together*, with joint
+prediction inside the back-end. That is a different system -- the next paper,
+and a crowded space already (VGGT-SLAM++).
+
+**What the question did surface as a real gap:** none of §17.45/47/48/49 was
+in the manuscript. Grepping `docs/Thesis/sec/` for `vggt|referee|jitter` found
+only the ATE table and two related-work sentences. A reviewer asking "why not
+a joint front end?" would have had no answer on the page, despite four
+measured stages sitting in this file. Fixed the same day -- see
+`splatt3r-thesis-writing` §"Front-end geometry is not the lever".
+
+**Standing lesson, nth instance:** the project's negative results are its
+cheapest paper material, and the failure mode is not losing them (this file
+keeps them) but forgetting to *transfer* them. Before declaring the paper
+complete, grep the manuscript for every major negative-result thread in this
+file and confirm each is either present or deliberately excluded.

@@ -232,6 +232,108 @@ run-to-run variance.}
 \label{tab:ate}
 \end{table}
 
+\subsection{Front-end geometry is not the lever}
+\label{sec:exp:frontend}
+\Cref{tab:ate} raises an obvious design question, and we answer it by
+measurement rather than argument. The per-keyframe scale jitter behind the
+visible seams in our maps is a two-view artefact: each cluster's scale is
+decided by one independent forward, and neighbouring clusters are decided by
+different ones. Would our contributions therefore be better carried by a joint
+many-view front-end such as VGGT-SLAM~\cite{maggio2025vggtslam}? We ran that
+question in four stages. It is a negative result, and it has a mechanism.
+
+\paragraph{Joint context removes the jitter; a better backbone does not.}
+We measure adjacent-view depth-scale disagreement against RGB-D depth in a
+gauge-free form --- per window, the spread of the scale each view implies,
+normalised so that no global gauge enters. \Cref{tab:scale} is the resulting
+$2\times2$. The \emph{same} VGGT~\cite{wang2025vggt} weights on the
+\emph{same} pairs are $2.0\times$ \emph{worse} than the incumbent two-view
+backbone when run pairwise, and $6.4\times$ better when sixteen views are
+coupled in one forward. Changing the architecture makes it worse; changing the
+context makes it better. The gain is attributable to multi-view context, not
+to a stronger prior --- and our deployment regime is the causal two-view one,
+which is precisely VGGT's weakest mode. A drop-in backbone swap would buy the
+$10.82\%$ row, not the $1.68\%$ one.
+
+\paragraph{Averaging cannot substitute for coupling.}
+The cheap version of the same idea needs no new backbone: at keyframe
+creation, predict the new view against $m$ well-overlapping partners,
+scale-align the $m$ depth maps and average. Measured over
+$m\in\{1,2,4,8\}$ this saturates at $5.16\%\rightarrow3.06\%$ --- a factor of
+two above what coupling reaches, at $m$ forwards per keyframe. Independent
+draws cancel; a gauge does not.
+
+\paragraph{The referee is right, and the picture gets worse.}
+We then used one joint sixteen-view forward over all of a map's keyframes as
+an external scale referee, taking the per-cluster scalar corrections it
+implies --- normalised to median one, so the map's global scale is untouched
+--- and applying them to the baked map. Absolute per-keyframe scale error
+against the sensor improves $6.35\times$ ($6.48\%\rightarrow1.02\%$ on
+\texttt{fr1\_desk}; $2.2$--$2.3\times$ on \texttt{360} and \texttt{room}),
+and held-out PSNR \emph{falls} from $12.35$ to $11.50$\dB{} with LPIPS rising
+$0.507\rightarrow0.523$. A $300$\,s polish does not recover it
+($13.81\rightarrow13.08$). The obvious escape --- that the referee is
+incompetent on SLAM keyframes, which are selected to be as dissimilar as
+possible, unlike the consecutive views it was validated on --- was audited by
+scoring map and referee against the sensor on exactly those keyframes: the
+referee is $2.2$--$6.4\times$ the more accurate of the two. The referee is
+right and the rendering still degrades.
+
+\paragraph{The same conflict inside the refiner.}
+Supplying the corrections as a \emph{prior} rather than an edit, with keyframe
+translations freed so the photometric term is able to disagree, is monotone in
+the prior weight and monotone the wrong way: PSNR $13.74\rightarrow13.38$ and
+LPIPS $0.449\rightarrow0.456$ as the weight goes $0.05\rightarrow0.5$, and
+even at the largest weight the fitted scale spread is $2.6\%$ against the
+referee's $8.0\%$. The photometric term is still winning the argument, and
+forcing it further is what the previous paragraph already measured as harmful.
+
+\paragraph{What this establishes.}
+In a trajectory-anchored map, rendered quality is not governed by absolute
+geometric accuracy. SLAM fits each keyframe's pose to that keyframe's own
+biased pointmap, so much of the per-cluster scale error is \emph{common-mode}
+with the pose. The photometric evaluation is structurally blind to common-mode
+depth error at these baselines --- $4.5\%$ of depth is $0.66$\,px at
+\texttt{fr1\_desk}'s $0.057$\,m median keyframe baseline --- but it is not
+blind to two overlapping clusters disagreeing about where a surface is, and
+correcting a cluster alone converts an absorbed error into exactly that
+differential displacement. The two objectives do not even agree in rank: the
+photometric fit asks for a $0.8\%$ per-keyframe correction where the sensor
+says the map is $6.5\%$ wrong, with Spearman $+0.06$ between them. Every
+post-hoc per-cluster geometric correction is therefore closed, and the jitter
+can only be removed where poses and per-keyframe scales are solved
+\emph{together} --- in the back-end, which is a different system rather than a
+component swap. This is why our front-end is inherited unchanged, and it is
+also why a joint front-end is not a shortcut to our open problems: VGGT-SLAM
+already costs $9{,}436$\,MiB (\cref{sec:exp:cost}) while producing no
+renderable map at all.
+
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+Predictor & Context & Views & Disagreement \dn \\
+\midrule
+Splatt3R (deployed) & pairwise & 2 & $5.35\%$ \\
+VGGT~\cite{wang2025vggt} & pairwise & 2 & $10.82\%$ \\
+VGGT~\cite{wang2025vggt} & joint & 16 & \best{$1.68\%$} \\
+\midrule
+\multicolumn{4}{@{}l}{\emph{disjoint-window replication}} \\
+Splatt3R & pairwise & 2 & $4.92\%$ \\
+VGGT & joint & \phantom{0}8 & \best{$1.53\%$} \\
+\bottomrule
+\end{tabular}
+\caption{Adjacent-view depth-scale disagreement, gauge-free, TUM freiburg1,
+pooled over seven sequences ($84$ windows above the rule, $33$ disjoint
+windows below it). Windows in the primary arm overlap by $80$--$97\%$, so the
+result is replicated on eight-view windows tiled by exactly one span; the
+replication is $7/7$ sequences, paired Wilcoxon $p=8.6\times10^{-8}$. VGGT's
+$1.68\%$ sits at or below the RGB-D sensor's own view-dependent bias floor, so
+it is a lower bound on how far coupling goes.}
+\label{tab:scale}
+\end{table}
+
 \subsection{Refinement ablations}
 \label{sec:exp:refiner}
 \Cref{tab:refiner} isolates the components of \cref{sec:method:refiner}. The
@@ -271,6 +373,61 @@ control that costs quality when it fires without a recovery budget, not a
 quality feature.}
 \label{tab:refiner}
 \end{table}
+
+\subsection{Online delivery across dataset families}
+\label{sec:exp:online}
+The offline ablations above use a controlled polish budget. We therefore also
+ran the actual deployed path: a per-family head, causal SLAM, GUI enabled, and
+the refiner on the second GPU. \Cref{tab:online} reports the paired map
+quality; the refiner never receives or writes a pose correction.
+
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{2.7pt}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Family & Sequence & Bake P & Refine P & $\Delta$P & $\Delta$L \\
+\midrule
+TUM & desk & 12.42 & 13.75 & +1.33 & $-7.5\%$ \\
+TUM & room & 11.15 & 11.45 & +0.30 & $+11.1\%$ \\
+TUM & 360 & 12.00 & 12.14 & +0.14 & $+20.6\%$ \\
+7-Scenes & chess & 13.44 & 13.79 & +0.35 & $-4.8\%$ \\
+7-Scenes & office & 11.64 & 11.74 & +0.10 & $-1.6\%$ \\
+7-Scenes & pumpkin & 14.15 & 14.91 & +0.77 & $-4.1\%$ \\
+EuRoC & MH\_01 & 10.17 & 11.67 & +1.50 & $-4.1\%$ \\
+EuRoC & V1\_01 & 12.06 & 12.69 & +0.63 & $-13.0\%$ \\
+ETH3D & plant\_1 & 20.42 & 22.22 & +1.80 & $-7.4\%$ \\
+\bottomrule
+\end{tabular}
+\caption{Actual GUI-on, dual-GPU online delivery. P is PSNR in dB and L is
+LPIPS; $\Delta L$ is relative, so negative is better. Seven of nine cells
+improve LPIPS. TUM room and 360 gain a little PSNR but lose perceptual quality
+under the in-sequence budget, exposing supervision starvation on their large
+maps rather than a universal refiner improvement. ETH3D \texttt{cables\_1} is
+omitted because its $0.5$-m scene and $0.1165$-m ATE make held-out rendering
+alignment-dominated. The reported online values are from the pre-polish
+delivery pass; the longer polish diagnostic is separated below.}
+\label{tab:online}
+\end{table}
+
+The deployment cost is measurable rather than merely architectural. Across
+the nine online runs, the second-GPU refiner costs approximately $7$--$10\%$
+frame time with the GUI open. The head-only arm uses $19.8$--$39.6$~GB on
+GPU0; enabling refinement adds $1$--$1.5$~GB on GPU0 and $2.8$--$14.0$~GB on
+GPU1, with the largest observed combination $41.1$~GB plus $14.0$~GB on the
+two cards. These measurements define the practical operating envelope: the
+refiner is deployable, but memory remains proportional to the assembled map.
+
+\paragraph{Budget, not a simple position prior.}
+The online TUM room/360 degradation initially suggested a position-learning
+rate failure. That explanation came from an offline proxy and did not survive
+the causal loop. The deployed sequences supplied only $104/114/190$ refiner
+steps for desk/360/room maps, whereas a post-sequence polish producing
+$1581/3821/1856$ steps improved PSNR by $+1.97/+2.30/+2.22$~dB and LPIPS by
+$-22.0/-8.3/-15.9\%$, respectively. We therefore reverted the offline
+position-freezing and band-limit defaults rather than presenting them as a
+universal online fix. This is a concrete example of why causal delivery and
+offline polish are separate experimental regimes.
 
 \subsection{System cost}
 \label{sec:exp:cost}

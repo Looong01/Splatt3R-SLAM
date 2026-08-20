@@ -66,3 +66,20 @@ retrieval assets on Splatt3R features looked favourable offline (Recall@1
 $+20\%$ relative) but regressed catastrophically on one of three sequences in
 real SLAM, and was rejected --- one more instance of an offline metric win that
 did not survive the online check.
+
+A fourth thread is closed rather than open, and we state it here because it is
+the first thing a reader will propose: the per-keyframe scale jitter that
+produces our seams is \emph{not} fixable by adopting a joint many-view
+front-end or by any post-hoc geometric correction of the map
+(\cref{sec:exp:frontend}). It is shared between the map and the trajectory,
+so it can only be removed where poses and per-keyframe scales are solved
+together, in a back-end we have not built.
+
+The online experiment adds a related operational boundary. A refiner step is
+not equivalent to a new observation: on a map with more than seven million
+Gaussians, a fixed view reservoir gives too few useful rasterised samples per
+parameter group. Consequently, a method can improve after a long polish while
+being perceptually worse at the end of causal playback. The current system
+does not scale its view budget with map size; doing so, while retaining the
+tracking-latency and memory envelope, is an open systems problem rather than a
+claim of the present method.

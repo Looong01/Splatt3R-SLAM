@@ -56,6 +56,18 @@ depth enters only through the mask $M$ and through pair selection, never
 through a gradient on geometry --- and it is \emph{pairwise}: the loss never
 observes more than two context views, hence never observes a fused map.
 
+In the released implementation the DC colour is anchored to the source image:
+the head predicts a residual which is added to the spherical-harmonic encoding
+of the input RGB value,
+\begin{equation}
+S_{\mathrm{DC}}(u)=S_{\mathrm{res}}(u)+\operatorname{RGB2SH}(I^i(u)).
+\label{eq:colorresidual}
+\end{equation}
+Consequently, revisits can inherit exposure, white-balance, shadow, and
+view-dependent differences from their source frames. Exposure normalisation
+removes only the global component of this source-frame photometric gauge; it
+does not enforce equality of $S_{\mathrm{DC}}$ for the same world surface.
+
 \subsection{SLAM back-end}
 We inherit MASt3R-SLAM's~\cite{murai2025mast3rslam} front- and back-end
 unchanged. Poses are $\mathrm{Sim}(3)$ to absorb the scale inconsistency of
@@ -102,6 +114,15 @@ the composition reads the pose at render time, a loop closure that updates
 $T_{WC_k}$ moves the map with it at no cost and without re-baking --- the
 property our refinement design depends on
 (\cref{sec:method:refiner}).
+
+The implementation stores means, scales, rotations, SH coefficients, opacity,
+confidence, and validity in a shared keyframe buffer. Tracker updates may
+rewrite pointmap state without clearing the Gaussian record unless a new
+Gaussian prediction is present. This invariant prevents a geometric update
+from silently erasing an already renderable keyframe. Filtering and the
+global Gaussian limit are applied before rasterisation; the limit is therefore
+a rendering budget implemented through spatial stride, rather than FIFO
+deletion of individual keyframes.
 
 \subsection{Where adaptation is admissible}
 \label{sec:method:head}
@@ -207,6 +228,14 @@ world pose is recomposed through the anchor's \emph{current} pose at sample
 time, so supervision follows loop closures exactly as the map does under
 \cref{eq:anchor}. Frames are held in CPU shared memory, which is what allows
 the refiner to run on a second GPU without pinning both processes to one card.
+If frame $f$ is anchored to keyframe $k$, the stored relative transform gives
+\begin{equation}
+T_{WC_f}=T_{WC_k}T_{C_kC_f}.
+\label{eq:supervisionpose}
+\end{equation}
+The refiner consequently never becomes a second pose-graph writer: a loop
+closure changes the anchor pose once, and both map placement and supervision
+views follow that correction.
 
 \paragraph{Sampling.}
 Supervision is drawn from a reservoir of $200$ frames spanning the whole
@@ -231,6 +260,13 @@ pointmap, and photometric gradients degrade them: because the loss of
 centre can reduce training error while worsening the geometry seen from new
 viewpoints. This was measured optimal at both online ($\sim$300-step) and
 offline (3000-step) budgets.
+
+The refiner publishes a versioned CPU snapshot rather than mutable GPU state.
+The visualiser uploads only complete versions and retains the previous valid
+version on a read/write collision. If the display buffer is smaller than the
+refined map, publication subsamples after the full map has been saved. This
+separates bounded display memory from the evaluation artifact and prevents a
+large-map publication failure from discarding a valid refinement result.
 
 \subsection{What opacity is}
 \label{sec:method:mech}

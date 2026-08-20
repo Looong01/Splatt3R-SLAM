@@ -19,7 +19,7 @@ research; every number's raw provenance is in
 
 ```
 docs/Thesis/
-├── main.tex              12 pp; author = Zelong Li, loong.li2@student.uva.nl, +31 6 3023 2998
+├── main.tex              13 pp; author = Zelong Li, loong.li2@student.uva.nl, +31 6 3023 2998
 ├── main.bib              24 entries, ALL 24 cited
 ├── cvpr.sty              CVPR 2026 official author-kit, UNMODIFIED
 ├── ieeenat_fullname.bst  official, UNMODIFIED
@@ -28,11 +28,11 @@ docs/Thesis/
 ├── fig/
 │   ├── teaser.tex        2-column strip figure (cuted `strip` env)
 │   └── *.png             7 figures
-└── sec/                  8 section files, ~1053 lines total with main.tex
+└── sec/                  8 section files, ~1140 lines total with main.tex
 ```
 
-**Last verified build:** 12 pages, **0 Overfull, 0 Underfull, 0 undefined
-references/citations**, 10 numbered equations, 8 tables, 6 `\includegraphics`
+**Last verified build:** 13 pages, **0 Overfull, 0 Underfull, 0 undefined
+references/citations**, 10 numbered equations, 9 tables, 6 `\includegraphics`
 (7 image files; `cmp_replica_room0_f0.png` is the teaser).
 
 ### Build and verify (copy-paste)
@@ -250,3 +250,47 @@ caption (`tab:systems`), or shorten row labels (`tab:refiner`). Locate with:
 grep -A3 "Overfull \\\\hbox" main.log | head
 ```
 then map the reported line numbers to the section file that follows in the log.
+
+
+## 11. 2026-08-20 addition: §5 "Front-end geometry is not the lever"
+
+Added in answer to the user's question "does VGGT-SLAM only do the front end,
+and can/should we combine our improvements with its front-end gain?". The
+answer was already fully measured in `splatt3r-finetuning-experiments`
+§17.45/17.47/17.48/17.49 — and **none of it was in the manuscript**. That is
+the transferable lesson: this project's negative results are its cheapest
+paper material, and the failure mode is not losing them but forgetting to move
+them from the experiment log onto the page.
+
+How the gap was found, and the check to repeat before calling the paper done:
+```bash
+cd docs/Thesis && grep -rn -i "vggt|referee|jitter" sec/ main.bib
+```
+Before declaring the manuscript complete, run that grep for every major
+negative-result thread in the experiment skill and confirm each is either on
+the page or deliberately excluded.
+
+**New content** (`sec/5_experiments.tex`, inserted before
+`\subsection{Refinement ablations}`, plus a closing paragraph in
+`sec/6_limitations.tex` "Unresolved threads"):
+
+- `tab:scale` — the 2×2 that carries the argument: Splatt3R pairwise 5.35%,
+  VGGT pairwise 10.82%, VGGT joint-16 1.68%, plus the disjoint-window
+  replication (4.92% → 1.53%, 7/7, p=8.6e-8). **Keep both VGGT rows.** The
+  pairwise row is what makes the claim "context, not capacity" — with only the
+  joint row the table reads as "VGGT is better", which is false and is exactly
+  the misreading a backbone-swap reviewer would make.
+- Four paragraphs, in the order the experiments were actually run: coupling
+  works → averaging cannot substitute → the referee is right and the picture
+  still gets worse → the same conflict reappears inside the refiner.
+- The mechanism paragraph is the load-bearing one: the scale error is
+  common-mode with the pose, photometry is blind to common-mode depth error at
+  these baselines (4.5% = 0.66 px at 0.057 m) but not to two clusters
+  disagreeing about a surface, so correcting the map alone converts an absorbed
+  error into a differential one. Photometric fit asks 0.8% where the sensor
+  says 6.5%, Spearman +0.06.
+
+**Do not soften this subsection.** It reports our own idea failing four times
+and it is what lets §5 claim the front end is inherited *by decision* rather
+than by omission. It joins the seven passages in §5 of this file that exist
+because they are unflattering.
