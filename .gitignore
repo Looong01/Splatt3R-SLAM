@@ -144,3 +144,26 @@ notebooks/*
 snapshot_*.dump
 
 tmp
+
+# LaTeX build artefacts (docs/Thesis) -- `./build.sh clean` removes them too.
+# main.pdf is the deliverable and stays tracked; *.log is already covered above.
+*.aux
+*.bbl
+*.blg
+*.brf
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.out
+*.toc
+*.lof
+*.lot
+*.bcf
+*.run.xml
+*.idx
+*.ilg
+*.ind
+*.nav
+*.snm
+*.vrb
+*.xdv

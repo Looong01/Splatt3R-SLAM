@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
   export PATH=/usr/local/texlive/2026/bin/x86_64-linux:$PATH
 
 if [ "$1" = clean ]; then
-  rm -f *.aux *.bbl *.blg *.log *.out *.fls *.fdb_latexmk *.synctex.gz sec/*.aux
+  rm -f *.aux *.bbl *.blg *.brf *.log *.out *.fls *.fdb_latexmk *.synctex.gz sec/*.aux
   echo "cleaned"; exit 0
 fi
 
