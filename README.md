@@ -300,6 +300,14 @@ wget 'https://huggingface.co/brandonsmart/splatt3r_v1.0/resolve/main/epoch%3D19-
 | `--refiner-min-confidence` | `1.5` | Confidence gate at injection. `4.0` for maps above ~4M Gaussians |
 | `--refiner-streak-opacity` | `0.5` | Reduce opacity in proportion to how long each Gaussian is relative to its local surface sampling. Measured to fade 64-98% of Gaussians by 39-65% of their opacity, so it is a **global de-hazing** weighting, not the sparse trailing-streak eraser it was originally described as (skill 17.53). Online paired A/B, 3 sequences, lpips improves on all three but by very different amounts: desk −12.7%, room −6.6%, 360 −1.3%, for −0.04 to −0.22 dB psnr. The size of the win tracks how much streaked geometry a scene actually has |
 | `--refiner-unfreeze-in-polish` | off | Release the frozen centres when the polish phase begins |
+| `--refiner-conf-fade` | `0.45` | **Injection-time opacity thinning, confidence-weighted — one of this project's three core results and ON by default.** Fades each injected Gaussian's opacity in proportion to how little the pointmap vouches for it. Measured across 12 online cells / 4 families / 6 heads / 8 scenes: 10 clear wins, 2 ties, 0 harm, worst cell +0.16%. Set `0` to disable (all baseline comparisons in `docs/external-baselines.md` used `0` so both arms were unthinned) |
+| `--refiner-uniform-fade` | `0.0` (off) | Same thinning dose applied uniformly instead of confidence-weighted. Mutually exclusive with `--refiner-conf-fade`; statistically a coin flip against it (n=12, median −0.06%), kept for ablation |
+| `--refiner-scale-cap` | `0.0` (off) | Clamp injected Gaussian scale at refinement time, independent of the bake-time `--max-scale` |
+| `--refiner-polish-patience` | `2` | Number of consecutive logging windows below `--refiner-polish-tol` before the polish phase stops |
+| `--retriever-path` | `None` | Alternative retrieval whitening `.pth` (needs a matching `<name>_codebook.pkl` sibling). Default `None` uses the original MASt3R assets. **Refitting these on Splatt3R features was tested and rejected** — offline Recall@k favoured a refit codebook, but real SLAM ATE regressed catastrophically on one of three sequences (see `splatt3r-retrieval-refit` skill §9) |
+| `--save-gs-view` | `None` | Save the interactive GUI's 3DGS map render to `DIR` as `gs_map_%08d.png`. **Written by the visualization process, so it produces nothing under `--no-viz`** — for headless frame capture use `--render-dir` instead (that is how `media/*.gif` were made) |
+| `--gs-view-stride` | `1` | Save every Nth GUI-rendered frame when `--save-gs-view` is set |
+| `--gs-scale-inflate` | `1.0` | Display-only covariance inflation (×inflate²) at render time. Closes inter-Gaussian gaps for demos **without touching the map or any metric** |
 
 > **`--spatial-stride` stability note.** The default — and the only
 > recommended value — is `1` (full per-pixel density). Older revisions of
@@ -631,6 +639,35 @@ bash ./scripts/eval_euroc.sh --no-calib
 ```bash
 bash ./scripts/eval_eth3d.sh
 ```
+
+### Map quality (novel-view PSNR / LPIPS)
+
+`scripts/eval_map_quality.py` scores a saved Gaussian map by re-rendering it from
+**held-out frames the run never selected as keyframes**, using ground-truth poses
+Sim3-aligned into the map's own frame:
+
+```bash
+python scripts/eval_map_quality.py \
+    --ply  logs/<run>/<seq>_refined.ply \
+    --traj logs/<run>/<seq>.txt \
+    --dataset datasets/Replica/office0 --n 100
+```
+
+This is the exact code path every number in **Benchmark Results** came from, for our
+system and for each baseline alike.
+
+### Reproducing the external-baseline comparison
+
+The four baselines (Photo-SLAM, MonoGS, MASt3R-SLAM, VGGT-SLAM) are **not vendored** —
+they are built into `./tmp/<repo>/`, which is git-ignored (~50 GB). Each gets its own
+conda prefix env; the system CUDA is never modified and datasets are symlinked rather
+than re-downloaded. Build recipes, every version pin, and all 18 Photo-SLAM build
+blockers with their fixes are in
+[`docs/external-baselines.md`](docs/external-baselines.md) §5.
+
+> **Read §1 of that document before quoting any number against published results.**
+> We measured an ~8.7 dB systematic protocol offset between the GS-SLAM literature's
+> rendering metrics and ours, reproduced independently on two systems.
 
 ---
 

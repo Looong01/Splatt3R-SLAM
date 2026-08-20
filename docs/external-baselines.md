@@ -206,6 +206,11 @@ opacity 从高到低截断到各档预算，在同一批留出帧上重新评分
 - **conda 环境的 include/lib 不自动生效**：用绝对路径调 `$ENV/bin/gcc` 时不会搜索
   `$ENV/include`，必须显式导出 `CPATH` / `CPLUS_INCLUDE_PATH` / `LIBRARY_PATH`。
 - **ninja 缺失会让 torch 退回单线程 distutils**，编译慢十倍。
+- **需要 `git-lfs`**：MASt3R-SLAM 的 `pyimgui` 子模块用 LFS 存储，缺失时 `git submodule
+  update` 会以 `git-lfs: not found` 中断。这是本轮唯一装到系统层的依赖(`apt install
+  git-lfs`)，与 CUDA 无关。
+- **各 baseline 的评测脚本自带绘图依赖**：evo 默认 `TkAgg` 后端，无头环境必须
+  `evo_config set plot_backend Agg`，否则 import 阶段即崩。
 
 ### 5.2 MASt3R-SLAM
 
