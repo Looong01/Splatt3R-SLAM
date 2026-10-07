@@ -1,0 +1,14 @@
+{
+  "scene": "TUM freiburg1_desk",
+  "evaluation_frame_index": 452,
+  "selection": {
+    "rule": "two middle ranks of ours-minus-mono PSNR",
+    "row_indices": [
+      92,
+      46
+    ]
+  },
+  "camera_source": "GT camera transformed with the recorded Ours Sim(3)",
+  "before_map": "logs/ref_onoff_tum_on/rgbd_dataset_freiburg1_desk_gaussians.ply",
+  "after_map": "logs/ref_onoff_tum_on/rgbd_dataset_freiburg1_desk_refined.ply"
+}

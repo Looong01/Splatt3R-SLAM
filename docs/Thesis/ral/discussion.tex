@@ -1,0 +1,30 @@
+\section{Discussion and Limitations}
+Shared anchors solve a coordinate-consistency problem: pose corrections carry
+local maps and their observations together. The experiments show that this
+design supports appearance refinement with the inherited tracker. They also
+show where dense prediction needs further work.
+
+First, overlapping predictions create expensive maps. Removing primitives
+after optimisation loses useful coverage. A more compact system should
+allocate and refine primitives under a fixed budget from the start.
+A second GPU reduces tracker contention, but the measured throughput is
+still below 30\,Hz and the best reconstruction results include 300\,s polish.
+
+Second, shared anchors preserve local relationships without merging
+disagreeing surfaces. Seams between anchors and colour differences between
+source images can remain. Joint treatment of pose, geometry, and appearance
+may help reduce these errors.
+
+Finally, the external comparison covers eight Replica scenes and one TUM
+scene, with different optimisation budgets and map sizes across systems.
+A broader study should use repeated runs, equal budgets, and scoring views
+excluded from every system's optimisation. The near-zero adaptation and
+confidence-weighting effects especially need replication.
+
+\section{Conclusion}
+Splatt3R-SLAM turns image-pair predictions into a persistent map by anchoring
+Gaussians and supervision cameras together. This lets geometric tracking
+and appearance refinement proceed separately while sharing the same pose
+graph. Common-camera evaluation shows a 3.54\,dB Replica PSNR gain over
+Photo-SLAM and close PSNR to MonoGS on TUM desk. The next step is to retain
+this quality with fewer primitives and a bounded online refinement budget.

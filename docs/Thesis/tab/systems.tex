@@ -1,0 +1,21 @@
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}llcl@{}}
+\toprule
+System & Type & Rend. & Role here \\
+\midrule
+Ours & mono 3DGS & \checkmark & --- \\
+Photo-SLAM & mono 3DGS & \checkmark & rendering \\
+MonoGS & mono 3DGS & \checkmark & rendering (TUM) \\
+MASt3R-SLAM & mono dense & --- & tracking control \\
+VGGT-SLAM & pose+cloud & --- & tracking control \\
+\bottomrule
+\end{tabular}
+\caption[Systems compared, and what each can produce]{Systems compared: Photo-SLAM~\cite{huang2024photoslam},
+MonoGS~\cite{matsuki2024monogs}, MASt3R-SLAM~\cite{murai2025mast3rslam},
+VGGT-SLAM~\cite{maggio2025vggtslam}. The latter two supply trajectory
+comparisons only; MASt3R-SLAM is the inherited tracking control.}
+\label{tab:systems}
+\end{table}

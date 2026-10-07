@@ -1,0 +1,90 @@
+\chapter{External Baseline Build Records}
+\label{app:baselines}
+
+Every baseline in \cref{ch:results} was built from source and run on the same
+host. No baseline's source was modified except where noted, because modifying
+a baseline invalidates the premise that its number is its own real
+performance. Each system was given its own conda prefix under
+\texttt{tmp/<repo>/env}; the system CUDA installation was never touched, and
+datasets were symlinked rather than re-downloaded.
+
+\section{Traps common to all four}
+
+These are host-specific but were each rediscovered more than once, so they are
+recorded rather than summarised:
+
+\begin{itemize}\itemsep2pt
+\item The GitHub archive endpoint is blocked on this host, and
+      \texttt{wget} of a tarball silently produces a zero-byte file rather
+      than an error. Every tarball fetch was replaced by
+      \texttt{git clone --depth 1 --branch <tag>}. PyTorch Hub is affected too,
+      because it fetches archives: DINOv2's cache had to be pre-seeded by
+      cloning.
+\item The conda \texttt{defaults} channel returns 404 here; every conda
+      invocation needs \texttt{-c conda-forge --override-channels}.
+\item \texttt{gcc\_linux-64} provides only
+      \texttt{x86\_64-conda-linux-gnu-gcc}, not \texttt{gcc}; the \texttt{gcc}
+      and \texttt{gxx} meta-packages are also required.
+\item Invoking \texttt{\$ENV/bin/gcc} by absolute path does \emph{not} search
+      \texttt{\$ENV/include}. \texttt{CPATH}, \texttt{CPLUS\_INCLUDE\_PATH} and
+      \texttt{LIBRARY\_PATH} must be exported explicitly; without them a build
+      fails on a header that is demonstrably present.
+\item Without \texttt{ninja}, PyTorch's \texttt{cpp\_extension} falls back to
+      single-threaded distutils, which is roughly ten times slower and gives
+      no indication that it has done so.
+\end{itemize}
+
+\section{MASt3R-SLAM}
+PyTorch 2.5.1+cu124 with an env-local \texttt{nvcc} 12.4. The \texttt{curope}
+CUDA kernel was taken from this repository's already-patched
+\texttt{kernels.cu} rather than disabled, preserving the accelerated RoPE2D
+path. Headless operation required making \texttt{run\_visualization} a lazy
+import, because the vendored \texttt{pyimgui} does not compile under current
+Cython.
+
+\section{MonoGS}
+All dependencies were pinned back to the versions in the upstream
+\texttt{environment.yml} file: numpy~1.26.4, opencv~4.8.1.78, plyfile~0.8.1,
+evo~1.11.0 and matplotlib~3.7.5.
+\emph{Not one line of upstream code was changed.} MonoGS ships Replica
+configurations for RGB-D only, which is why it appears in the TUM rendering
+table and not the Replica one (\cref{sec:protocol:systems}).
+
+\section{Photo-SLAM}
+The heaviest build of the four: eighteen distinct blockers. The load-bearing
+ones:
+
+\begin{itemize}\itemsep2pt
+\item OpenCV must be built from source with CUDA, and must be $\ge 4.9$ ---
+      upstream tested 4.7/4.8 with CUDA~11.8, but the LibTorch combination
+      available here requires CUDA~12.4, under which OpenCV~4.8's
+      \texttt{cudev/reduce.hpp} does not compile. \textbf{This is the one
+      fidelity-affecting deviation in the whole campaign} and is stated in
+      \cref{ch:discussion}; it touches the image front-end, not the Gaussian
+      mapping.
+\item CMake had to be pinned to 3.27 (4.x drops \texttt{<3.5} compatibility)
+      and Eigen to 3.4 (g2o rejects 5.0).
+\item \texttt{MAXFLOAT}, \texttt{M\_PIf32} and \texttt{M\_PI\_2f32} have been
+      removed from glibc. They were supplied through compiler flags rather
+      than by editing upstream sources.
+\item Modern \texttt{ld} defaults to
+      \texttt{--no-copy-dt-needed-entries} and will not resolve symbols
+      through an indirect dependency, so \texttt{-lDBoW2 -lg2o} must be
+      passed explicitly \emph{after} the object files.
+\item \texttt{libtorch\_cpu.so} needs \texttt{exp2f@GLIBC\_2.27} while the
+      conda sysroot provides only 2.15. The correct fix is
+      \texttt{-Wl,--allow-shlib-undefined} on the final link step, letting the
+      system loader resolve it. Adding \texttt{/usr/lib} to the global search
+      path is the \emph{wrong} fix: it mixes the system glibc with conda's C
+      runtime and breaks compilation that previously worked.
+\end{itemize}
+
+\section{VGGT-SLAM}
+Pure Python. \texttt{TORCH\_HOME} is redirected into the repository because
+\texttt{loop\_closure.py} derives the SALAD checkpoint path from
+\texttt{torch.hub.get\_dir()}. \texttt{perception\_models} and \texttt{sam3}
+were installed with \texttt{--no-deps}, since their pins would pull numpy back
+to 2.x and break the vendored VGGT fork; both are imported only under the
+open-set flag, which is therefore unverified and unused here. The
+7-Scenes and EuRoC evaluation scripts referenced by the 2.0 README exist only
+on the \texttt{version1.0} branch, so those extensions were not attempted.

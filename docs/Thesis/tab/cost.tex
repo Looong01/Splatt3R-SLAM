@@ -1,0 +1,23 @@
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+System & Wall clock \dn & Peak GPU (MiB) \dn & Note \\
+\midrule
+Ours        & \phantom{0}70\,s & 21{,}035 & $6.47$\,fps, refiner off \\
+Photo-SLAM  & \best{\phantom{0}28\,s} & \best{\phantom{0}1{,}286} & fastest and leanest \\
+MonoGS      & 555\,s & \phantom{0}2{,}389 & $404$\,s of it optimisation \\
+VGGT-SLAM   & \phantom{0}24\,s & \phantom{0}9{,}436 & no renderable map \\
+\bottomrule
+\end{tabular}
+\caption[System cost, all four systems]{End-to-end cost on TUM
+\texttt{fr1\_desk} ($613$ frames), one GPU held exclusively for the
+measurement, the same $1$\,Hz sampler for every system. VGGT-SLAM's time is
+not comparable to the other three in what it buys: it produces poses and a
+point cloud, not a renderable map. Our peak memory is $16\times$
+Photo-SLAM's and $8.8\times$ MonoGS's, and Photo-SLAM is $2.5\times$ faster
+end-to-end. Our row has refinement disabled and does not include the
+post-sequence polish used in the external rendering comparison.}
+\label{tab:cost}
+\end{table}

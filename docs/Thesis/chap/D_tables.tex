@@ -1,0 +1,119 @@
+\chapter{Extended Result Tables}
+\label{app:tables}
+
+The tables here carry the columns that \cref{ch:results} omits for space. All
+of them were measured on the host described in \cref{app:hyper}.
+
+\section{Per-family system cost}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+& \multicolumn{2}{c}{fps} & \multicolumn{2}{c}{peak GPU (MiB)} & \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Family & no ref. & +ref. & no ref. & +ref. & final Gaussians \\
+\midrule
+ETH3D     & 7.93 & 1.53 & 18{,}315 & 21{,}528 & 2{,}051{,}729 \\
+EuRoC     & 5.40 & 4.21 & 22{,}287 & 30{,}516 & 3{,}327{,}453 \\
+TUM       & 5.84 & 3.70 & 21{,}037 & 25{,}554 & 2{,}622{,}845 \\
+7-Scenes  & 6.57 & 4.23 & 21{,}149 & 25{,}058 & 3{,}024{,}145 \\
+Replica   & 7.89 & 4.95 & 17{,}537 & 20{,}896 & 3{,}065{,}486 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+The refiner is run here at duty $1.0$ on the same card, which is the
+worst case for throughput and not the deployed configuration. On a second
+card the focused desk run changes tracker latency only slightly ($103$\,ms
+against $101$\,ms), which is why \cref{sec:method:refiner} treats second-GPU placement
+as the shipping choice and same-card duty cycling as the fallback.
+
+\section{Compactness curve with LPIPS}
+
+\Cref{tab:curve} reports PSNR only. The perceptual metric degrades in step
+with it, which matters because a common defence of small maps is that they
+lose PSNR while remaining perceptually acceptable:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Kept & office0 & office1 & room0 & room2 \\
+\midrule
+full        & 0.102 & 0.115 & 0.110 & 0.160 \\
+1{,}000{,}000 & 0.195 & 0.155 & 0.120 & 0.214 \\
+300{,}000     & 0.425 & 0.440 & 0.400 & 0.467 \\
+83{,}372      & 0.624 & 0.593 & 0.651 & 0.688 \\
+23{,}019      & 0.673 & 0.632 & 0.757 & 0.751 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Gaussian counts in the Replica comparison}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Scene & Ours & Photo-SLAM & ratio \\
+\midrule
+office0 & 2{,}987{,}333 & 83{,}372  & $35.8\times$ \\
+office1 & 2{,}149{,}703 & 75{,}235  & $28.6\times$ \\
+office2 & 3{,}065{,}486 & 91{,}256  & $33.6\times$ \\
+office3 & 2{,}410{,}090 & 66{,}156  & $36.4\times$ \\
+office4 & 2{,}636{,}008 & 72{,}064  & $36.6\times$ \\
+room0   & 2{,}011{,}045 & 89{,}219  & $22.5\times$ \\
+room1   & 3{,}298{,}001 & 113{,}798 & $29.0\times$ \\
+room2   & 3{,}039{,}774 & 71{,}477  & $42.5\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Scale-consistency measurement, per sequence}
+
+The pairwise arm of \cref{tab:scale}, broken out by sequence. Running
+VGGT pairwise provides the control that separates \emph{joint context}
+from \emph{a different model}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Sequence & Splatt3R (pairwise) & VGGT (pairwise) & ratio \\
+\midrule
+desk   & 6.19\% & 19.41\% & 3.14 \\
+360    & 7.02\% & 11.73\% & 1.67 \\
+room   & 4.64\% & 10.19\% & 2.20 \\
+rpy    & 7.09\% & 16.37\% & 2.31 \\
+teddy  & 4.71\% & 10.25\% & 2.18 \\
+plant  & 4.91\% & \phantom{0}8.19\% & 1.67 \\
+xyz    & 4.49\% & \phantom{0}7.01\% & 1.56 \\
+\midrule
+pooled & 5.35\% & 10.82\% & 2.02 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+VGGT is lower in $0/7$ sequences: it is uniformly the worse two-view model,
+not merely worse on average.
+
+\section{Multi-view scale audit}
+
+Absolute per-keyframe scale error against RGB-D depth, for the map and for the
+$16$-view estimate proposed to correct it (\cref{sec:neg:frontend}):
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Sequence & map & 16-view estimate & improvement \\
+\midrule
+desk ($13$ kf) & 6.48\% & 1.02\% & $6.35\times$ \\
+360  ($46$ kf) & 8.08\% & 3.74\% & $2.16\times$ \\
+room ($51$ kf) & 5.67\% & 2.48\% & $2.29\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}

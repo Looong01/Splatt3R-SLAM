@@ -1,0 +1,17 @@
+{
+  "file": "Splatt3R-SLAM-scientific-figures.pptx",
+  "slides": [
+    "RA-L method navigation",
+    "MSc method navigation",
+    "Shared-anchor and refinement detail",
+    "TUM four-column qualitative comparison with common crops",
+    "Replica multi-scene qualitative comparison",
+    "Fine-grained component ablations"
+  ],
+  "editable": "All text, connectors, boxes, cameras, Gaussians, and bars are native shapes.",
+  "raster_assets": [
+    "docs/Thesis/ral/fig/overview_assets/target.png",
+    "docs/Thesis/ral/fig/overview_assets/before.png",
+    "docs/Thesis/ral/fig/overview_assets/after.png"
+  ]
+}

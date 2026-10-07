@@ -1,0 +1,139 @@
+\chapter{Online Map Refinement}
+\label{ch:refiner}
+
+\section{Design}
+\label{sec:method:refiner}
+
+Prediction supplies an initialisation. A separate process photometrically
+refines the assembled map \emph{while SLAM runs}; together with the GUI,
+the complete system has four processes (\cref{fig:overview}).
+
+\subsection{Parameterisation}
+Gaussians are optimised in their anchor keyframe's local frame in
+pre-activation form --- $\log s$, unnormalised $q$, $\mathrm{logit}\,\alpha$,
+and the SH DC term --- so that scales stay positive and opacity stays in
+$(0,1)$ without constraints, and composed to the world by
+\cref{eq:anchor} at every step. Per-group Adam rates follow the 3DGS
+reference, with the positional rate scaled by scene extent:
+$\eta_\mu = 1.6\!\times\!10^{-4}\!\cdot\!\mathrm{extent}$,
+$\eta_{f_{dc}} = 2.5\!\times\!10^{-3}$, $\eta_\alpha = 5\!\times\!10^{-2}$,
+$\eta_s = 5\!\times\!10^{-3}$, $\eta_q = 1\!\times\!10^{-3}$.
+
+\subsection{Objective}
+Supervision views are tracked frames, so the refiner optimises
+\begin{equation}
+\mathcal{L}_{\text{ref}} = (1-\lambda_{D})\,\lVert \hat{I}-I \rVert_1
+                          + \lambda_{D}\,\bigl(1-\mathrm{SSIM}(\hat{I},I)\bigr),
+\qquad \lambda_{D}=0.2 ,
+\label{eq:refloss}
+\end{equation}
+i.e.\ the 3DGS objective rather than \cref{eq:splatt3rloss}: LPIPS is a
+reporting metric here, not a training signal, so that our evaluation metric is
+not also our loss.
+
+\subsection{Anchor-carried supervision}
+Each supervision frame is stored as an image together with
+$(\text{anchor index}, T_{\text{anchor},f})$ rather than a world pose. Its
+world pose is recomposed through the anchor's \emph{current} pose at sample
+time, so supervision follows loop closures exactly as the map does under
+\cref{eq:anchor,eq:supervisionpose}. Frames are held in CPU shared memory,
+which allows the refiner to run on a second GPU.
+The refiner consequently never becomes a second pose-graph writer: a loop
+closure changes the anchor pose once, and both map placement and supervision
+views follow that correction.
+
+\subsection{Sampling}
+Supervision is drawn from a reservoir of $200$ frames spanning the whole
+sequence plus a ring of the $64$ most recent, with a recent fraction of $0.3$.
+We measured uniform-over-history to dominate a recency-weighted schedule
+(held-out early/late split: $14.40/14.09/14.72$ uniform versus
+$14.06/13.79/14.35$ recent-only), because causal arrival already biases the
+pool toward recent views.
+
+\subsection{Scheduling}
+Sharing one GPU, the refiner holds a duty cycle $d$ by sleeping
+$\mathrm{EMA}[\Delta t]\,(1-d)/d$ after each step, so optimisation steps are
+dropped but never frames. Refiner load on the \emph{same} card doubles tracker
+latency ($101\!\rightarrow\!206$\,ms p50); on a second card it is noise
+($103$\,ms), which is the configuration we deploy. After the sequence ends an
+optional polish phase continues with the final poses.
+
+\subsection{Centre updates}
+The external-comparison configuration holds $\mu$ fixed. Earlier fixed-map
+experiments also favoured this choice at approximately $300$ and $3000$
+steps. The broader causal delivery study did not show the same preference.
+External comparisons and causal studies therefore report their centre
+settings separately from the command-line defaults in \cref{app:hyper}.
+
+When centres are fixed, the positional learning rate above is inactive.
+When enabled, centre updates can trade geometric consistency against fit
+to supervision cameras. \Cref{sec:exp:online} separates the tested causal
+configuration from the fixed-centre, post-sequence comparison.
+
+The refiner publishes a versioned CPU snapshot rather than mutable GPU state.
+The visualiser uploads only complete versions and retains the previous valid
+version on a read/write collision. If the display buffer is smaller than the
+refined map, publication subsamples after the full map has been saved. This
+separates bounded display memory from the evaluation artifact and prevents a
+large-map publication failure from discarding a valid refinement result.
+
+\section{The polish phase}
+\label{sec:refiner:polish}
+
+When the sequence ends, the trajectory stops changing but the map is still
+under-optimised: every step taken during the sequence was taken against poses
+that were still moving. A \emph{polish} phase continues refinement with the
+final poses, and it is the single largest online win we measured:
+$+2.21$\dB{} PSNR and $-16.7\%$ LPIPS over seven TUM \texttt{fr1} sequences.
+
+The required duration varies. Sequences need
+between $1445$ and $3821$ steps to converge --- a $2.6\times$ spread --- and no
+static quantity we tried predicts which sequence needs which: not length, not
+keyframe count, not final Gaussian count, not the loss at the start of the
+phase. A fixed step budget therefore either wastes time on the easy sequences
+or truncates the hard ones. The implementation offers a convergence
+criterion (\texttt{--refiner-polish-tol} with a patience of two logging
+windows), disabled by default. Its stopping rule and fixed-duration
+experiments should be reported separately.
+
+\Cref{tab:tum} uses a fixed $300$\,s budget for our external comparison,
+rather than convergence-based stopping. Its PSNR is close to MonoGS after
+$339$\,s colour refinement, while MonoGS has lower LPIPS. A separate
+historical $1200$\,s run reached $14.61$\,dB and $0.379$ LPIPS under the
+older evaluation configuration. That experiment demonstrates further
+optimisation headroom; it is not mixed into the fresh full-SH comparison or
+presented as a gain at matched total compute.
+
+\section{Density control}
+\label{sec:refiner:omissions}
+
+The refiner reinstates the 3DGS objective (\cref{eq:3dgsloss}) but not the
+adaptive density control that accompanies it in the reference implementation.
+This choice has a measurable map-size cost.
+
+Cloning and splitting are omitted because the map already has an excess of
+primitives rather than a shortage: the failure mode this thesis addresses is
+crowding, and a densification policy tuned for a sparse SfM initialisation
+would be solving the opposite problem. Pruning and periodic opacity reset
+are also omitted. Pruning changes the primitive count and requires
+corresponding updates to optimiser and snapshot state. Opacity reset changes
+the optimisation schedule.
+
+The cost is visible in \cref{sec:lim:compact}: without pruning, nothing ever
+removes a primitive that the data does not support, and the map size is
+whatever the injection pipeline produced. A voxel-based deduplication pass was
+implemented as a partial substitute and measured as a negative: it removes
+$27.6\%$ of the map for $-0.53$\dB{}. We report it as a map-size control that
+costs quality when it fires without a recovery budget, and it is off by
+default. Refining directly under a primitive budget --- rather than pruning
+after the fact --- is the future work named in \cref{ch:conclusion}.
+
+\section{Tracking preservation}
+\label{sec:refiner:invariant}
+
+The refiner reads and composes poses through
+\cref{eq:anchor,eq:supervisionpose}, without optimising them. The recorded
+ablations preserve ATE ($0.016975$\,m, rounding to the $0.0170$\,m baseline)
+while changing map quality by several dB. This supports the intended
+separation of mapping and tracking. It does not eliminate resource contention
+or guarantee identical scheduling in every multi-process run.

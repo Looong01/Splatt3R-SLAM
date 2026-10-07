@@ -1,0 +1,100 @@
+\chapter{Negative Results}
+\label{ch:negative}
+
+Several interventions improved an intermediate metric but harmed the complete
+SLAM system. This chapter records those tests because they narrow the design
+space and explain choices made in earlier chapters.
+
+\section{Backbone adaptation}
+\label{sec:neg:lora}
+
+Encoder LoRA~\cite{hu2022lora} was tested as a broader alternative to
+head-only adaptation. Reconstruction quality fell by $49\%$ and predicted
+Gaussian scales increased by $1821\times$. Decoder-only LoRA improved by
+$0.37$\dB{} after one epoch, then fell to $-1.61$\dB{} by epoch five while
+the 99th-percentile scale increased by $12\times$.
+
+Both failures combine a feature change with an exponentially parameterised
+scale head. The measured signature motivates the frozen-backbone design in
+\cref{ch:adapt}. It applies to the tested objectives and regularisation;
+other joint adaptation methods remain open.
+
+\section{Independent multi-pair averaging}
+\label{sec:neg:aggregation}
+
+One way to reduce pairwise scale variation is to predict a new keyframe
+against several partners, align their depth scales, and average the maps.
+With $m\in\{1,2,4,8\}$ predictions, scale disagreement falls from $5.16\%$
+to $3.06\%$. A single sixteen-view VGGT forward reaches $1.68\%$.
+Independent averaging reduces random variation but cannot impose one shared
+scale across all views. It also requires $m$ forward passes per keyframe.
+
+\section{Loop-closure retrieval refitting}
+\label{sec:neg:retrieval}
+
+The inherited retrieval system uses a PCA transform and an ASMK codebook.
+A $2048$-centroid refit on $279$ TUM keyframes improves weighted offline
+Recall@1 by $20\%$. End-to-end SLAM gives a different result:
+\texttt{room} ATE improves by $8.2\%$, \texttt{360} degrades by $24.1\%$,
+and \texttt{desk} degrades by $318.8\%$ to near the no-loop-closure control.
+The evaluated system therefore retains the original MASt3R retrieval assets.
+Candidate recall alone does not measure the effect of accepted edges on the
+pose graph.
+
+\section{Cross-family adaptation variation}
+\label{sec:neg:attrib}
+
+Head-only adaptation gains vary across datasets. Four explanations were
+tested: residual mismatch, base-quality headroom, novelty to the training
+corpus, and sensor modality. Each conflicts with at least one paired result
+in \cref{tab:falsified}. The available evidence therefore reports the
+variation without assigning one cause.
+
+\section{Geometric scale correction}
+\label{sec:neg:frontend}
+
+Pairwise pointmaps show per-keyframe scale variation. We tested whether a
+many-view model could estimate better local scales and whether those scales
+would improve the Gaussian map.
+
+\subsection{Context and backbone}
+The gauge-free scale spread in \cref{tab:scale} separates model choice from
+view context. The same VGGT~\cite{wang2025vggt} weights give $10.82\%$ spread
+when run pairwise and $1.68\%$ when sixteen views enter one forward pass.
+The two-view MASt3R control gives $5.16\%$. Multi-view context, rather than
+the backbone alone, produces the lower spread.
+
+\input{tab/scale}
+
+\subsection{Map edit}
+A sixteen-view estimate supplies one scale correction per keyframe cluster.
+On TUM desk, sensor-referenced scale error improves from $6.48\%$ to
+$1.02\%$. Rendering becomes worse: PSNR falls from $12.35$ to
+$11.50$\dB{} and LPIPS rises from $0.507$ to $0.523$.
+After $300$\,s refinement, PSNR changes from $13.81$ to $13.08$\dB{}.
+The same trend appears on \texttt{360} and \texttt{room}.
+
+\subsection{Scale prior during refinement}
+Using the correction as a prior instead of a fixed edit also reduces image
+quality. As prior weight rises from $0.05$ to $0.5$, PSNR falls from
+$13.74$ to $13.38$\dB{} and LPIPS rises from $0.449$ to $0.456$.
+The fitted scale spread remains $2.6\%$, compared with the reference
+correction of $8.0\%$.
+
+These tests show a conflict between isolated scale accuracy and the current
+photometric map fit. Camera poses, local geometry, and appearance have been
+estimated together; editing one part can reduce their internal agreement.
+A prior explanation based on a $0.057$\,m keyframe baseline was withdrawn
+after contribution-weighted rendering rays showed a baseline near $0.78$\,m.
+The negative result rests on the measured edits and priors, not on that
+earlier explanation.
+
+\section{Result of the negative studies}
+\label{sec:neg:method}
+
+The failed routes improve reconstruction loss, retrieval recall, or local
+scale accuracy without improving the final map or trajectory. For this
+system, an intervention is retained only when its end-to-end metric improves
+under the target execution path. This rule leads to three concrete choices:
+freeze shared features, keep the inherited retrieval assets, and avoid
+map-only scale correction.

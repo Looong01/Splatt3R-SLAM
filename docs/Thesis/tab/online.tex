@@ -1,0 +1,28 @@
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{2.7pt}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Family & Sequence & Bake P & Refine P & $\Delta$P & $\Delta$L \\
+\midrule
+TUM & desk & 12.42 & 13.75 & +1.33 & $-7.5\%$ \\
+TUM & room & 11.15 & 11.45 & +0.30 & $+11.1\%$ \\
+TUM & 360 & 12.00 & 12.14 & +0.14 & $+20.6\%$ \\
+7-Scenes & chess & 13.44 & 13.79 & +0.35 & $-4.8\%$ \\
+7-Scenes & office & 11.64 & 11.74 & +0.10 & $-1.6\%$ \\
+7-Scenes & pumpkin & 14.15 & 14.91 & +0.77 & $-4.1\%$ \\
+EuRoC & MH\_01 & 10.17 & 11.67 & +1.50 & $-4.1\%$ \\
+EuRoC & V1\_01 & 12.06 & 12.69 & +0.63 & $-13.0\%$ \\
+ETH3D & plant\_1 & 20.42 & 22.22 & +1.80 & $-7.4\%$ \\
+\bottomrule
+\end{tabular}
+\caption[Online delivery, GUI on, dual GPU]{Actual GUI-on, dual-GPU online delivery. P is PSNR in dB and L is
+LPIPS; $\Delta L$ is relative, so negative is better. Seven of nine cells
+improve LPIPS. TUM room and 360 gain a little PSNR but lose perceptual quality
+under the in-sequence budget, exposing supervision starvation on their large
+maps rather than a universal refiner improvement. ETH3D \texttt{cables\_1} is
+omitted because its $0.5$-m scene and $0.1165$-m ATE make held-out rendering
+alignment-dominated. The reported online values are from the pre-polish
+delivery pass; the longer polish diagnostic is separated below.}
+\label{tab:online}
+\end{table}

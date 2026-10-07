@@ -1,0 +1,104 @@
+% Native LaTeX/TikZ version of docs/架构与数据流.md, lines 83--109.
+% CPU objects are grouped by actual storage location. The viz process reads
+% SharedKeyframes, not the backend directly (see the document's Mermaid graph).
+\begin{tikzpicture}[
+  x=1cm,y=1cm,
+  font=\sffamily\fontsize{9}{11}\selectfont,
+  ovbox/.style={draw=ovblue,fill=white,rounded corners=2pt,
+    line width=.65pt,align=center,inner sep=4pt},
+  ovflow/.style={-{Latex[length=2mm,width=1.35mm]},line width=.75pt,
+    draw=ovink,rounded corners=2pt},
+  ovpose/.style={ovflow,draw=ovblue,dashed},
+  ovmap/.style={ovflow,draw=ovteal},
+  ovlabel/.style={font=\sffamily\fontsize{7.7}{9}\selectfont,
+    align=center,inner sep=2pt,fill=white},
+  ovtitle/.style={font=\sffamily\bfseries\fontsize{10}{12}\selectfont,
+    anchor=west},
+]
+\definecolor{ovblue}{HTML}{4079AC}
+\definecolor{ovteal}{HTML}{007E78}
+\definecolor{ovamber}{HTML}{AA772C}
+\definecolor{ovink}{HTML}{243746}
+
+% Process nodes: the same four processes as the source architecture.
+\node[ovbox,draw=ovink,minimum width=2.1cm,minimum height=.82cm]
+  (dataset) at (1.35,8.65) {RGB\\sequence};
+\node[ovbox,text width=6.8cm,minimum height=1.48cm]
+  (main) at (6.6,8.65)
+  {\textbf{Main process: tracker}\\
+   Splatt3R (base ckpt + \texttt{--head})\\
+   Tracking $\cdot$ FramePoseLog $\cdot$ supervision supply};
+\node[ovbox,text width=6.8cm,minimum height=1.23cm]
+  (keyframes) at (6.6,6.50)
+  {\textbf{SharedKeyframes} (CUDA IPC)\\
+   Images $\cdot$ pointmaps $\cdot$ camera-frame Gaussians\\
+   Current keyframe poses $T_{WC}$};
+\node[ovbox,text width=4.7cm,minimum height=1.04cm]
+  (backend) at (6.6,4.70)
+  {\textbf{Backend process}\\Retrieval database + pose graph};
+\node[ovbox,text width=5.8cm,minimum height=1.22cm]
+  (viz) at (14.7,4.85)
+  {\textbf{Viz process: GUI}\\
+   Bake using current poses $\cdot$ OpenGL\\
+   Subscribe to refined-map snapshots};
+\node[ovbox,draw=ovteal,text width=7.2cm,minimum height=1.66cm]
+  (refiner) at (5.7,2.02)
+  {\textbf{Refiner process}\\
+   LocalGaussianMap + Adam state\\
+   Cross-GPU execution $\cdot$ duty-cycle control\\
+   Optional 10\,mm voxel deduplication};
+\node[ovbox,draw=ovamber,text width=5.8cm,minimum height=.92cm]
+  (snapshot) at (14.7,2.43)
+  {\textbf{RefinedMapSnapshot}\\Double buffer + version counter};
+\node[ovbox,draw=ovamber,text width=5.8cm,minimum height=1.22cm]
+  (supervision) at (14.7,.86)
+  {\textbf{SupervisionFrames}\\
+   uint8 RGB + anchor-relative poses\\
+   Reservoir sampling};
+\node[ovbox,draw=ovink,fill=black!3,minimum height=.55cm,
+  minimum width=4.8cm] (disk) at (5.7,-.09)
+  {\texttt{<seq>\_refined.ply}};
+
+% Hardware/storage regions sit behind nodes and connections.
+\begin{scope}[on background layer]
+  \filldraw[draw=ovblue,fill=ovblue!4,rounded corners=4pt,line width=.8pt]
+    (0,3.94) rectangle (18.2,10.14);
+  \filldraw[draw=ovteal,fill=ovteal!4,rounded corners=4pt,line width=.8pt]
+    (0,.62) rectangle (10.55,3.36);
+  \filldraw[draw=ovamber,fill=ovamber!5,rounded corners=4pt,line width=.8pt]
+    (11.10,.02) rectangle (18.2,3.36);
+\end{scope}
+\node[ovtitle,text=ovblue] at (.25,9.77) {GPU 0: SLAM and visualisation};
+\node[ovtitle,text=ovteal] at (1.25,3.14) {GPU 1: online map refinement};
+\node[ovtitle,text=ovamber] at (11.35,3.14) {CPU shared memory};
+
+% Numbered data flow follows the source diagram.
+\draw[ovflow] (dataset.east) -- node[ovlabel,above] {(1)} (main.west);
+\draw[ovflow] (main.south) -- node[ovlabel,right] {(2) Keyframe append}
+  (keyframes.north);
+\draw[ovflow] (keyframes.south) -- node[ovlabel,left] {(3) Read}
+  (backend.north);
+\draw[ovpose] (backend.east) -- (10.28,4.70) -- (10.28,6.50)
+  -- (keyframes.east);
+\node[ovlabel,text=ovblue] at (10.45,5.57) {(4)(6)\\Pose updates};
+\draw[ovflow] ([yshift=3mm]keyframes.east) -- (14.7,6.80)
+  -- node[ovlabel,right] {(5) Read + bake\\with current poses} (viz.north);
+
+% New Gaussian parameters transfer once; current poses are read each step.
+\draw[ovmap] (keyframes.west) -- (.69,6.50) -- (.69,2.02)
+  -- (refiner.west);
+\node[ovlabel,text=ovteal,rotate=90] at (.69,4.53)
+  {New Gaussians + current poses};
+\draw[ovflow] (main.east) -- (18.60,8.65) -- (18.60,.86)
+  -- (supervision.east);
+\node[ovlabel] at (14.50,8.65) {(7) Tracked RGB + anchor-relative poses};
+\draw[ovmap] (supervision.west) -- (10.13,.86) -- (10.13,1.57)
+  -- ([yshift=-4.5mm]refiner.east);
+\node[ovlabel,text=ovteal] at (10.30,1.16) {(7) Sample};
+\draw[ovmap] ([yshift=4.1mm]refiner.east)
+  -- node[ovlabel,above] {(8) Publish} (snapshot.west);
+\draw[ovmap] ([xshift=1.3cm]snapshot.north)
+  -- node[ovlabel,left] {(8) Versioned snapshot} ([xshift=1.3cm]viz.south);
+\draw[ovmap] (refiner.south)
+  -- node[ovlabel,right] {(9) Save} (disk.north);
+\end{tikzpicture}

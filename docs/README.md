@@ -1,5 +1,15 @@
 # Splatt3R-SLAM 研究工作总览(2026-07-20 → 2026-08-18)
 
+**2026-10-07 更新：** 当前论文入口为 [IEEE RA-L 阅读稿](Thesis/ral.pdf) 和
+[匿名 ieeeconf 稿](Thesis/ral-review.pdf)，两版均为 7 页。新增系统总览、
+方法与性能 teaser、GT / Photo-SLAM / MonoGS / Ours 四列定性图。
+新评测保留全部导出 SH；Replica 八场景均值为 Ours 23.02 dB、
+Photo-SLAM 19.48 dB。构建与数据说明见 [稿件 README](Thesis/README.md)。
+硕士论文 [master.pdf](Thesis/master.pdf) 已同步上述新内容与评测修正，
+保留 A4 章节式毕业论文排版，独立于 RA-L 模板。
+以下研究时间线和分报告属于历史记录：其中“严格 held-out”“统一 8.7 dB
+协议偏移”等旧解释已在新稿修正，不应直接作为当前结论引用。
+
 本目录是全部研究工作的汇总索引。六份分报告:
 
 | 文档 | 内容 |
@@ -11,13 +21,18 @@
 | [skills-digest-four.md](skills-digest-four.md) | 四份专题 skill:重影修复、颜色一致性、检索子系统、LoRA 工程考古 |
 | [online-eval-all-families.md](online-eval-all-families.md) | 全数据集实机评估(GUI 在线,四大家族 9 序列,ATE/地图质量/延迟/VRAM 全指标) |
 
-> **对外报告数字前必读** `external-baselines.md` 第一节:我们实测发现 GS-SLAM 文献的
-> 渲染指标与本文协议之间存在约 **8.7 dB 的系统性协议偏移**(两个系统独立复现),因此
-> 文献数字**不可**与本文数字并列成表。
+> **对外报告数字前必读** [当前评测修正](Thesis/ral/REVISION_NOTES.md)：
+> 历史位姿诊断说明评测对协议敏感，但不能推出统一的 8.7 dB 偏移。
+> 新稿使用全 SH 评测与修正后的帧关联；旧记录中的绝对分数不能直接混用。
 
-论文稿在 [`Thesis/`](Thesis/)(CVPR 格式,12 页,已编译验证),其写作状态、公式出处、
-结构决策与开放项记录在 skill `splatt3r-thesis-writing`——**改动 `docs/Thesis/` 下
-任何内容前先读它**。
+[`Thesis/`](Thesis/) 默认 `./build.sh` 生成 `ral.pdf`；
+`./build.sh review` 生成 `ral-review.pdf`。两版 RA-L 共用 `ral/` 正文及图表。
+硕士论文用 `./build.sh master`，正文独立位于 `chap/`；
+旧会议稿及其专用模板和入口已移除。各版本共用 `main.bib` 和科学图源，
+新渲染表由实验 JSON 生成到 `ral/generated/`，图表标题与排版各自独立。
+
+写作状态、公式出处、结构决策、**不得润色的"难看"段落清单**与待作者填写的占位符,
+记录在 skill `splatt3r-thesis-writing`——**改动 `docs/Thesis/` 下任何内容前先读它**。
 
 原始权威记录:`.claude/skills/` 七份 skill(`splatt3r-finetuning-experiments`
 已逾 14000 行)。其中论文素材集中在:§16(9 条 claim + 天花板 + 方法学陷阱)、

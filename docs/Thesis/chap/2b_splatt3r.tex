@@ -1,0 +1,50 @@
+Splatt3R~\cite{smart2024splatt3r} adds a third head, in parallel to the
+pointmap and matching heads and using the same DPT decoder, which emits for
+every pixel a rotation quaternion $q\in\mathbb{R}^4$, a scale
+$s\in\mathbb{R}^3$, spherical-harmonic coefficients
+$S\in\mathbb{R}^{3\times d}$, an opacity $\alpha\in\mathbb{R}$ and a mean
+offset $\Delta\in\mathbb{R}^3$, so that the Gaussian centre is
+\begin{equation}
+\mu \;=\; x + \Delta, \qquad x \in X^i_i .
+\label{eq:mu}
+\end{equation}
+Quaternions are normalised, scales use a positive exponential
+parameterisation, and opacities pass through a sigmoid. Offsets use a
+norm-dependent exponential rescaling of a signed vector, so their coordinates
+are not restricted to positive values. In upstream training, \emph{only the Gaussian
+head is trained}: the encoder and decoder remain those of the pre-trained
+MASt3R model, and all Gaussian parameters are predicted in the first image's
+camera frame, avoiding any ground-truth transformation at inference.
+
+Covariance follows \cref{eq:cov} and rendering follows
+\cref{eq:alphacomp}; the Gaussians a single forward pass emits are therefore
+immediately renderable by a standard 3DGS rasteriser, with no optimisation
+step in between.
+
+Splatt3R is supervised only by novel-view renderings, under a mask $M$ of
+pixels visible in at least one context view:
+\begin{equation}
+\mathcal{L} = \lambda_{\text{MSE}}\,\mathcal{L}_{\text{MSE}}(M\!\odot\!\hat{I}, M\!\odot\!I)
+            + \lambda_{\text{LP}}\,\mathcal{L}_{\text{LPIPS}}(M\!\odot\!\hat{I}, M\!\odot\!I),
+\label{eq:splatt3rloss}
+\end{equation}
+with $\lambda_{\text{LP}}{=}0.25$ in the released configuration. Two properties
+of \cref{eq:splatt3rloss} drive our method. It is \emph{purely photometric} ---
+depth enters only through the mask $M$ and through pair selection, never
+through a gradient on geometry --- and it is \emph{pairwise}: the loss never
+observes more than two context views, hence never observes a fused map.
+
+In the released implementation the DC colour is anchored to the source image:
+the head predicts a residual which is added to the spherical-harmonic encoding
+of the input RGB value,
+\begin{equation}
+S_{\mathrm{DC}}(u)=S_{\mathrm{res}}(u)+\operatorname{RGB2SH}(I^i(u)).
+\label{eq:colorresidual}
+\end{equation}
+Colour is clamped during conversion; it is not sigmoid-bounded. The residual
+provides an appearance adjustment independently of opacity, so opacity is
+not the only channel capable of compensating for input photometry.
+Consequently, revisits can inherit exposure, white-balance, shadow, and
+view-dependent differences from their source frames. Exposure normalisation
+removes only the global component of this source-frame photometric gauge; it
+does not enforce equality of $S_{\mathrm{DC}}$ for the same world surface.

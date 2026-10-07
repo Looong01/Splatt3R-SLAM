@@ -1,0 +1,298 @@
+\section{Experiments}
+\label{sec:experiments}
+The experiments test whether refinement preserves tracking, which
+initialisation changes help, and how map quality relates to cost.
+\subsection{Evaluation protocol}
+We evaluate rendering on all eight Replica scenes~\cite{straub2019replica}
+and TUM \texttt{freiburg1\_desk}~\cite{sturm2012tum}, and trajectory accuracy
+on all nine TUM freiburg1 sequences. All compared maps and trajectories were
+produced by local runs. Photo-SLAM and MonoGS use monocular input.
+MASt3R-SLAM and VGGT-SLAM supply trajectory comparisons only.
+We did not obtain a monocular MonoGS Replica map with the available
+configurations; its depth-assisted Replica configuration is not included.
+Our head-adaptation and refinement ablations additionally cover
+EuRoC~\cite{burri2016euroc}, ETH3D~\cite{schops2017eth3d}, and
+7-Scenes~\cite{shotton2013scenecoord}.
+
+\paragraph{Common rendering conditions}
+For each sequence we select 100 frames outside the union of participating
+systems' keyframes and render each exported map using the same implementation.
+The images are exposure-normalised and evaluated at $512{\times}288$
+on Replica and $512{\times}384$ on TUM.
+All exported SH bands are retained: degree three for Photo-SLAM and degree
+zero for the evaluated MonoGS and our maps.
+We align estimated camera centres to ground truth with
+Umeyama's $\mathrm{Sim}(3)$ fit~\cite{umeyama1991}.
+If the map-to-GT alignment is $(s,R,t)$, the camera-to-world rendering pose in
+map coordinates is
+\begin{equation}
+  R_{\rm map}=R^\top R_{\rm gt},\qquad
+  t_{\rm map}=R^\top(t_{\rm gt}-t)/s.
+  \label{eq:eval}
+\end{equation}
+We report scene PSNR as $-10\log_{10}$ of the mean frame MSE and average
+LPIPS-AlexNet~\cite{zhang2018lpips} across frames. Replica means weight each
+scene equally. ATE is translation RMSE after similarity alignment.
+
+\paragraph{Evaluation scope}
+We measure \emph{non-keyframe reconstruction}. Tracked non-keyframes may
+supervise refinement, so scoring views are not a strict unseen-view split.
+The aligned GT cameras expose map and trajectory errors together.
+Input preprocessing and optimisation history follow each system.
+
+\paragraph{Configuration and budget}
+External comparisons use the released Splatt3R head, fixed Gaussian centres,
+no insertion thinning, and 300\,s post-sequence refinement.
+Photo-SLAM runs to its own shutdown schedule; its optimisation budget is not
+matched on Replica. MonoGS uses a 339\,s colour-refinement phase on TUM desk,
+close to our post-sequence budget, but total pipeline costs differ.
+Experiments ran on a host with two RTX~A6000 GPUs.
+Photo-SLAM was compiled with OpenCV~4.10 in place of its tested 4.7/4.8 stack
+for CUDA compatibility; no mapping algorithm was changed.
+We retain per-frame metrics, input-artifact hashes, alignment transforms, and
+selected frame indices for the new rendering evaluation.
+
+\paragraph{Component controls}
+Paired ablations retain the evaluation settings of each recorded study;
+they are separate from the fresh full-SH external comparison.
+The TUM, EuRoC, and 7-Scenes heads were trained for 40 epochs,
+with batch sizes 2, 4, and 8 and learning rates $10^{-5}$,
+$1.41{\times}10^{-5}$, and $2{\times}10^{-5}$. The 15\% validation split
+is within each dataset family. Refinement is active and thinning disabled
+in both arms of the head comparison.
+
+\subsection{Reconstruction quality}
+\begin{table}[t]
+  \centering
+  \caption{Replica reconstruction, monocular input, full exported SH.
+  Bold marks the better value within each scene and metric.}
+  \label{tab:replica}
+  \small\setlength{\tabcolsep}{4pt}
+  \input{ral/generated/replica_table}
+\end{table}
+
+Table~\ref{tab:replica} reports 23.02\,dB mean PSNR for our maps and
+19.48\,dB for Photo-SLAM, a 3.54\,dB difference. Our scene PSNR is higher
+on all eight sequences, whereas LPIPS improves on five of eight
+(0.135 versus 0.163 on average).
+The PSNR margin varies from 0.23\,dB on room1 to 7.64\,dB on room0.
+Photo-SLAM has better LPIPS on office2, office4, and room2, showing that
+the PSNR ordering does not imply uniformly better perceptual reconstruction.
+Fig.~\ref{fig:evidence}(a) displays this scene dependence.
+
+\begin{table}[t]
+  \centering
+  \caption{TUM desk reconstruction. Ours uses 300\,s polish;
+  MonoGS uses 339\,s colour refinement. $N$ counts exported primitives.}
+  \label{tab:tum}
+  \small
+  \input{ral/generated/tum_table}
+\end{table}
+
+On TUM desk (Table~\ref{tab:tum}), PSNR is close to MonoGS:
+13.95 versus 13.91\,dB. MonoGS has lower LPIPS, 0.395 versus 0.411.
+Both outperform Photo-SLAM on this sequence.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{qualitative_tum.pdf}
+  \caption{\textbf{Related-work comparison on TUM desk.}
+  Each method occupies one column; each view is followed by an identically
+  located crop (orange box). The two views are the middle ranks of the
+  per-frame Ours-minus-MonoGS PSNR difference among the 100 common evaluation
+  frames. All columns use the same target camera and image scale.
+  The close quantitative comparison is reflected in remaining blur and
+  geometric distortion in both MonoGS and our renderings.}
+  \label{fig:qualitative}
+\end{figure*}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{evidence.pdf}
+  \caption{\textbf{Quality distribution and map budget.}
+  (a) Fresh full-SH scene PSNR differences on Replica; o/r denote office/room.
+  (b) A separate recorded study retaining the highest-opacity primitives in
+  four of our maps, without re-optimisation. The final marker is each full
+  map, containing 2.0--3.0 million Gaussians. The study measures post-hoc
+  removal from maps optimised at full size.}
+  \label{fig:evidence}
+\end{figure*}
+
+Fig.~\ref{fig:qualitative} shows the two middle-ranked views by per-frame
+PSNR difference against MonoGS. The teaser uses the same rule against
+Photo-SLAM on office0. All methods share crop coordinates.
+
+\subsection{Trajectory accuracy}
+\begin{table}[t]
+  \centering
+  \caption{TUM freiburg1 ATE RMSE (m), similarity aligned.
+  MASt3R denotes the inherited MASt3R-SLAM tracking control.
+  Best values are determined over all five systems.}
+  \label{tab:ate}
+  \small\setlength{\tabcolsep}{3.2pt}
+  \begin{tabular}{@{}lrrrrr@{}}
+    \toprule
+    Sequence & Ours & MASt3R & VGGT & Photo & MonoGS\\
+    \midrule
+    360   & 0.042 & 0.048 & 0.050 & \best{0.035} & 0.177\\
+    desk  & 0.017 & 0.016 & 0.025 & \best{0.015} & 0.036\\
+    desk2 & 0.028 & \best{0.024} & 0.029 & 0.438 & 0.844\\
+    floor & 0.027 & 0.025 & 0.099 & \best{0.013} & 0.539\\
+    plant & \best{0.015} & 0.020 & 0.025 & 0.046 & 0.071\\
+    room  & \best{0.059} & 0.061 & 0.064 & 0.510 & 0.791\\
+    rpy   & \best{0.022} & 0.023 & 0.026 & 0.057 & 0.041\\
+    teddy & 0.048 & 0.045 & \best{0.036} & 0.305 & 0.123\\
+    xyz   & \best{0.009} & \best{0.009} & 0.014 & 0.010 & 0.017\\
+    \midrule
+    Mean  & \best{0.030} & \best{0.030} & 0.041 & 0.161 & 0.293\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+Table~\ref{tab:ate} shows the same rounded mean trajectory error as
+MASt3R-SLAM, supporting the separation of geometric tracking and mapping.
+Photo-SLAM has the lowest error on several sequences but larger errors on
+desk2, room, and teddy; MonoGS also exhibits large errors on several runs.
+The means are consequently sensitive to those sequences.
+Multi-threaded tracking is not deterministic: two Photo-SLAM desk runs yielded
+0.0174 and 0.0149\,m ATE. Single-run differences should be interpreted
+with this variability in mind.
+
+\subsection{Shared anchors and refinement}
+\label{sec:ablations}
+\paragraph{Pose-correction control}
+A blockwise $\mathrm{Sim}(3)$ perturbation applies a 6\% scale correction
+to saved TUM desk and room anchors. With fixed world-space supervision
+cameras, refinement largely reverses that correction after about 500 steps.
+When supervision follows the anchors, the correction is retained.
+This tests (\ref{eq:consistency}) under a controlled update.
+
+\begin{table}[t]
+  \centering
+  \caption{Paired component ablations from separate recorded runs.
+  Negative relative $\Delta$LPIPS indicates improvement.}
+  \label{tab:ablation}
+  \small\setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}llrr@{}}
+    \toprule
+    Component & Sequence & $\Delta$PSNR & $\Delta$LPIPS\\
+    \midrule
+    \multicolumn{4}{@{}l}{\emph{Refiner on vs.\ off, released head, 300\,s polish}}\\
+    Refinement & ETH3D sofa\_1 & $+8.69$ & $-58.3\%$\\
+               & Replica office0 & $+4.62$ & $-56.8\%$\\
+               & TUM desk & $+3.52$ & $-27.3\%$\\
+               & EuRoC V1\_01 & $+1.00$ & $-14.5\%$\\
+    \midrule
+    \multicolumn{4}{@{}l}{\emph{Family head vs.\ released head, refinement in both}}\\
+    Adaptation & EuRoC MH\_01 & $+0.62$ & $-20.8\%$\\
+               & TUM desk & --- & $-7.9\%$\\
+               & TUM room & --- & $-9.9\%$\\
+               & 7-Scenes chess & $+0.10$ & $+0.14\%$\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+\paragraph{Refinement and head adaptation}
+The first block of Table~\ref{tab:ablation} holds the released head fixed
+and toggles refinement, with gains of 1.00--8.69\,dB across four datasets.
+These values include 300\,s polish and are not instantaneous online gains.
+The second block holds refinement active and disables thinning in both arms,
+isolating head adaptation. Improvement is substantial on EuRoC and TUM,
+while 7-Scenes chess changes little and its LPIPS slightly worsens.
+Thus family-specific adaptation is useful but not uniformly beneficial.
+
+\subsection{Initialisation and online budget}
+\paragraph{Insertion prior}
+Table~\ref{tab:thinning} lists all 12 recorded thinning comparisons.
+Ten cells improve LPIPS clearly and two are near zero.
+The confidence-weighted versus uniform allocation has only a
+$-0.06\%$ median LPIPS difference, with its interval spanning zero.
+Opacity attenuation helps more consistently than the confidence allocation.
+Without thinning, refinement also reduces the median opacity of a
+released-head TUM map from about 1.0 to 0.26.
+
+\begin{table}[t]
+  \centering
+  \caption{Insertion ablation: relative LPIPS change for
+  $\lambda=0.45$ versus off. Refinement is active in both arms.}
+  \label{tab:thinning}
+  \small\setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}llr@{}}
+    \toprule
+    Scene & Head & $\Delta$LPIPS\\
+    \midrule
+    Replica office3 & Plain adapted & $-12.7\%$\\
+    Replica office0 & Plain adapted & $-12.6\%$\\
+    Replica office2 & Plain adapted & $-10.2\%$\\
+    Replica room0 & Plain adapted & $-8.9\%$\\
+    Replica room1 & Plain adapted & $-7.1\%$\\
+    Replica office1 & Plain adapted & $-1.6\%$\\
+    Replica office0 & Opacity knee 0.9 & $-5.3\%$\\
+    Replica office0 & Opacity knee 0.6 & $-1.8\%$\\
+    TUM desk & Released & $-6.4\%$\\
+    TUM desk & Adapted & $-0.6\%$\\
+    EuRoC MH\_01 & Adapted & $-5.6\%$\\
+    7-Scenes chess & Adapted & $+0.16\%$\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Causal delivery}
+In causal replay, images enter supervision only when they arrive.
+Table~\ref{tab:budget} compares this schedule with refinement after mapping.
+Most of the gain appears by 500 steps; 3000 steps give no further causal
+improvement in this TUM desk control.
+A separate dual-GPU run gains 2.15\,dB with tracker median latency changing
+from 101 to 103\,ms; sharing one GPU raises it to 206\,ms.
+These are focused measurements on TUM desk.
+In a broader GUI-enabled, dual-GPU campaign using family heads, seven of nine
+sequences improve LPIPS before polish. TUM room and 360 worsen LPIPS by
+11.1\% and 20.6\%, despite small PSNR gains. Larger maps remain harder
+to refine within the available online budget.
+
+\begin{table}[t]
+  \centering
+  \caption{TUM desk iteration-budget control, PSNR (dB).
+  Both arms use the recorded map-evaluation protocol.}
+  \label{tab:budget}
+  \small
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    Steps & 120 & 500 & 1000 & 3000\\
+    \midrule
+    Causal & 13.65 & 14.39 & 14.47 & 14.41\\
+    Post-hoc & 13.80 & 14.32 & 14.35 & 14.37\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Cost and map size}
+\begin{table}[t]
+  \centering
+  \caption{Recorded system cost on TUM desk, using the same 1\,Hz GPU
+  memory sampler. Ours here has refinement disabled; these are not the
+  costs of the polished maps in Table~\ref{tab:tum}.}
+  \label{tab:cost}
+  \small
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    System & Wall time (s) & Peak GPU memory (MiB)\\
+    \midrule
+    Ours, refiner off & 70 & 21\,035\\
+    Photo-SLAM & 28 & 1\,286\\
+    MonoGS & 555 & 2\,389\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+Our TUM desk map contains 2.397 million primitives versus 36\,069 for
+Photo-SLAM and 23\,019 for MonoGS. Replica maps contain 2.0--3.3 million.
+Table~\ref{tab:cost} reports about $16.4\times$ Photo-SLAM's peak GPU memory
+before adding our refinement cost. Photo-SLAM is also faster in this
+end-to-end measurement. The broader GUI-enabled deployment campaign used up
+to 41.1\,GB on the tracking GPU plus 14.0\,GB on the refinement GPU.
+
+To measure how much the representation depends on its size, we retain the
+highest-opacity Gaussians at decreasing budgets and re-render without further
+optimisation. Fig.~\ref{fig:evidence}(b) shows that quality remains closer to
+the full map around one million primitives but drops markedly below that.
+For example, office0 falls from 26.29\,dB to 20.23\,dB at 300\,000
+primitives in this separate study. This loss motivates optimising directly
+at a target map size.

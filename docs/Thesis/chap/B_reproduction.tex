@@ -1,0 +1,136 @@
+\chapter{Reproduction}
+\label{app:repro}
+
+\section{Environment}
+
+\begin{small}
+\begin{verbatim}
+git clone https://github.com/Looong01/Splatt3R-SLAM.git
+cd Splatt3R-SLAM
+conda create -n splatt3r-slam python=3.11 -y
+conda activate splatt3r-slam
+pip install torch torchvision --index-url \
+    https://download.pytorch.org/whl/cu132
+pip install cmake ninja swig mkl-devel
+pip install -r requirements.txt
+pip install -e thirdparty/in3d
+pip install --no-build-isolation thirdparty/asmk
+\end{verbatim}
+\end{small}
+
+\noindent
+faiss is built from the vendored source with GPU support; the prebuilt PyPI
+wheels must not be installed, because they shadow the build and pin
+\texttt{numpy<2}:
+
+\begin{small}
+\begin{verbatim}
+cd thirdparty/faiss
+cmake -B build . && make -C build -j$(nproc) faiss swigfaiss
+pip install --no-build-isolation --no-deps ./build/faiss/python
+cd ../..
+export CUDA_HOME=/usr/local/cuda
+export MAX_JOBS=$(nproc)
+pip install --no-build-isolation thirdparty/lietorch
+pip install --no-build-isolation \
+    thirdparty/diff-gaussian-rasterization-modified
+pip install --no-build-isolation -e .
+cd splatt3r_core/src/mast3r_src/dust3r/croco/models/curope
+python setup.py build_ext --inplace
+\end{verbatim}
+\end{small}
+
+\noindent
+The last step builds the CUDA RoPE2D kernel. It is optional --- a PyTorch
+fallback exists --- but the fallback is materially slower, and the vendored
+\texttt{kernels.cu} in this repository already carries the two changes that
+newer PyTorch requires (\texttt{tokens.type()} $\rightarrow$
+\texttt{tokens.scalar\_type()}, plus a BFloat16 dispatch), so it builds
+without patching.
+
+\section{Running the system}
+
+\begin{small}
+\begin{verbatim}
+python main.py --dataset datasets/tum/rgbd_dataset_freiburg1_desk \
+    --config config/base.yaml --no-viz \
+    --refiner --refiner-gpu 1 --refiner-duty 1.0 \
+    --refiner-polish-secs 300 --refiner-freeze-means \
+    --refiner-conf-fade 0
+\end{verbatim}
+\end{small}
+
+\noindent
+This example selects the released head, fixes centres, disables insertion
+thinning and requests a 300\,s polish. Family-head and thinning studies
+must specify their checkpoint and attenuation options separately. Exact
+saved maps used in the external comparison are identified by hashes in the
+evaluation evidence; rerunning this example is not a claim of bit-identical
+multi-process reconstruction.
+
+Rendering to disk for figures and the demonstration animations uses
+\texttt{--render-dir}. The interactive viewer's \texttt{--save-gs-view} is
+written by the visualisation process and therefore produces nothing under
+\texttt{--no-viz}; this cost one round of empty output directories before it
+was understood.
+
+\section{Scoring a map}
+
+The current external comparison uses
+\texttt{scripts/paper/render\_comparisons.py}. It retains all exported SH
+bands and uses the corrected MonoGS frame association. The older
+\texttt{scripts/eval\_map\_quality.py} is the historical DC-only harness
+for component studies and should not regenerate the fresh external table.
+
+\begin{small}
+\begin{verbatim}
+CUDA_VISIBLE_DEVICES=0 python scripts/paper/render_comparisons.py \
+    --scenes office0 office1 office2 office3
+CUDA_VISIBLE_DEVICES=1 python scripts/paper/render_comparisons.py \
+    --scenes desk office4 room0 room1 room2
+\end{verbatim}
+\end{small}
+
+The commands require the project environment, datasets and saved maps
+referenced by the script. Outputs in \texttt{logs/paper\_ral\_20261007}
+include hashes, alignment, frame indices, per-frame metrics and representative
+renders. All methods use the same non-keyframe cameras and exposure
+normalisation. Trajectories are scored with \texttt{evo\_ape tum -as}. In a headless
+environment \texttt{evo} must be told to use a non-interactive backend
+(\texttt{evo\_config set plot\_backend Agg}) or it fails at import.
+
+\section{The self-consistency check}
+
+Before a cross-system number is reported, the map is rendered from the poses
+used to build it. This check found an inverted camera-to-world convention in
+the MonoGS adapter that produced $6.09$\,dB instead of $13.85$\,dB
+(\cref{sec:protocol:selfcheck}).
+
+\section{Figures and independently formatted documents}
+
+The figure generators read saved JSON, PNG, and map evidence.
+The method overviews are native PowerPoint shapes with separate RA-L and MSc
+equation references. The older TikZ figure records the process and device
+layout. Captions, prose, numbering, classes, and bibliography styles remain
+independent.
+
+\begin{small}
+\begin{verbatim}
+python scripts/paper/make_ral_figures.py
+CUDA_VISIBLE_DEVICES=0 python \
+  scripts/paper/render_refinement_pair.py
+PYTHONPATH=/path/to/python-pptx python \
+  scripts/paper/make_overview_pptx.py
+cd docs/Thesis
+./build.sh master
+./build.sh ral
+./build.sh review
+\end{verbatim}
+\end{small}
+
+The MSc document uses the A4 report class, 12-point text, 1.5 line spacing,
+chapter-based structure and numeric \texttt{unsrtnat} bibliography.
+The RA-L reading draft uses IEEEtran; the anonymous review draft uses
+ieeeconf. All three use pdfLaTeX and distribution-bundled fonts.
+The common scientific assets do not import either document's preamble
+or prose into the other.

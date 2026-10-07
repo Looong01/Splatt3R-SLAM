@@ -1,0 +1,117 @@
+\chapter{Injection-Time Thinning and the Opacity Mechanism}
+\label{ch:thin}
+
+\section{The crowding problem}
+\label{sec:thin:crowding}
+
+A two-view prediction covers each visible surface once. A SLAM map covers it
+once \emph{per keyframe that saw it}, and on a typical indoor sequence that is
+tens of times. Nothing in the pipeline reconciles these copies: each is
+predicted independently, placed by its own keyframe's pose, and injected with
+whatever opacity its forward pass produced.
+
+Under \cref{eq:alphacomp} the consequence is specific rather than generic. If
+the copies agreed in colour and depth, stacking would still change effective
+opacity: $K$ copies with opacity $\alpha$ have combined opacity
+$1-(1-\alpha)^K$. Inconsistent copies additionally differ in depth by the per-forward scale gauge
+(\cref{sec:neg:frontend} measures this at ${\sim}5\%$), in colour by the
+source-frame photometric anchoring of \cref{eq:colorresidual}, and in extent by
+the head's own scale prediction. A ray therefore accumulates opacity from
+several slightly-displaced, slightly-different surfaces before its
+transmittance runs out, and what should be one sharp surface composites into
+haze.
+
+The released checkpoint makes this worse in a way that is visible in its
+statistics rather than in its images: its predicted opacity is
+\emph{saturated}, with median $1.000$ and every Gaussian above $0.9$
+(\cref{sec:adapt:aug}). A saturated opacity channel cannot express ``this
+copy should contribute less''. The lever below supplies that expression from
+outside the network.
+
+\section{Insertion-time opacity attenuation}
+\label{sec:thin:lever}
+\label{sec:method:thin}
+
+A SLAM map covers each surface with predictions from many keyframes. Under
+\cref{eq:alphacomp} with a black background, a surface covered by many
+over-solid Gaussians composites to haze rather than to a sharper surface. We
+therefore fade opacity at the moment a Gaussian enters the map, in proportion
+to how little the pointmap confidence vouches for it.
+
+Confidences are not calibrated across keyframes, so we rank-normalise
+\emph{within} each keyframe. For a keyframe with $N$ Gaussians and confidence
+values $\{c_n\}$, let $r_n$ be the rank of $c_n$ and
+$\hat{c}_n = r_n/(N-1) \in [0,1]$. The injected opacity is
+\begin{equation}
+\alpha'_n \;=\; \alpha_n \cdot
+\mathrm{clip}\Bigl(1 - 2\lambda\,(1-\hat{c}_n),\; 0.1,\; 1\Bigr),
+\label{eq:thin}
+\end{equation}
+with dose $\lambda{=}0.45$ in the thinning experiments. External comparisons
+disable thinning with $\lambda=0$. The lower clip at $0.1$ retains every
+primitive and its refinement gradient.
+
+\subsection{Relation to pairwise training}
+An opacity penalty added to \cref{eq:splatt3rloss} would act during pair
+training. Crowding appears later, after SLAM accumulates
+keyframes over a surface, and \cref{eq:splatt3rloss} never sees more than two
+context views. Consistent with this, we measured that the refiner
+un-saturates opacity on its own even with the released head (median
+$1.0\rightarrow0.26$). Attenuation therefore starts the map closer to an
+opacity state that the optimiser can reach. A dose--response check at two
+thinning depths (opacity knees $0.9$ and $0.6$) gave $-21.0\%$ and
+$-15.8\%$ LPIPS. Benefits persist for these heads, supporting complementarity
+in this experiment. A different training objective or sequence-level
+training procedure might still learn an equivalent adjustment.
+
+\section{Opacity, colour, and visibility}
+\label{sec:method:mech}
+
+The DC colour is an SH residual added to the encoding of input RGB, with
+clamping at conversion (\cref{eq:colorresidual}). Both the residual and
+opacity can respond to photometric perturbations. Opacity additionally
+controls which surfaces remain visible along a ray.
+
+For an isolated primitive over black, greater opacity increases its
+contribution. In a multicolour stack it may instead obscure brighter content.
+The background therefore does not imply a monotone relation between opacity
+and brightness. We test their correlation without assigning a unique cause.
+
+We registered a sign-specific prediction. Let $\ell$ be input
+luminance and $\rho$ the Spearman correlation between $\alpha$ and $\ell$ over
+predicted Gaussians. A head trained with independently darkened inputs
+(synthetic vignetting and white-balance jitter) was predicted to have
+$\rho<0$, whereas a real-sensor head without synthetic darkening was
+predicted to have $\rho>0$. \Cref{sec:exp:mech} reports both signs in the
+five tested heads: two Replica augmentation heads and three real-data
+heads. These are five models, not five independent dataset families.
+Correlations are consistent with opacity responding to photometry, but do
+not identify a unique causal mechanism.
+
+\section{Controls}
+\label{sec:thin:ablations}
+
+\subsection{Confidence weighting}
+
+\Cref{eq:thin} fades in proportion to rank-normalised confidence, and the name
+``confidence-weighted thinning'' invites the reading that the confidence signal
+is what makes it work. We measured the alternative --- the same total dose
+applied \emph{uniformly}, with no confidence term at all --- and against
+confidence weighting it is statistically a coin flip: $n{=}12$ online cells,
+median difference $-0.06\%$.
+
+Reducing injected opacity is the robust effect in this study. The
+confidence-weighted form concentrates reduction where the pointmap is least
+sure, but the uniform control performs similarly.
+
+\subsection{Shape-weighted attenuation}
+
+A second opacity lever reduces each Gaussian's opacity in proportion to how
+elongated it is relative to its local surface sampling. It targets trailing
+primitives near depth discontinuities. In measurement it fades $64$--$98\%$
+of all Gaussians by $39$--$65\%$ of their opacity. Its effect is therefore
+broad rather than sparse.
+
+LPIPS improves on the three tested sequences by $-12.7\%$, $-6.6\%$, and
+$-1.3\%$, with a PSNR change of $-0.04$ to $-0.22$\dB{}.
+The LPIPS gain is largest in scenes with more streaked geometry.

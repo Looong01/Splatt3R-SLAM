@@ -1,0 +1,110 @@
+\chapter{Adapting the Feed-Forward Head}
+\label{ch:adapt}
+
+\section{Choosing the trainable module}
+\label{sec:method:head}
+
+Splatt3R trains its Gaussian head against frozen encoder and decoder features.
+We compare three adaptation choices:
+
+\begin{itemize}\itemsep2pt
+\item \textbf{Encoder LoRA}~\cite{hu2022lora} ($r{=}8$, $\alpha{=}16$ on
+      \texttt{qkv}/\texttt{proj}/\texttt{fc1}/\texttt{fc2}):
+      $-49\%$ reconstruction quality against the released checkpoint, with
+      predicted scales exploding by $1821\times$. The failure is immediate,
+      not a late-training instability.
+\item \textbf{Decoder-only LoRA}: $+0.37$\dB{} at epoch~1, then collapse to
+      $-1.61$\dB{} by epoch~5 with a $12\times$ climb in the $99$th-percentile
+      scale.
+\item \textbf{Head-only} (encoder and decoder bit-frozen, only
+      \texttt{gaussian\_dpt} trainable): improves, and is what we keep.
+\end{itemize}
+
+The collapse coincides with the exponential scale parameter
+$s = \exp(\hat{s})$. A small feature shift can produce a large scale change,
+while different scale--opacity combinations can fit the same supervision
+views. We therefore retain head-only training for the evaluated system.
+The shared encoder, decoder, and geometric heads remain frozen; the Gaussian
+DPT head uses the upstream objective and Adam~\cite{kingma2015adam}.
+
+\section{Training setup}
+\label{sec:adapt:setup}
+
+Adaptation is performed per dataset family. The families differ in sensor,
+exposure, motion, and depth availability. Each receives its own head
+checkpoint, loaded at start-up.
+
+The objective is the upstream one of \cref{eq:splatt3rloss}, unchanged, so
+that the comparison against the released checkpoint isolates the data and the
+choice of what to train, not the loss. Only \texttt{gaussian\_dpt} receives
+gradients; the encoder and decoder are frozen, and this is verified by
+comparing parameter hashes before and after training rather than by trusting
+a \texttt{requires\_grad} flag.
+
+The TUM, EuRoC and 7-Scenes heads in the reported paired adaptation study
+were trained for $40$ epochs. Their batch sizes are $2$, $4$ and $8$, with
+learning rates $10^{-5}$, $1.41\times10^{-5}$ and $2\times10^{-5}$,
+respectively. A $15\%$ validation split is drawn within the available family
+data. These experiments measure in-family adaptation; they do not establish
+transfer to an unseen dataset family or a sequence-disjoint benchmark.
+
+Two of the five families (EuRoC and ETH3D) ship no usable depth for the
+training pairs. Rather than exclude them, pairs are supervised with
+self-predicted pseudo-depth from the frozen backbone. This is a weaker
+supervision signal, and the results in \cref{ch:results} should be read with
+that in mind: EuRoC is the family where the refiner contributes least
+($+1.00$\dB) and ETH3D the family where it contributes most ($+8.69$\dB),
+and we do not have an explanation for that spread
+(\cref{sec:neg:attrib}).
+
+\section{Photometric augmentation and the opacity channel}
+\label{sec:adapt:aug}
+
+\Cref{sec:method:mech} examines opacity's photometric role. Inputs darkened
+independently of target views provide a controlled way to test whether
+opacity statistics respond to appearance perturbations. The SH residual
+can also change colour, so this experiment does not isolate opacity as the
+only compensating channel.
+
+Four augmentation regimes were trained for $40$ epochs each on the same family
+and probed with an identical five-pair protocol. The table reports the
+$90$th-percentile predicted scale (a proxy for how far the head has moved from
+the released checkpoint's geometry), the median predicted opacity, and the
+fraction of Gaussians with opacity above $0.9$ --- i.e.\ how saturated the
+opacity channel is:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Head & scale p90 & inflation & median $\alpha$ & $\alpha>0.9$ \\
+\midrule
+base (released)              & \phantom{0}9.78 & ---       & 1.000 & 100.0\% \\
+content noise + blur         & 26.18 & $+167.8\%$ & 1.000 & 100.0\% \\
+global photometry            & 17.37 & $+77.6\%$  & 0.991 & \phantom{0}83.1\% \\
+spatial photometry           & 14.82 & $+51.5\%$  & 0.876 & \phantom{0}42.9\% \\
+content + spatial photometry & 10.97 & $+12.2\%$  & 0.933 & \phantom{0}62.7\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three things are visible. The released checkpoint's opacity is
+\emph{completely saturated} --- median $1.000$, every Gaussian above $0.9$ ---
+which provides little initial differentiation between primitives and
+motivates testing an external attenuation prior. Content-only
+augmentation does not move the channel at all while inflating scale by
+$168\%$. Global photometry modestly reduces saturation; spatial photometry
+reduces it much more strongly, from $100\%$ to $42.9\%$. These are observed
+parameter responses, rather than a complete account of what the head learned.
+
+The combined regime was tested against an explicit prediction: if the two
+perturbations engage independently, saturation should fall to $30$--$50\%$
+\emph{and} scale inflation should exceed $10\%$. Scale inflation cleared the
+bar at $+12.2\%$, barely; saturation landed at $62.7\%$, \emph{above} the
+predicted range and above what spatial photometry achieved on its own. Both
+numbers moved in the direction of mutual suppression rather than independent
+engagement. The prediction is therefore not supported.
+
+Across four scenes the spatial-photometry
+head gives a mean LPIPS improvement of $-14.55\%$, with a per-scene spread of
+$-6.6\%$ to $-19.2\%$. The gain is scene-dependent.

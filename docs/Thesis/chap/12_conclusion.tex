@@ -1,0 +1,54 @@
+\chapter{Conclusion and Future Work}
+\label{ch:conclusion}
+
+This thesis asks how pairwise Gaussian predictions can become a persistent
+SLAM map. Splatt3R-SLAM answers with shared keyframe anchors. Local Gaussians
+and their supervision cameras follow the same pose corrections, while a
+separate process improves appearance. The design keeps geometric tracking
+inside MASt3R-SLAM and makes prediction, insertion, and refinement distinct
+experimental stages.
+
+\section{Answers to the research questions}
+
+\paragraph{RQ1: adapting prediction}
+Training only the Gaussian head preserves the shared features used by
+tracking. It improves several dataset families, although the gain is weak on
+7-Scenes. The tested encoder and decoder LoRA routes destabilise Gaussian
+scale and reduce reconstruction quality.
+
+\paragraph{RQ2: inserting overlapping predictions}
+Opacity attenuation improves LPIPS in ten of twelve recorded comparisons.
+Confidence-ranked allocation performs similarly to uniform attenuation, so
+the main measured effect is the lower initial opacity. Refinement later moves
+the median opacity in the same direction.
+
+\paragraph{RQ3: sequence-level refinement}
+Refinement improves PSNR by $1.00$--$8.69$\,dB in four on/off controls while
+trajectory accuracy remains close to the inherited tracker. A second GPU
+reduces contention in the desk control. Causal quality still depends on the
+number and distribution of updates received before sequence end.
+
+\paragraph{RQ4: complete-system comparison}
+With the released head, no thinning, fixed centres, and $300$\,s polish,
+Splatt3R-SLAM reaches $23.02$\,dB mean PSNR on eight Replica scenes,
+compared with $19.48$\,dB for Photo-SLAM. It improves PSNR on all eight
+scenes and LPIPS on five. On TUM desk, its $13.95$\,dB is close to
+MonoGS's $13.91$\,dB, while MonoGS has lower LPIPS. These maps contain
+millions of primitives and use much more memory than the compared systems.
+
+\section{Future work}
+
+The first priority is compact mapping. Primitive selection, merging, and
+refinement should operate under a target memory budget instead of pruning a
+full map after optimisation. The second is budget-aware online refinement:
+view sampling and region scheduling should scale with map growth while
+respecting a tracker-latency limit. The third is joint consistency across
+anchors. Multi-view geometry, camera poses, and local appearance should be
+updated together so that better geometry does not break an already fitted
+rendering.
+
+Evaluation should also expand beyond one TUM rendering sequence. Repeated
+runs, matched total compute, sequence-disjoint adaptation, and a scoring set
+excluded from all optimisation paths would separate small method differences
+from execution variance. These steps would test whether dense pairwise
+prediction can retain its reconstruction advantage in a compact, causal map.

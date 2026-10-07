@@ -1,0 +1,36 @@
+% pdflatex + distribution fonts only; no OS font dependency.
+\usepackage[T1]{fontenc}
+\usepackage{times}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx,booktabs,array}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,calc,backgrounds}
+\usepackage{cite}
+\usepackage{balance}
+\usepackage{capt-of}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{pdftitle={Splatt3R-SLAM: From Image Pairs to Persistent Maps}}
+\ifralreview
+  \hypersetup{pdfauthor={}}
+\else
+  \hypersetup{pdfauthor={Zelong Li}}
+\fi
+\newcommand{\method}{Splatt3R-SLAM}
+\newcommand{\best}[1]{\textbf{#1}}
+\newcommand{\dB}{\,dB}
+\newcommand{\up}{$\uparrow$}
+\newcommand{\dn}{$\downarrow$}
+\graphicspath{{ral/fig/}}
+\IEEEaftertitletext{%
+  \begin{minipage}{\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{teaser.pdf}
+    \captionof{figure}{\textbf{From local predictions to a persistent map.}
+    Shared anchors carry predicted Gaussians and their observation cameras
+    through pose corrections. Left: a middle-ranked Replica office0 view.
+    Right: means over eight Replica scenes using common non-keyframe cameras
+    and full exported SH. Our map uses the released head and 300\,s polish;
+    Sec.~\ref{sec:experiments} specifies the evaluation and budgets.}
+    \label{fig:teaser}
+  \end{minipage}\vspace{10pt}%
+}

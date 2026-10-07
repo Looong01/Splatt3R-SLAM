@@ -1,0 +1,36 @@
+\chapter*{Notation and Abbreviations}
+\addcontentsline{toc}{chapter}{Notation and Abbreviations}
+\markboth{Notation and Abbreviations}{Notation and Abbreviations}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$I_t$                  & RGB image of frame $t$ \\
+$\mathbf{X}_t$         & pointmap predicted for frame $t$, in some frame's coordinates \\
+$c_n,\hat{c}_n$        & raw confidence and its within-keyframe normalised rank \\
+$\alpha_n$             & predicted opacity of Gaussian $n$ \\
+$\alpha'_n$            & opacity after injection-time thinning \\
+$\lambda$              & thinning strength, \texttt{--refiner-conf-fade} \\
+$\lambda_D$            & D-SSIM weight in the refinement objective \\
+$\mathbf{T}_{wc}$      & camera-to-world pose, $\mathrm{SE}(3)$ or $\mathrm{Sim}(3)$ \\
+$s_k$                  & scale of keyframe cluster $k$ \\
+$\mathcal{L}_{\text{ref}}$ & online refinement objective \\
+$\hat{I}$              & rendered image \\
+\midrule
+Abbrev. & Expansion \\
+\midrule
+3DGS   & 3D Gaussian Splatting \\
+ATE    & Absolute Trajectory Error \\
+D-SSIM & structural dissimilarity, $1-\mathrm{SSIM}$ \\
+GS     & Gaussian Splatting \\
+LPIPS  & Learned Perceptual Image Patch Similarity \\
+LoRA   & Low-Rank Adaptation \\
+PSNR   & Peak Signal-to-Noise Ratio \\
+RMSE   & Root-Mean-Square Error \\
+SLAM   & Simultaneous Localisation and Mapping \\
+SSIM   & Structural Similarity Index Measure \\
+\bottomrule
+\end{tabular}
+\end{center}

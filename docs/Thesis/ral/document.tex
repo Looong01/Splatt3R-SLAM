@@ -1,0 +1,32 @@
+\begin{document}
+\maketitle
+\begin{abstract}
+An image pair can now produce a dense 3D Gaussian reconstruction in one
+network pass. Building a lasting map from these predictions is harder:
+surfaces overlap, and loop closures move earlier camera poses.
+We present Splatt3R-SLAM, which connects Splatt3R prediction to
+MASt3R-SLAM through shared keyframe anchors. Each anchor carries both a local
+Gaussian map and the camera poses used to refine it. Pose corrections
+therefore move the map and its observations together. A separate refiner
+improves appearance while the geometric tracker estimates motion.
+On eight Replica scenes, the system reaches 23.02\,dB mean PSNR after
+300\,s refinement, compared with 19.48\,dB for Photo-SLAM under common
+non-keyframe reconstruction evaluation. On TUM desk, PSNR is close to MonoGS,
+which has lower LPIPS. Component studies isolate the effects of refinement,
+head adaptation, and opacity attenuation. Dense prediction provides a useful
+map initialisation, while its millions of primitives make compact online
+mapping the main remaining challenge.
+\end{abstract}
+\ifralreview\else
+\begin{IEEEkeywords}
+SLAM, mapping, visual learning, 3D Gaussian splatting.
+\end{IEEEkeywords}
+\fi
+
+\input{ral/introduction}
+\input{ral/method}
+\input{ral/experiments}
+\input{ral/discussion}
+\bibliographystyle{IEEEtran}
+\bibliography{main}
+\end{document}

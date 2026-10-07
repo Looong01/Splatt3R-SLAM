@@ -1,0 +1,29 @@
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrl@{}}
+\toprule
+Ablation & $\Delta$PSNR & Note \\
+\midrule
+Refiner on, ETH3D   & $+8.69$ & 300\,s polish \\
+Refiner on, Replica & $+4.62$ & \\
+Refiner on, TUM     & $+3.52$ & \\
+Refiner on, EuRoC   & $+1.00$ & \\
+\midrule
+Causal replay, 120 it. & $+1.21$ & TUM desk \\
+Second GPU, unthrottled & $+2.15$ & tracker 101 to 103\,ms \\
+\midrule
+Uniform vs.\ recency & $+0.34$ & held-out mean \\
+Voxel dedup, 10\,mm & $-0.53$ & $-27.6\%$ map size \\
+\bottomrule
+\end{tabular}
+\caption[Refinement ablations]{Refinement ablations. ATE is unchanged in every row
+($0.016975$ vs.\ a $0.0170$ baseline in the deterministic configuration): the
+map is strictly downstream of tracking, and the pre-registered failure
+condition ``ATE moves at all'' never fired. Earlier fixed-map probes favoured
+freezing centres at approximately 300 and 3000 steps; the broader causal study
+did not support making this a universal online default. The dedup row is a map-size
+control that costs quality when it fires without a recovery budget, not a
+quality feature.}
+\label{tab:refiner}
+\end{table}

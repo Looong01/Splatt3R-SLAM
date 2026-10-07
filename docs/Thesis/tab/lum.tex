@@ -1,0 +1,19 @@
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}llr@{}}
+\toprule
+Head & Training data & $\rho(\alpha,\text{luminance})$ \\
+\midrule
+photospatial & Replica + synthetic darkening & $-0.316$ \\
+mixed        & Replica + synthetic darkening & $-0.279$ \\
+TUM          & real sensor                   & $+0.303$ \\
+ETH3D        & real sensor                   & $+0.392$ \\
+EuRoC        & real sensor                   & $+0.304$ \\
+\bottomrule
+\end{tabular}
+\caption[Opacity--luminance correlations on five heads]{Registered
+opposite-sign prediction, matched by five tested heads: two Replica
+augmentation heads and three real-data heads. This correlation experiment
+does not establish a unique causal interpretation of opacity.}
+\label{tab:lum}
+\end{table}

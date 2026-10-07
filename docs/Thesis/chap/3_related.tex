@@ -1,0 +1,78 @@
+\chapter{Related Work}
+\label{ch:related}
+
+\section{Feed-forward 3D reconstruction}
+DUSt3R~\cite{wang2024dust3r} recasts two-view stereo as direct regression of
+aligned pointmaps, removing explicit correspondence search;
+MASt3R~\cite{leroy2024mast3r} adds a matching head and metric scale, and
+VGGT~\cite{wang2025vggt} generalises the formulation to many views.
+Splatt3R~\cite{smart2024splatt3r} builds on MASt3R by freezing the encoder and
+decoder and training only a Gaussian head that emits, per pixel, a covariance,
+spherical-harmonic colour and opacity (\cref{eq:mu}--\cref{eq:splatt3rloss}).
+Its head is trained against frozen features, motivating our restricted
+adaptation study (\cref{sec:method:head}). The pairwise photometric objective
+does not directly observe the interactions of hundreds of accumulated
+keyframes in a SLAM map.
+
+\section{Neural and Gaussian map representations}
+Dense SLAM has passed through three map representations in quick succession.
+Volumetric TSDF fusion gives geometry but no photorealistic appearance;
+neural implicit fields, following NeRF~\cite{mildenhall2020nerf}, give
+appearance with potentially substantial rendering and incremental optimisation
+cost. 3D Gaussian splatting~\cite{kerbl20233dgs} offers two useful
+properties that belong to the representation rather than to any particular
+system: rasterisation is explicit and fast, and the primitives are local, so
+an update in one part of the scene does not require re-evaluating a global
+network. Locality also makes anchor-carried composition
+(\cref{sec:system:anchor}) straightforward: pose corrections can be applied
+to local primitives without re-optimising their attributes.
+
+\section{Gaussian-splatting SLAM}
+MonoGS~\cite{matsuki2024monogs} optimises Gaussians and camera poses jointly by
+gradient descent from monocular video. Photo-SLAM~\cite{huang2024photoslam}
+couples ORB-SLAM3~\cite{campos2021orbslam3} tracking with a
+Gaussian mapping thread. SplaTAM~\cite{keetha2024splatam} and
+Gaussian-SLAM~\cite{yugay2023gaussianslam} take related routes with RGB-D
+input. Unblur-SLAM~\cite{zhang2026unblur} combines feed-forward deblurring
+with rendering-based test-time refinement for blurred observations.
+Its separation of learned initialisation and scene-specific refinement is
+related to our design, but we address pairwise Gaussian accumulation under
+a changing pose graph and introduce no blur model.
+The optimisation-based systems obtain map primitives by per-scene optimisation, and their
+map quality is therefore a function of the optimisation budget they are given
+--- a dependency we make explicit when comparing
+(\cref{ch:results}). Our system differs in that primitives arrive
+\emph{predicted}: the optimiser refines an initialisation that is already
+approximately correct, rather than creating structure.
+
+\section{Feed-forward priors inside SLAM}
+DROID-SLAM~\cite{teed2021droidslam} established learned dense optimisation for
+tracking. MASt3R-SLAM~\cite{murai2025mast3rslam} uses the MASt3R prior for
+real-time dense tracking and pointmap fusion, and is the system we build on;
+we inherit its tracking front-end unmodified, which is why our trajectory
+accuracy matches it and why we are explicit that trajectory accuracy is
+\emph{not} a contribution of this work.
+VGGT-SLAM~\cite{maggio2025vggtslam} aligns VGGT submaps on the $SL(4)$
+manifold; it produces poses and a point cloud but no renderable map, so in our
+comparison it serves as a tracking control rather than a rendering baseline.
+
+\section{Position of this work}
+Splatt3R-SLAM combines the fast initialisation of feed-forward prediction
+with sequence-level refinement. Unlike pairwise reconstruction, it must
+maintain local predictions under pose-graph updates. Unlike optimisation-first
+Gaussian SLAM, it begins with a dense primitive at almost every valid pixel.
+The shared-anchor design addresses the first difference. The adaptation,
+thinning, and refinement studies address the second.
+
+\section{Parameter-efficient adaptation}
+LoRA~\cite{hu2022lora} adapts a backbone through low-rank updates.
+Splatt3R instead trains its Gaussian head against frozen MASt3R features.
+We compare these choices in \cref{ch:adapt}. The tested encoder route loses
+$49\%$ reconstruction quality, while head-only training improves several
+dataset families.
+
+\section{Evaluation practice}
+PSNR/LPIPS~\cite{zhang2018lpips} and similarity-aligned
+ATE~\cite{umeyama1991,grupp2017evo} depend on scoring views, camera poses,
+resolution, preprocessing, and optimisation budget. \Cref{ch:protocol}
+defines one common renderer and camera set for the local comparison.

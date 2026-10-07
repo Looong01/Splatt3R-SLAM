@@ -1,0 +1,69 @@
+\chapter{Discussion and Limitations}
+\label{ch:discussion}
+
+\section{What shared anchors solve}
+
+Shared anchors preserve the relative coordinates between a local Gaussian
+map and the cameras used to refine it. The controlled pose-correction test
+supports this relation, and trajectory accuracy remains close to the
+MASt3R-SLAM control. This separation allows appearance refinement to run in
+another process without becoming a second pose optimiser.
+
+The construction does not merge neighbouring local maps. Two anchors can
+still predict different depths, colours, or extents for the same surface.
+Seams and cross-frame colour changes can therefore remain after loop closure.
+Joint optimisation of poses, geometry, and appearance is a possible extension.
+
+\section{Map size}
+\label{sec:lim:compact}
+
+Dense prediction creates substantially more primitives than the compared
+systems. On Replica, our count is about $22.5$--$42.5$ times Photo-SLAM's.
+On TUM desk, the ratios are about $66$ to Photo-SLAM and $104$ to MonoGS.
+The refiner-off desk run uses $16.4$ times Photo-SLAM's peak GPU memory.
+
+\Cref{tab:curve} keeps the highest-opacity primitives at smaller budgets and
+re-renders without optimisation.
+
+\input{tab/curve}
+
+Quality falls sharply below about one million primitives in this test.
+The result shows that opacity-ranked removal after full-map optimisation is
+insufficient. It does not measure a map trained under the smaller budget.
+Budget-aware insertion, merging, pruning, and refinement are therefore
+important next steps.
+
+\section{Online refinement}
+
+Moving refinement to a second GPU keeps median tracking latency close to the
+refiner-off control on TUM desk. The broader campaign still uses up to
+$41.1$~GB on GPU~0 and $14.0$~GB on GPU~1. Seven of nine maps improve LPIPS
+before polish, while two larger TUM maps worsen.
+
+The iteration study explains part of this gap. Most of the TUM desk gain
+appears by 500 steps, but maps in the causal campaign receive only
+$104$--$190$ steps before sequence end. A fixed compute budget supplies fewer
+updates per region as the map grows. Adaptive region and view scheduling
+should therefore be evaluated together with latency and memory.
+
+\section{Evaluation scope}
+
+The Replica comparison covers eight scenes; the three-method TUM rendering
+comparison covers desk. All maps are rendered at common cameras, but input
+preprocessing, map size, and total optimisation differ. Photo-SLAM runs to
+its own shutdown schedule on Replica. On TUM, our $300$\,s polish is close
+to MonoGS's $339$\,s colour phase, but does not equal total compute.
+
+The scoring set excludes keyframes. Other tracked frames may still supervise
+our refiner, so this is non-keyframe reconstruction rather than strict
+unseen-view evaluation. A stronger generalisation experiment would exclude
+scoring frames from every optimisation and model-selection path.
+
+\section{Statistical coverage}
+
+Several reported margins come from one run per configuration. The large
+Replica PSNR difference is consistent across all eight scenes, while the
+TUM PSNR difference to MonoGS is only $0.035$\,dB and the LPIPS ordering is
+reversed. Confidence-ranked and uniform opacity attenuation are also close.
+Repeated runs, more sequences, and matched resource budgets are needed to
+resolve these smaller effects.

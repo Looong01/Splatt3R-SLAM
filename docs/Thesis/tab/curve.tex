@@ -1,0 +1,21 @@
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Gaussians kept & office0 & office1 & room0 & room2 \\
+\midrule
+full ($\sim$2--3M)     & 26.29 & 22.08 & 25.44 & 23.62 \\
+1{,}000{,}000          & 24.68 & 21.71 & 25.01 & 22.87 \\
+300{,}000              & 20.23 & 18.96 & 16.26 & 17.87 \\
+83{,}372               & 13.54 & 13.97 & \phantom{0}8.68 & 10.43 \\
+23{,}019               & 12.04 & 12.08 & \phantom{0}5.16 & \phantom{0}7.74 \\
+\bottomrule
+\end{tabular}
+\caption[PSNR versus map budget, four Replica scenes]{Separate recorded
+truncation study on our maps. Highest-opacity primitives are retained
+without re-optimisation. Quality remains closer to the full map around one
+million primitives and declines sharply at smaller budgets. These points
+are not an estimate of optimal quality when trained or refined at each budget.}
+\label{tab:curve}
+\end{table}

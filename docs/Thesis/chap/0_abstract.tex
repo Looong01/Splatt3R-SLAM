@@ -1,0 +1,26 @@
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+\markboth{Abstract}{Abstract}
+\begin{singlespace}
+
+An image pair can now produce a dense 3D Gaussian reconstruction in one
+network pass. A video instead creates overlapping predictions that must follow
+loop-closure corrections. This thesis presents Splatt3R-SLAM, a monocular
+system that turns local predictions into a persistent map. It gives each
+local Gaussian map and its observation cameras the same keyframe anchor, so
+pose corrections move both together. A separate process refines appearance
+while MASt3R-SLAM estimates motion.
+
+Head-only adaptation changes prediction, opacity attenuation changes
+insertion, and photometric refinement uses sequence observations. Refinement
+improves PSNR by $1.00$--$8.69$\,dB across four controls. Attenuation
+improves LPIPS in ten of twelve tests, although confidence weighting offers
+little advantage over uniform attenuation.
+
+Under common non-keyframe reconstruction evaluation, the released head with
+$300$\,s refinement reaches $23.02$\,dB mean PSNR on eight Replica scenes,
+compared with $19.48$\,dB for Photo-SLAM. On TUM desk, its $13.95$\,dB is
+close to MonoGS, which has lower LPIPS. Dense prediction provides a useful
+initialisation but creates millions of primitives. Compact online mapping
+remains the main open problem.
+\end{singlespace}

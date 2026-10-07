@@ -1,0 +1,129 @@
+\chapter{Evaluation Protocol}
+\label{ch:protocol}
+
+All comparison maps and trajectories come from local runs on a host with two
+RTX~A6000 GPUs. This chapter defines the common full-SH renderer, cameras,
+alignment, and aggregation.
+
+\input{tab/systems}
+
+\section{Common rendering conditions}
+
+For each scene, $100$ frames are selected outside the union of participating
+systems' keyframes. Each exported map is rendered at these same cameras by
+one implementation, with identical exposure normalisation and metric code.
+The resolution is $512\times288$ on Replica and $512\times384$ on TUM.
+All exported spherical-harmonic bands are retained: degree three for
+Photo-SLAM, degree zero for the evaluated MonoGS and our maps.
+
+Scene PSNR is computed as $-10\log_{10}$ of the mean frame MSE, rather than
+as the arithmetic mean of per-frame PSNR. LPIPS-AlexNet~\cite{zhang2018lpips}
+is averaged across frames. Dataset means weight each scene equally.
+Scene PSNR and the median paired frame difference can therefore rank methods
+differently.
+
+\subsection{Evaluation scope}
+
+We call these \emph{non-keyframe reconstruction} scores. Tracked
+non-keyframes may enter the refiner's supervision pool. Their exclusion from
+the keyframe set therefore does not guarantee they were unseen during
+optimisation. Ground-truth cameras reduce dependence on each system's own
+evaluation-pose estimates, but expose tracking and alignment errors as well
+as map errors. Common rendering also cannot remove differences in input
+preprocessing, undistortion or optimisation history.
+
+A strict novel-view experiment would exclude scoring views from every
+optimisation and model-selection path.
+
+\subsection{Datasets and configurations}
+
+Rendering covers all eight Replica~\cite{straub2019replica} scenes and TUM
+RGB-D~\cite{sturm2012tum} \texttt{freiburg1\_desk}, with monocular input for
+all compared systems. Trajectory accuracy covers all nine TUM freiburg1
+sequences. Adaptation and refinement studies additionally use
+EuRoC~\cite{burri2016euroc}, ETH3D~\cite{schops2017eth3d} and
+7-Scenes~\cite{shotton2013scenecoord}.
+
+The external rendering configuration uses the released Splatt3R head,
+fixed Gaussian centres, insertion thinning disabled and $300$\,s
+post-sequence refinement. Photo-SLAM runs to its own shutdown schedule, so
+Replica optimisation budgets are not matched. MonoGS uses a $339$\,s
+colour-refinement phase on TUM desk. That phase is close in duration to our
+polish, but is not a match of total pipeline compute.
+
+Family-head adaptation and thinning use separate paired runs. Maps delivered
+at sequence end are reported separately from post-sequence polish.
+
+\subsection{Alignment}
+
+Each monocular map has its own similarity gauge. We fit a map-to-ground-truth
+alignment $(s,R,t)$ to corresponding estimated and ground-truth camera centres
+using Umeyama's method~\cite{umeyama1991}. A ground-truth camera-to-world pose
+is transported into map coordinates by
+\begin{equation}
+R_{\text{map}}=R^\top R_{\text{gt}},\qquad
+t_{\text{map}}=R^\top(t_{\text{gt}}-t)/s.
+\label{eq:align}
+\end{equation}
+The inverse scale acts on translation, not on the rotation block. Putting it
+inside the rotation would produce a non-orthonormal camera orientation.
+ATE is translation RMSE after similarity alignment, evaluated with
+\texttt{evo\_ape tum -as}~\cite{grupp2017evo}.
+
+MonoGS records estimated and ground-truth keyframe poses together. Its TUM
+keyframes are recovered from those saved GT poses and checked against GT
+orientation. This avoids confusing indices in its RGB-D-associated stream
+with indices in the raw RGB sequence. The updated comparison uses this
+association throughout selection, alignment and rendering.
+
+\section{Self-consistency and provenance}
+\label{sec:protocol:selfcheck}
+
+Before interpreting a cross-system margin, the exported map is rendered at
+the poses from which it was built. A poor result here requires checking
+camera conventions, image association and map loading before interpreting
+it as a property of the method. In an earlier MonoGS diagnostic, interpreting
+camera-to-world poses as world-to-camera changed the measured score from
+$18.71$ to $4.36$\,dB. Those are diagnostic values from that experiment,
+not the updated common-camera scores in \cref{tab:tum}.
+
+The current evidence records the input PLY and trajectory hashes and sizes,
+alignment transforms, all scoring frame indices, per-frame metrics and
+representative-view selection. It also records DC-only scores for comparison
+with the older renderer, which discarded higher SH bands. The updated
+Photo-SLAM Replica mean is $19.483$\,dB with full SH, compared with
+$19.581$\,dB in that DC-only evaluation. The external tables use full SH
+consistently; historical ablations retain their original configurations.
+
+Qualitative views are selected at the two middle ranks of the per-frame
+Ours-minus-baseline PSNR difference: MonoGS on TUM and Photo-SLAM on Replica.
+All methods receive the same crop coordinates and image scale. This makes
+selection repeatable without selecting the most favourable tail.
+
+\section{Pose-source sensitivity}
+\label{sec:protocol:offset}
+
+Earlier diagnostics rendered an unchanged MonoGS map from its estimated
+poses and from aligned ground-truth poses, obtaining $18.71$ and
+$9.87$\,dB, respectively. A separate Photo-SLAM diagnostic measured a
+smaller difference of approximately $2.6$\,dB. These experiments demonstrate
+that map quality is coupled to the camera poses used to evaluate it.
+They also include alignment error and the degree to which map parameters
+have adapted to their training cameras.
+
+An earlier local-to-published comparison changed views, resolution, masking,
+undistortion, and optimisation budget at once. It cannot isolate a fixed
+protocol offset. The comparison tables therefore contain only locally
+rendered scores under the conditions above.
+
+\section{Systems compared}
+\label{sec:protocol:systems}
+
+\Cref{tab:systems} identifies each system's available outputs.
+We did not obtain a monocular MonoGS Replica map with the available
+configurations; its depth-assisted configuration is excluded.
+
+Comparable three-method TUM artefacts were obtained on desk; broader
+rendering coverage remains future work. Photo-SLAM uses OpenCV~4.10 for
+CUDA compatibility rather than its tested 4.7/4.8 stack.
+\Cref{app:baselines} records this preprocessing-related deviation.

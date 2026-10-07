@@ -1,0 +1,86 @@
+\chapter{Hyper-parameters and Configuration}
+\label{app:hyper}
+
+This appendix distinguishes current command-line defaults from settings
+used in specific experiments. Historical ablations changed individual
+options; no single default configuration describes every result.
+
+\section{Head-only adaptation}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Setting & Value & Note \\
+\midrule
+Trainable module   & \texttt{gaussian\_dpt} only & Gaussian prediction \\
+Frozen             & encoder + decoder & checked unchanged \\
+Objective          & \cref{eq:splatt3rloss} & upstream, unchanged \\
+$\lambda_{\text{LP}}$ & $0.25$ & released configuration \\
+Optimiser          & Adam~\cite{kingma2015adam} & \\
+Granularity        & one checkpoint per dataset family & \\
+Families           & TUM, 7-Scenes, EuRoC, ETH3D, Replica & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The two adaptation routes that were measured and rejected
+(\cref{sec:neg:lora}) used LoRA rank $r{=}8$, $\alpha{=}16$ on
+\texttt{qkv}/\texttt{proj}/\texttt{fc1}/\texttt{fc2}.
+
+\section{Injection-time thinning}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Flag & Default & Meaning \\
+\midrule
+\texttt{--refiner-conf-fade}    & $0.45$ & dose $\lambda$ of \cref{eq:thin} \\
+\texttt{--refiner-uniform-fade} & $0$    & uniform-dose ablation arm \\
+\texttt{--refiner-min-confidence} & $1.5$ & injection gate \\
+lower clip                       & $0.1$ & thinning, not deletion \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All external-baseline comparisons in \cref{ch:results} were run with
+\texttt{--refiner-conf-fade 0}, so the optional attenuation prior does not
+contribute to our external-comparison result. Other systems use their own
+mapping policies.
+
+\section{Online refinement}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Flag & Default & Measured setting \\
+\midrule
+\texttt{--refiner}              & off      & on \\
+\texttt{--refiner-duty}         & $0.25$   & $1.0$ on a second GPU \\
+\texttt{--refiner-gpu}          & $-1$     & $1$ (second card) \\
+\texttt{--refiner-polish-secs}  & $0$      & $300$ \\
+\texttt{--refiner-freeze-means} & on       & on in external comparison \\
+\texttt{--refiner-aa-sigma}     & $0.5$    & regime-dependent \\
+\texttt{--refiner-streak-opacity} & $0.5$  & \\
+\texttt{--refiner-max-gaussians}& $4\,000\,000$ & dedup trigger \\
+\texttt{--refiner-dedup-voxel}  & $0$      & $0.01$ measured, not shipped \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Learning rates, per group, follow the 3DGS reference with the positional rate
+scaled by scene extent:
+$\eta_\mu = 1.6\!\times\!10^{-4}\!\cdot\!\mathrm{extent}$,
+$\eta_{f_{dc}} = 2.5\!\times\!10^{-3}$,
+$\eta_\alpha = 5\!\times\!10^{-2}$,
+$\eta_s = 5\!\times\!10^{-3}$,
+$\eta_q = 1\!\times\!10^{-3}$.
+The supervision reservoir holds $200$ frames spanning the sequence plus a ring
+of the $64$ most recent, with recent fraction $0.3$.
+
+\section{Hardware}
+
+All numbers in this thesis were measured on a host with two NVIDIA RTX~A6000
+GPUs. The single-GPU external cost campaign used an exclusively reserved
+card and a common $1$\,Hz \texttt{nvidia-smi} sampler. The separate
+GUI-enabled online campaign used both GPUs and reports their memory
+separately. These measurements describe different experimental regimes.

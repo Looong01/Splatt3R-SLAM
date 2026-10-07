@@ -1,0 +1,28 @@
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}p{0.30\linewidth}p{0.62\linewidth}@{}}
+\toprule
+Candidate & Why it fails \\
+\midrule
+Scale-frame consistency &
+Mechanically inert: \cref{eq:splatt3rloss} is purely photometric, means are
+\texttt{detach()}ed, and the metric-scale flag's only consumer is disabled.
+Depth touches training solely via the mask. \\
+Supervision coverage &
+Measured per family: EuRoC has the \emph{lowest} coverage ($39.5\%$) and the
+second-largest gain; ETH3D matches TUM's coverage ($61.9$ vs $60.0\%$) with
+$3\times$ the gain. \\
+Opacity un-saturation &
+Explains four families in rank order but 7-Scenes measures $0.479$ ---
+comparable to EuRoC's $0.38$ --- with a null gain. A measured counterexample,
+not a pending cell. \\
+Base-checkpoint headroom &
+$\rho=0.145$ over $11$ sequences. ETH3D \texttt{sofa\_1} has the lowest
+deficit of any sequence and the second-largest gain. \\
+\bottomrule
+\end{tabular}
+\caption[Four falsified attributions]{Four pre-registered mechanisms for the cross-family variation, each
+killed by measurement. The variation is real and remains unattributed.}
+\label{tab:falsified}
+\end{table}
