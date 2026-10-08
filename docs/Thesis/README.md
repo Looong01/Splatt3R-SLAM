@@ -8,6 +8,11 @@
 | RA-L 匿名稿 | `./build.sh review` | [ral-review.pdf](ral-review.pdf) | ieeeconf 首次/修订投稿版式 |
 | 硕士论文 | `./build.sh master` | [master.pdf](master.pdf) | 65 页，A4 单栏、12pt、1.5 倍行距，12 章与 4 个附录 |
 
+Overleaf 上传包为
+[Splatt3R-SLAM-RA-L-Overleaf.zip](../Splatt3R-SLAM-RA-L-Overleaf.zip)。
+压缩包根目录包含 `main.tex`，默认构建匿名 RA-L 稿；编译器选择
+`pdfLaTeX`。图形 PDF 已统一到 pdfTeX 可包含的 PDF 1.5。
+
 两版 RA-L 共用 `ral/document.tex` 与 `ral/` 正文，均为 7 页，含参考文献。
 硕士论文已同步新增方法图、四列定性图、最新评测与相关论述，
 保留 `master.tex`、`chap/` 的长篇结构，不导入 RA-L 正文或导言区。
