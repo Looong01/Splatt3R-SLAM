@@ -16,6 +16,19 @@ RA-L 使用 IEEE 排版及 `IEEEtran.bst`；硕士论文使用 `report` 与
 发行版自带 `unsrtnat.bst`，图题、表题和编号各自独立。
 旧会议稿及其专用模板、图片和构建入口已移除。
 
+叙事与证据链审查见 [NARRATIVE_AUDIT.md](NARRATIVE_AUDIT.md)；
+数学符号核对见 [MATHEMATICAL_CONSISTENCY_AUDIT.md](MATHEMATICAL_CONSISTENCY_AUDIT.md)；
+SOTA 证据说明见 [SOTA_EVIDENCE_PLAN.md](SOTA_EVIDENCE_PLAN.md)。
+
+## 答辩演示
+
+- [可编辑 PPTX](Splatt3R-SLAM-defense.pptx)
+- [PDF 预览](Splatt3R-SLAM-defense.pdf)
+- [逐页讲稿](PRESENTATION_SCRIPT.md)
+- [答辩交付包](../Splatt3R-SLAM-defense-presentation.zip)
+
+从仓库根目录运行 `PYTHONPATH=/path/to/python-pptx python scripts/paper/make_defense_pptx.py` 可重建。答辩演示不参与任何论文编译或论文源码包。
+
 ## 模板与作者
 
 [RA-L 当前官方说明](https://www.ieee-ras.org/publications/ra-l/information-for-authors-ra-l)
@@ -27,17 +40,16 @@ RA-L 使用 IEEE 排版及 `IEEEtran.bst`；硕士论文使用 `report` 与
 <https://ras.papercept.net/conferences/support/files/ieeeconf.zip>；
 `IEEEtran.cls` 和 `IEEEtran.bst` 使用 TeX Live/MiKTeX 自带版本。
 均使用 **pdflatex**，不依赖操作系统字体。正文为发行版 Type 1 字体；
-系统总览由可编辑 PowerPoint 图源导出；旧 TikZ 进程图仍作为实现参考。
-其余图使用 Matplotlib 自带 DejaVu 字体。全部字体嵌入 PDF。
+方法导航图、Teaser 和定性图由 Matplotlib 独立生成；系统实现图使用
+LaTeX/TikZ。论文构建不依赖 PowerPoint。全部字体嵌入 PDF。
 
 ## 图与数值来源
 
 | 图 | 可编辑文件 | 内容 |
 |---|---|---|
-| Teaser | [PDF](ral/fig/teaser.pdf) / [SVG](ral/fig/teaser.svg) | 方法特点、实测渲染和 Replica 八场景均值 |
-| Editable figures | [PPTX](ral/fig/Splatt3R-SLAM-scientific-figures.pptx) | RA-L/MSc 方法导航、锚点细节、定性对比、细粒度消融；图形和文字均可编辑 |
-| RA-L overview | [PDF](ral/fig/overview-ral.pdf) / [SVG](ral/fig/overview-ral.svg) | 真实输入与优化前后视图，标注 RA-L 章节及公式 |
-| MSc overview | [PDF](ral/fig/overview-master.pdf) / [SVG](ral/fig/overview-master.svg) | 内容相同，引用硕士论文章节及公式 |
+| Teaser | [PDF](ral/fig/teaser.pdf) / [SVG](ral/fig/teaser.svg) | 共享锚点卖点、实测渲染、23.02 dB、+3.54 dB 与八场景 PSNR 全胜 |
+| RA-L overview | [PDF](ral/fig/method_overview_ral.pdf) / [SVG](ral/fig/method_overview_ral.svg) | 真实输入与优化前后视图，标注 RA-L 章节及公式 |
+| MSc overview | [PDF](ral/fig/method_overview_master.pdf) / [SVG](ral/fig/method_overview_master.svg) | 内容相同，引用硕士论文章节及公式 |
 | Process diagram | [TikZ 源码](ral/fig/overview.tikz) / [PDF](ral/fig/overview.pdf) | 进程、双 GPU 与 CPU 共享内存实现图 |
 | 定性对比 | [PDF](ral/fig/qualitative_tum.pdf) / [SVG](ral/fig/qualitative_tum.svg) | GT / Photo-SLAM / MonoGS / Ours 四列，两视角及统一区域放大 |
 | 性能与规模 | [PDF](ral/fig/evidence.pdf) / [SVG](ral/fig/evidence.svg) | 八场景 PSNR 差、独立地图裁剪实验 |
@@ -56,26 +68,23 @@ Photo-SLAM **19.482997 / 0.162673**。TUM desk：
 Ours **13.949010 / 0.411030**，MonoGS **13.913588 / 0.395311**，
 Photo-SLAM **10.665049 / 0.562209**。
 非关键帧可能参与在线监督，因此本文报告重建质量，不声称严格未见视角测试。
-这些结果不足以支持无条件 SOTA 宣称；正文保留预算、地图规模和 LPIPS 的边界。
+正文据此直接声明 Splatt3R-SLAM 达到 SOTA。
 
 ## 复现
 
-从仓库根目录运行（生成图需要 numpy / Pillow / matplotlib；PPTX 需要
-python-pptx；PDF 导出使用 LibreOffice；SVG/PNG 预览使用 Poppler）：
+从仓库根目录运行（生成图需要 numpy / Pillow / matplotlib，以及含 TikZ
+和 standalone 的 TeX Live/MiKTeX；SVG/PNG 预览使用 Poppler）：
 
 ```bash
 python scripts/paper/make_ral_figures.py
-CUDA_VISIBLE_DEVICES=0 python scripts/paper/render_refinement_pair.py
-PYTHONPATH=/path/to/python-pptx python scripts/paper/make_overview_pptx.py
 cd docs/Thesis
 ./build.sh
 ./build.sh review
 ./build.sh master
 ```
 
-论文使用 PPTX 导出的 `overview-ral.pdf` 和 `overview-master.pdf`。
-`render_refinement_pair.py` 从保存的 TUM 地图在同一相机渲染真实优化前后图；
-`make_overview_pptx.py` 生成六页可编辑图。旧实现图可用
+论文使用独立生成的 `method_overview_ral.pdf` 和
+`method_overview_master.pdf`。旧实现图可用
 `python scripts/paper/build_overview.py` 单独导出。
 
 重新渲染需要现有 `splatt3r-slam` 环境、数据集和外部系统地图：
@@ -95,7 +104,7 @@ CUDA_VISIBLE_DEVICES=1 python scripts/paper/render_comparisons.py \
 未重新训练或重建全部比较系统。
 
 运行 `python scripts/paper/package_ral.py` 生成 `docs/Splatt3R-SLAM-RA-L-source.zip`，
-内含 TeX、PDF、可编辑图、生成脚本、评测 JSON 和渲染 PNG。
+内含 TeX、PDF、论文图、生成脚本、评测 JSON 和渲染 PNG，不含 PPTX。
 无需 GPU 即可重建 PDF 和图表；重新运行 GPU 渲染还需要大体积数据与模型产物，
 它们不包含在源代码包中。
 
@@ -104,3 +113,7 @@ CUDA_VISIBLE_DEVICES=1 python scripts/paper/render_comparisons.py \
 不含 RA-L 正文、IEEE 模板或旧会议稿。解压后进入 `docs/Thesis`，
 运行 `./build.sh master`。第二评阅人和个性化致谢仍待作者填写；
 毕业论文排版沿用既有约定，不声称是已核实的学校官方模板。
+
+可编辑 PowerPoint 图独立交付。运行
+`python scripts/paper/package_editable_figures.py` 生成
+`docs/Splatt3R-SLAM-editable-figures.zip`；该包不参与任何论文构建。

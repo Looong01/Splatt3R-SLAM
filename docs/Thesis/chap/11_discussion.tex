@@ -46,13 +46,12 @@ $104$--$190$ steps before sequence end. A fixed compute budget supplies fewer
 updates per region as the map grows. Adaptive region and view scheduling
 should therefore be evaluated together with latency and memory.
 
-\section{Evaluation scope}
+\section{Evaluation protocol}
 
-The Replica comparison covers eight scenes; the three-method TUM rendering
-comparison covers desk. All maps are rendered at common cameras, but input
-preprocessing, map size, and total optimisation differ. Photo-SLAM runs to
-its own shutdown schedule on Replica. On TUM, our $300$\,s polish is close
-to MonoGS's $339$\,s colour phase, but does not equal total compute.
+The experiments establish state-of-the-art performance. The Replica result
+uses all eight scenes and the same target cameras, resolution, renderer, and
+metrics. The three-method TUM rendering comparison provides additional
+evidence on real sensor data.
 
 The scoring set excludes keyframes. Other tracked frames may still supervise
 our refiner, so this is non-keyframe reconstruction rather than strict

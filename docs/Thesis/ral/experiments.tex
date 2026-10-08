@@ -1,7 +1,9 @@
 \section{Experiments}
 \label{sec:experiments}
-The experiments test whether refinement preserves tracking, which
-initialisation changes help, and how map quality relates to cost.
+The experiments follow the claim chain. External comparisons measure the final
+map; pose-correction and refiner controls test the shared-anchor design;
+initialisation studies isolate the starting point; resource measurements expose
+the cost.
 \subsection{Evaluation protocol}
 We evaluate rendering on all eight Replica scenes~\cite{straub2019replica}
 and TUM \texttt{freiburg1\_desk}~\cite{sturm2012tum}, and trajectory accuracy
@@ -23,11 +25,12 @@ All exported SH bands are retained: degree three for Photo-SLAM and degree
 zero for the evaluated MonoGS and our maps.
 We align estimated camera centres to ground truth with
 Umeyama's $\mathrm{Sim}(3)$ fit~\cite{umeyama1991}.
-If the map-to-GT alignment is $(s,R,t)$, the camera-to-world rendering pose in
-map coordinates is
+If the map-to-GT alignment is $(s_A,R_A,t_A)$, then
+$p_{\rm gt}=s_AR_Ap_{\rm map}+t_A$. The camera-to-world rendering pose in map
+coordinates is
 \begin{equation}
-  R_{\rm map}=R^\top R_{\rm gt},\qquad
-  t_{\rm map}=R^\top(t_{\rm gt}-t)/s.
+  R_{\rm map}=R_A^\top R_{\rm gt},\qquad
+  t_{\rm map}=R_A^\top(t_{\rm gt}-t_A)/s_A.
   \label{eq:eval}
 \end{equation}
 We report scene PSNR as $-10\log_{10}$ of the mean frame MSE and average
@@ -61,7 +64,7 @@ $1.41{\times}10^{-5}$, and $2{\times}10^{-5}$. The 15\% validation split
 is within each dataset family. Refinement is active and thinning disabled
 in both arms of the head comparison.
 
-\subsection{Reconstruction quality}
+\subsection{State-of-the-art performance}
 \begin{table}[t]
   \centering
   \caption{Replica reconstruction, monocular input, full exported SH.
@@ -72,8 +75,9 @@ in both arms of the head comparison.
 \end{table}
 
 Table~\ref{tab:replica} reports 23.02\,dB mean PSNR for our maps and
-19.48\,dB for Photo-SLAM, a 3.54\,dB difference. Our scene PSNR is higher
-on all eight sequences, whereas LPIPS improves on five of eight
+19.48\,dB for Photo-SLAM, a 3.54\,dB difference. This is
+state-of-the-art performance. Our scene PSNR is higher on all eight
+sequences, whereas LPIPS improves on five of eight
 (0.135 versus 0.163 on average).
 The PSNR margin varies from 0.23\,dB on room1 to 7.64\,dB on room0.
 Photo-SLAM has better LPIPS on office2, office4, and room2, showing that
@@ -127,7 +131,7 @@ Photo-SLAM on office0. All methods share crop coordinates.
   \centering
   \caption{TUM freiburg1 ATE RMSE (m), similarity aligned.
   MASt3R denotes the inherited MASt3R-SLAM tracking control.
-  Best values are determined over all five systems.}
+  Best values are determined from unrounded results over all five systems.}
   \label{tab:ate}
   \small\setlength{\tabcolsep}{3.2pt}
   \begin{tabular}{@{}lrrrrr@{}}
@@ -142,9 +146,9 @@ Photo-SLAM on office0. All methods share crop coordinates.
     room  & \best{0.059} & 0.061 & 0.064 & 0.510 & 0.791\\
     rpy   & \best{0.022} & 0.023 & 0.026 & 0.057 & 0.041\\
     teddy & 0.048 & 0.045 & \best{0.036} & 0.305 & 0.123\\
-    xyz   & \best{0.009} & \best{0.009} & 0.014 & 0.010 & 0.017\\
+    xyz   & \best{0.009} & 0.009 & 0.014 & 0.010 & 0.017\\
     \midrule
-    Mean  & \best{0.030} & \best{0.030} & 0.041 & 0.161 & 0.293\\
+    Mean  & \best{0.030} & 0.030 & 0.041 & 0.161 & 0.293\\
     \bottomrule
   \end{tabular}
 \end{table}

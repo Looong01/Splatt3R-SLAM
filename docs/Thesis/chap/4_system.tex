@@ -5,7 +5,7 @@
 \label{sec:system:overview}
 
 Splatt3R-SLAM uses four processes when refinement and the GUI are enabled
-(\cref{fig:overview}). The \emph{tracker} consumes
+(\cref{fig:system-overview}). The \emph{tracker} consumes
 frames, runs the feed-forward backbone, solves \cref{eq:gn} for the relative
 pose against the current keyframe, and decides when to create a new keyframe.
 The \emph{back-end} maintains the keyframe graph, queries retrieval for loop
@@ -14,17 +14,19 @@ candidates and solves \cref{eq:global}. The \emph{refiner}
 while the other two run. The \emph{visualiser} renders the current map and
 subscribes to refined snapshots. Both headless experiments and GUI-enabled
 dual-GPU delivery measurements are reported, with their regimes identified.
+Figure~\ref{fig:method-overview} gives the method path from image pairs to
+the refined map; Fig.~\ref{fig:system-overview} gives the process layout.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{ral/fig/overview-master.pdf}
+  \includegraphics[width=\linewidth]{ral/fig/method_overview_master.pdf}
   \caption[Predict, anchor, and refine]{Method navigation. Real input frames
   enter a shared predictor. Geometry feeds tracking, while local Gaussians
   attach to keyframe anchors. The same anchors carry supervision cameras.
   A separate process samples observations, renders the map, and updates its
   appearance. Insets show saved maps before and after refinement. Chapter and
   equation labels point to the detailed derivation.}
-  \label{fig:overview}
+  \label{fig:method-overview}
 \end{figure}
 
 The refiner runs in its own process. This allows it to use a different GPU,
@@ -41,6 +43,17 @@ anchor poses. Separately, tracked RGB supervision and anchor-relative camera
 transforms live in the CPU SupervisionFrames pool. Complete refined maps are
 published through a CPU snapshot buffer. These are distinct storage paths.
 
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{ral/fig/overview.pdf}
+  \caption[System implementation architecture]{System implementation.
+  Tracking, backend optimisation, and visualisation run on GPU~0; the map
+  refiner runs on GPU~1. SharedKeyframes uses CUDA IPC, while supervision
+  frames and versioned refined-map snapshots use CPU shared memory.
+  Numbered arrows show data flow and pose updates.}
+  \label{fig:system-overview}
+\end{figure}
+
 \section{Anchor-carried map composition}
 \label{sec:system:anchor}
 We replace the pointmap prediction with Splatt3R, so each keyframe pair yields
@@ -48,29 +61,33 @@ a per-pixel Gaussian in one forward pass. Keyframe Gaussians are stored in
 their anchor keyframe's local frame and composed into the world through that
 keyframe's \emph{current} pose,
 \begin{equation}
-\mu^{W} = A_k\,\mu^{k} + b_k, \qquad
-\Sigma^{W} = A_k\,\Sigma^{k}\,A_k^{\top},
+\mu_n^{W}=a_kR_k\mu_n^{\mathcal C_k}+t_k,\qquad
+\Sigma_n^{W}=a_k^2R_k\Sigma_n^{\mathcal C_k}R_k^\top,
 \label{eq:anchor}
 \end{equation}
-where $[A_k\,|\,b_k]$ is the $\mathrm{Sim}(3)$ matrix of keyframe $k$. Because
-the composition reads the pose at render time, a loop closure that updates
-$T_{WC_k}$ moves the map without rewriting local parameters.
+where $T_{W\mathcal C_k}=(a_kR_k,t_k)$ is the camera-to-world
+$\mathrm{Sim}(3)$ pose of keyframe $k$. Because the composition reads the
+pose at render time, a loop closure that updates $T_{W\mathcal C_k}$ moves
+the map without rewriting local parameters.
 
 Supervision uses the same anchor. If tracked frame $f$ stores a relative pose
-$T_{C_kC_f}$, then
+$T_{\mathcal C_k\mathcal C_f}$, then
 \begin{equation}
-T_{WC_f}=T_{WC_k}T_{C_kC_f}.
+T_{W\mathcal C_f}
+=T_{W\mathcal C_k}T_{\mathcal C_k\mathcal C_f}.
 \label{eq:supervisionpose}
 \end{equation}
 For a local map and camera sharing anchor $k$, their relative transform is
 \begin{equation}
-T_{WC_f}^{-1}T_{WC_k}
-=(T_{WC_k}T_{C_kC_f})^{-1}T_{WC_k}=T_{C_kC_f}^{-1}.
+T_{W\mathcal C_f}^{-1}T_{W\mathcal C_k}
+=(T_{W\mathcal C_k}T_{\mathcal C_k\mathcal C_f})^{-1}
+ T_{W\mathcal C_k}
+=T_{\mathcal C_k\mathcal C_f}^{-1}.
 \label{eq:anchorconsistency}
 \end{equation}
-The anchor cancels, so any invertible update of $T_{WC_k}$ preserves this
-relation. The identity applies within one anchor; neighbouring local maps can
-still disagree.
+The anchor cancels, so any invertible update of $T_{W\mathcal C_k}$ preserves
+this relation. The identity applies within one anchor; neighbouring local maps
+can still disagree.
 
 The implementation stores means, scales, rotations, SH coefficients, opacity,
 confidence, and validity in a shared keyframe buffer. Tracker updates may

@@ -25,12 +25,12 @@
   \begin{minipage}{\textwidth}
     \centering
     \includegraphics[width=\textwidth]{teaser.pdf}
-    \captionof{figure}{\textbf{From local predictions to a persistent map.}
-    Shared anchors carry predicted Gaussians and their observation cameras
-    through pose corrections. Left: a middle-ranked Replica office0 view.
-    Right: means over eight Replica scenes using common non-keyframe cameras
-    and full exported SH. Our map uses the released head and 300\,s polish;
-    Sec.~\ref{sec:experiments} specifies the evaluation and budgets.}
+    \captionof{figure}{\textbf{Pairwise predictions become a persistent map.}
+    Shared keyframe anchors move local Gaussians and their observation cameras
+    together after pose corrections, while a separate process refines
+    appearance. On eight Replica scenes, Splatt3R-SLAM reaches 23.02\,dB,
+    exceeds Photo-SLAM by 3.54\,dB, and leads PSNR on every scene.
+    Results use common non-keyframe cameras and full exported SH.}
     \label{fig:teaser}
   \end{minipage}\vspace{10pt}%
 }

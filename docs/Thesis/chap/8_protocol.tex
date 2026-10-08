@@ -57,12 +57,13 @@ at sequence end are reported separately from post-sequence polish.
 \subsection{Alignment}
 
 Each monocular map has its own similarity gauge. We fit a map-to-ground-truth
-alignment $(s,R,t)$ to corresponding estimated and ground-truth camera centres
-using Umeyama's method~\cite{umeyama1991}. A ground-truth camera-to-world pose
-is transported into map coordinates by
+alignment $(s_A,R_A,t_A)$ to corresponding estimated and ground-truth camera
+centres using Umeyama's method~\cite{umeyama1991}, such that
+$p_{\mathrm{gt}}=s_AR_Ap_{\mathrm{map}}+t_A$. A ground-truth
+camera-to-world pose is transported into map coordinates by
 \begin{equation}
-R_{\text{map}}=R^\top R_{\text{gt}},\qquad
-t_{\text{map}}=R^\top(t_{\text{gt}}-t)/s.
+R_{\text{map}}=R_A^\top R_{\text{gt}},\qquad
+t_{\text{map}}=R_A^\top(t_{\text{gt}}-t_A)/s_A.
 \label{eq:align}
 \end{equation}
 The inverse scale acts on translation, not on the rotation block. Putting it
@@ -123,7 +124,7 @@ rendered scores under the conditions above.
 We did not obtain a monocular MonoGS Replica map with the available
 configurations; its depth-assisted configuration is excluded.
 
-Comparable three-method TUM artefacts were obtained on desk; broader
-rendering coverage remains future work. Photo-SLAM uses OpenCV~4.10 for
-CUDA compatibility rather than its tested 4.7/4.8 stack.
+Comparable three-method TUM artefacts were obtained on desk and are reported
+separately from the SOTA result. Photo-SLAM uses
+OpenCV~4.10 for CUDA compatibility rather than its tested 4.7/4.8 stack.
 \Cref{app:baselines} records this preprocessing-related deviation.

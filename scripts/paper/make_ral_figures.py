@@ -19,8 +19,10 @@ ROOT = Path(__file__).resolve().parents[2]
 PAPER = ROOT / "docs/Thesis/ral"
 DATA = ROOT / "logs/paper_ral_20261007"
 FIG = PAPER / "fig"
+ASSET = FIG / "overview_assets"
 SCENES = [f"office{i}" for i in range(5)] + [f"room{i}" for i in range(3)]
-INK, GRAY, BLUE, TEAL, ORANGE = "#172B3A", "#647887", "#4079AC", "#007E78", "#B77A2E"
+INK, GRAY, BLUE, TEAL, ORANGE, MAGENTA = (
+    "#172B3A", "#647887", "#4079AC", "#007E78", "#B77A2E", "#A14D78")
 plt.rcParams.update({
     "font.family": "DejaVu Sans", "font.size": 8, "text.color": INK,
     "axes.labelcolor": INK, "xtick.color": INK, "ytick.color": INK,
@@ -89,23 +91,26 @@ def image(fig, path, rect, crop=None, outline=None, roi=None):
 def teaser(records):
     w, h = 7.15, 2.23
     f, a = canvas(w, h)
-    text(a, .02, 2.12, "(a) Pose-anchored prediction + separate refinement", 8.2,
+    text(a, .02, 2.12, "(a) Pairwise predictions become a persistent map", 8.2,
          fontweight="bold")
-    box(a, .03, 1.35, 1.32, .54, "Image pair", "shared frozen features",
+    box(a, .03, 1.35, 1.32, .54, "Predict local map", "one network pass",
         color=BLUE, fill="#EEF3F9", size=7.7)
-    box(a, 1.63, 1.35, 1.42, .54, "Anchored Gaussians", "follow pose-graph updates",
+    box(a, 1.63, 1.35, 1.42, .54, "Shared anchors", "map + cameras move together",
         size=7.7)
-    box(a, 3.34, 1.35, 1.26, .54, "Map refinement", "no pose optimisation",
+    box(a, 3.34, 1.35, 1.26, .54, "Refine appearance", "tracking stays geometric",
         size=7.7)
     arrow(a, (1.37, 1.62), (1.60, 1.62))
     arrow(a, (3.08, 1.62), (3.31, 1.62))
     # Real views at the two middle delta ranks; retain the complete frame.
-    for x, method, label in [(0.04, "photo", "Photo-SLAM"), (2.35, "ours", "Ours")]:
+    for x, method, label in [
+            (0.04, "photo", "Photo-SLAM"),
+            (2.35, "ours", "Splatt3R-SLAM")]:
         image(f, DATA / "office0" / f"view0_{method}.png",
               [x/w, .02/h, 2.22/w, 1.13/h])
         text(a, x+1.11, 1.24, label, 7.8, ha="center",
              color=TEAL if method == "ours" else GRAY, fontweight="bold")
-    text(a, 4.87, 2.12, "(b) Replica: all 8 scenes", 8.2, fontweight="bold")
+    text(a, 4.87, 2.12, "(b) Leading Replica reconstruction", 8.2,
+         fontweight="bold")
     mean = {m: np.mean([records[s]["methods"][m]["full_sh"]["psnr"]
                         for s in SCENES]) for m in ("photo", "ours")}
     c = f.add_axes([5.05/w, .53/h, 1.98/w, 1.28/h])
@@ -119,9 +124,98 @@ def teaser(records):
     for i, m in enumerate(("photo", "ours")):
         c.text(i, mean[m]+.7, f"{mean[m]:.2f}", ha="center", fontsize=9,
                fontweight="bold", color=TEAL if m == "ours" else GRAY)
-    text(a, 6.03, .18, f"+{mean['ours']-mean['photo']:.2f} dB  ·  8/8 PSNR wins",
-         9.3, ha="center", fontweight="bold", color=TEAL)
+    text(a, 6.03, .18,
+         f"+{mean['ours']-mean['photo']:.2f} dB  ·  best PSNR on all 8",
+         8.7, ha="center", fontweight="bold", color=TEAL)
     save(f, "teaser")
+
+
+def method_overview(variant):
+    refs = {
+        "ral": ("Sec. III-A / Eq. (1)", "Sec. III-B / Eqs. (2-4)",
+                "Sec. III-C / Eq. (5)", "Sec. III-D / Eqs. (7-8)"),
+        "master": ("Ch. 2 / Eq. (2.7)", "Ch. 4 / Eqs. (4.1-4.3)",
+                   "Ch. 7 / Eq. (7.1)", "Chs. 5-6 / Eq. (6.1)"),
+    }[variant]
+    w, h = 7.15, 3.55
+    f, a = canvas(w, h)
+    text(a, .05, 3.42, "Predict, anchor, refine", 10, fontweight="bold")
+    text(a, 7.05, 3.42, f"{variant.upper()} method navigation", 6.5,
+         ha="right", color=GRAY)
+
+    image(f, ASSET / "target.png", [.05/w, 2.25/h, .86/w, .65/h], outline=BLUE)
+    image(f, DATA / "desk/view1_gt.png",
+          [.28/w, 2.02/h, .86/w, .65/h], outline=TEAL)
+    text(a, .58, 1.91, "real image pair", 6.5, ha="center", color=GRAY)
+    arrow(a, (1.17, 2.42), (1.38, 2.42), color=BLUE)
+
+    box(a, 1.40, 2.08, 1.18, .74, "Shared predictor",
+        "pointmaps + matching\nGaussian attributes", color=BLUE,
+        fill="#EEF3F9", size=7.2)
+    text(a, 1.99, 1.91, refs[0], 6.2, ha="center", color=BLUE)
+    arrow(a, (2.60, 2.58), (2.83, 2.58), color=BLUE)
+    arrow(a, (2.60, 2.26), (2.83, 2.26), color=TEAL)
+
+    box(a, 2.85, 2.48, 1.05, .42, "Geometry",
+        "tracker + pose graph", color=BLUE, fill="#EEF3F9", size=6.8)
+    box(a, 2.85, 1.95, 1.05, .42, "Gaussians",
+        "local map", color=TEAL, fill="#EDF7F5", size=6.8)
+    text(a, 3.37, 1.77, f"optional init.  {refs[3]}", 5.8,
+         ha="center", color=ORANGE)
+    arrow(a, (3.92, 2.42), (4.14, 2.42), color=ORANGE)
+
+    box(a, 4.16, 2.05, 1.30, .85, "Shared anchor",
+        "map + cameras\nfollow pose updates", color=ORANGE,
+        fill="#FBF0E8", size=7.2)
+    text(a, 4.81, 1.91, refs[1], 6.2, ha="center", color=ORANGE)
+    arrow(a, (5.48, 2.42), (5.70, 2.42), color=MAGENTA)
+    box(a, 5.72, 2.05, 1.36, .85, "Map refinement",
+        "render -> loss -> Adam", color=MAGENTA,
+        fill="#F8EDF3", size=7.2)
+    text(a, 6.40, 1.91, refs[2], 6.2, ha="center", color=MAGENTA)
+
+    image(f, ASSET / "before.png", [.08/w, .18/h, 2.02/w, 1.28/h],
+          outline=GRAY)
+    image(f, ASSET / "after.png", [2.32/w, .18/h, 2.02/w, 1.28/h],
+          outline=TEAL)
+    text(a, 1.09, .08, "predicted map", 6.6, ha="center", color=GRAY)
+    text(a, 3.33, .08, "same camera after refinement", 6.6,
+         ha="center", color=TEAL, fontweight="bold")
+    arrow(a, (2.12, .82), (2.30, .82), color=TEAL)
+
+    box(a, 4.62, .25, 1.10, 1.10, "Sampler",
+        "200 historical\n64 recent", color=TEAL, fill="#EDF7F5", size=7.0)
+    arrow(a, (5.74, .80), (5.96, .80), color=MAGENTA)
+    box(a, 5.98, .25, 1.10, 1.10, "Render + loss",
+        "L1 + SSIM\nAdam update", color=MAGENTA,
+        fill="#F8EDF3", size=7.0)
+    arrow(a, (5.96, 1.50), (4.38, 1.50), color=MAGENTA)
+    text(a, 6.53, .08, refs[2], 6.2, ha="center", color=MAGENTA)
+    save(f, f"method_overview_{variant}")
+
+
+def qualitative_replica():
+    w, h = 7.15, 4.55
+    f, a = canvas(w, h)
+    methods = [("gt", "Ground truth"), ("photo", "Photo-SLAM"),
+               ("ours", "Splatt3R-SLAM")]
+    scenes = [("office0", "office0"), ("office2", "office2"),
+              ("room0", "room0"), ("room2", "room2")]
+    x0, iw, gap = .68, 2.05, .18
+    for col, (_, label) in enumerate(methods):
+        x = x0 + col * (iw + gap)
+        text(a, x + iw / 2, 4.42, label, 8.5, ha="center",
+             color=TEAL if col == 2 else INK, fontweight="bold")
+    for row, (scene, label) in enumerate(scenes):
+        y = 3.30 - row * 1.04
+        text(a, .58, y + .43, label, 7, ha="right", color=BLUE,
+             fontweight="bold")
+        for col, (method, _) in enumerate(methods):
+            x = x0 + col * (iw + gap)
+            image(f, DATA / scene / f"view0_{method}.png",
+                  [x/w, y/h, iw/w, .94/h],
+                  outline=TEAL if method == "ours" else "#D8E0E5")
+    save(f, "qualitative_replica")
 
 
 def overview():
@@ -249,5 +343,12 @@ if __name__ == "__main__":
     DATA = args.data.resolve()
     FIG.mkdir(parents=True, exist_ok=True)
     records = {s: json.loads((DATA/s/"metrics.json").read_text()) for s in SCENES+["desk"]}
-    teaser(records); overview(); qualitative(); evidence(records); tables(records)
+    teaser(records)
+    method_overview("ral")
+    method_overview("master")
+    overview()
+    qualitative()
+    qualitative_replica()
+    evidence(records)
+    tables(records)
     print(f"Generated figures and tables in {PAPER}")

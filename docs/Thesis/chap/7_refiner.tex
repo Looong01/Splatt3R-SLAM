@@ -6,18 +6,20 @@
 
 Prediction supplies an initialisation. A separate process photometrically
 refines the assembled map \emph{while SLAM runs}; together with the GUI,
-the complete system has four processes (\cref{fig:overview}).
+the complete system has four processes (\cref{fig:system-overview}).
 
 \subsection{Parameterisation}
 Gaussians are optimised in their anchor keyframe's local frame in
-pre-activation form --- $\log s$, unnormalised $q$, $\mathrm{logit}\,\alpha$,
-and the SH DC term --- so that scales stay positive and opacity stays in
+pre-activation form --- $\log s_n$, unnormalised $q_n$,
+$\mathrm{logit}\,\alpha_n$, and the SH DC term --- so that scales stay
+positive and opacity stays in
 $(0,1)$ without constraints, and composed to the world by
 \cref{eq:anchor} at every step. Per-group Adam rates follow the 3DGS
 reference, with the positional rate scaled by scene extent:
 $\eta_\mu = 1.6\!\times\!10^{-4}\!\cdot\!\mathrm{extent}$,
 $\eta_{f_{dc}} = 2.5\!\times\!10^{-3}$, $\eta_\alpha = 5\!\times\!10^{-2}$,
 $\eta_s = 5\!\times\!10^{-3}$, $\eta_q = 1\!\times\!10^{-3}$.
+Higher-order SH coefficients, when present, remain fixed.
 
 \subsection{Objective}
 Supervision views are tracked frames, so the refiner optimises
@@ -33,7 +35,7 @@ not also our loss.
 
 \subsection{Anchor-carried supervision}
 Each supervision frame is stored as an image together with
-$(\text{anchor index}, T_{\text{anchor},f})$ rather than a world pose. Its
+$(\text{anchor index},T_{\mathcal C_k\mathcal C_f})$ rather than a world pose. Its
 world pose is recomposed through the anchor's \emph{current} pose at sample
 time, so supervision follows loop closures exactly as the map does under
 \cref{eq:anchor,eq:supervisionpose}. Frames are held in CPU shared memory,

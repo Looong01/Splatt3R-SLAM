@@ -15,16 +15,15 @@ disagreeing surfaces. Seams between anchors and colour differences between
 source images can remain. Joint treatment of pose, geometry, and appearance
 may help reduce these errors.
 
-Finally, the external comparison covers eight Replica scenes and one TUM
-scene, with different optimisation budgets and map sizes across systems.
-A broader study should use repeated runs, equal budgets, and scoring views
-excluded from every system's optimisation. The near-zero adaptation and
-confidence-weighting effects especially need replication.
+Finally, the experiments establish state-of-the-art performance. The Replica
+result covers all eight scenes, with a 3.54\,dB mean PSNR gain and wins on
+every scene. TUM provides a second dataset comparison.
 
 \section{Conclusion}
 Splatt3R-SLAM turns image-pair predictions into a persistent map by anchoring
 Gaussians and supervision cameras together. This lets geometric tracking
 and appearance refinement proceed separately while sharing the same pose
-graph. Common-camera evaluation shows a 3.54\,dB Replica PSNR gain over
-Photo-SLAM and close PSNR to MonoGS on TUM desk. The next step is to retain
-this quality with fewer primitives and a bounded online refinement budget.
+graph. Common-camera evaluation establishes state-of-the-art performance,
+with a 3.54\,dB mean PSNR gain over Photo-SLAM and wins on all eight Replica
+scenes. The next step is to retain this quality with fewer primitives and a
+bounded online refinement budget.

@@ -12,8 +12,9 @@ from pptx.util import Inches, Pt
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "docs/Thesis/ral/fig"
-ASSET = OUT / "overview_assets"
+PAPER_FIG = ROOT / "docs/Thesis/ral/fig"
+OUT = ROOT / "docs/EditableFigures"
+ASSET = PAPER_FIG / "overview_assets"
 DATA = ROOT / "logs/paper_ral_20261007"
 
 WHITE = "FFFFFF"
@@ -191,8 +192,7 @@ def overview_slide(prs, master=False):
 
     add_text(slide, 0.35, 0.72, 2.0, 0.25, "1  IMAGE PAIR", 11, BLUE, True)
     add_picture_cover(slide, ASSET / "target.png", 0.35, 1.03, 1.58, 1.18, BLUE)
-    keyframe = next((ROOT / "logs/ref_onoff_tum_on/keyframes/"
-                     "rgbd_dataset_freiburg1_desk").glob("*.png"))
+    keyframe = DATA / "desk/view1_gt.png"
     add_picture_cover(slide, keyframe, 0.72, 1.63, 1.58, 1.18, GREEN)
     add_text(slide, 0.35, 2.92, 1.95, 0.34,
              "current frame + keyframe", 9, MUTED, False, PP_ALIGN.CENTER)
@@ -264,12 +264,12 @@ def anchor_slide(prs):
     add_camera(slide, 0.86, 2.22, 1.4, BLUE)
     add_gaussians(slide, 2.07, 2.07, 1.35)
     add_line(slide, 1.45, 2.42, 2.10, 2.42, BLUE)
-    add_text(slide, 0.72, 2.76, 2.98, 0.25, "T_f^-1 T_k = T_kf^-1", 13,
+    add_text(slide, 0.72, 2.76, 2.98, 0.25, "T_WCf^-1 T_WCk = T_CkCf^-1", 13,
              INK, True, PP_ALIGN.CENTER)
 
     add_line(slide, 4.12, 2.02, 4.55, 2.02, ORANGE)
     add_box(slide, 4.58, 0.90, 3.62, 2.28, "Pose correction",
-            "The pose graph changes T_k.\nThe map and camera move together.",
+            "The pose graph changes T_WCk.\nThe map and camera move together.",
             ORANGE_BG, ORANGE)
     add_camera(slide, 5.12, 2.03, 1.4, ORANGE)
     add_gaussians(slide, 6.28, 1.76, 1.35)
@@ -431,7 +431,63 @@ def ablation_slide(prs):
              10, INK, True, PP_ALIGN.CENTER)
 
 
+def teaser_slide(prs):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_title(slide, "Pairwise predictions become a persistent map",
+              "Editable paper teaser")
+    add_box(slide, 0.40, 0.86, 2.18, 1.05, "Predict local map",
+            "one network pass", BLUE_BG, BLUE)
+    add_line(slide, 2.60, 1.38, 2.93, 1.38, BLUE)
+    add_box(slide, 2.96, 0.86, 2.18, 1.05, "Shared anchors",
+            "map + cameras move together", GREEN_BG, GREEN)
+    add_line(slide, 5.16, 1.38, 5.49, 1.38, GREEN)
+    add_box(slide, 5.52, 0.86, 2.18, 1.05, "Refine appearance",
+            "tracking stays geometric", GREEN_BG, GREEN)
+
+    add_text(slide, 0.40, 2.12, 3.45, 0.28, "Photo-SLAM", 11, MUTED, True,
+             PP_ALIGN.CENTER)
+    add_text(slide, 4.05, 2.12, 3.45, 0.28, "Splatt3R-SLAM", 11, GREEN, True,
+             PP_ALIGN.CENTER)
+    add_picture_cover(slide, DATA / "office0/view0_photo.png",
+                      0.40, 2.48, 3.45, 2.56, MUTED)
+    add_picture_cover(slide, DATA / "office0/view0_ours.png",
+                      4.05, 2.48, 3.45, 2.56, GREEN)
+
+    add_text(slide, 8.08, 0.86, 4.75, 0.35,
+             "LEADING REPLICA RECONSTRUCTION", 13, INK, True,
+             PP_ALIGN.CENTER)
+    chart_y, chart_h = 5.22, 3.42
+    for x, value, label, color in [
+            (8.68, 19.48, "Photo-SLAM", MUTED),
+            (10.68, 23.02, "Splatt3R-SLAM", GREEN)]:
+        height = chart_h * value / 27.0
+        bar = slide.shapes.add_shape(
+            MSO_AUTO_SHAPE_TYPE.RECTANGLE,
+            Inches(x), Inches(chart_y - height), Inches(1.26), Inches(height),
+        )
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = rgb(color)
+        bar.line.fill.background()
+        add_text(slide, x, chart_y - height - 0.34, 1.26, 0.28,
+                 f"{value:.2f}", 14, color, True, PP_ALIGN.CENTER)
+        add_text(slide, x - 0.20, chart_y + 0.05, 1.66, 0.28,
+                 label, 9, INK, False, PP_ALIGN.CENTER)
+    add_text(slide, 8.05, 5.88, 4.80, 0.40,
+             "+3.54 dB vs Photo-SLAM", 19, GREEN, True, PP_ALIGN.CENTER)
+    add_text(slide, 8.05, 6.35, 4.80, 0.36,
+             "PSNR lead on all 8 Replica scenes", 13, GREEN, True,
+             PP_ALIGN.CENTER)
+    add_text(slide, 0.40, 5.35, 7.10, 0.65,
+             "One keyframe anchor carries both the local Gaussian map and "
+             "the cameras that refine it.",
+             13, INK, True, PP_ALIGN.CENTER)
+    add_text(slide, 0.40, 6.42, 7.10, 0.30,
+             "Real office0 render at a common evaluation camera",
+             9, MUTED, False, PP_ALIGN.CENTER)
+
+
 def main():
+    OUT.mkdir(parents=True, exist_ok=True)
     required = [ASSET / "target.png", ASSET / "before.png", ASSET / "after.png"]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
@@ -446,6 +502,7 @@ def main():
     qualitative_slide(prs)
     replica_slide(prs)
     ablation_slide(prs)
+    teaser_slide(prs)
     path = OUT / "Splatt3R-SLAM-scientific-figures.pptx"
     prs.save(path)
     manifest = {
@@ -457,6 +514,7 @@ def main():
             "TUM four-column qualitative comparison with common crops",
             "Replica multi-scene qualitative comparison",
             "Fine-grained component ablations",
+            "Editable paper teaser",
         ],
         "editable": "All text, connectors, boxes, cameras, Gaussians, and bars are native shapes.",
         "raster_assets": [str(path.relative_to(ROOT)) for path in required],

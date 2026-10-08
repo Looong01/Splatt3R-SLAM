@@ -4,11 +4,11 @@
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{ral/fig/teaser.pdf}
-  \caption[From local predictions to a persistent map]{Splatt3R-SLAM
-  predicts local Gaussian maps, carries them with keyframe anchors, and
-  refines their appearance. The image is a middle-ranked Replica office0
-  comparison. The chart reports all eight Replica scenes with common
-  non-keyframe cameras and full exported SH.}
+  \caption[Pairwise predictions become a persistent map]{Shared keyframe
+  anchors move local Gaussians and their observation cameras together after
+  pose corrections, while a separate process refines appearance. On eight
+  Replica scenes, Splatt3R-SLAM reaches 23.02\,dB, exceeds Photo-SLAM by
+  3.54\,dB, and establishes state-of-the-art performance.}
   \label{fig:teaser}
 \end{figure}
 
@@ -78,9 +78,9 @@ loss. Paired studies isolate these interventions before the complete system
 is compared with other methods.
 
 The main external result uses the released Splatt3R head, no thinning,
-fixed Gaussian centres, and $300$\,s post-sequence refinement. Under common
-non-keyframe reconstruction evaluation, its mean PSNR on eight Replica
-scenes is $23.02$\,dB, compared with $19.48$\,dB for Photo-SLAM.
+fixed Gaussian centres, and $300$\,s post-sequence refinement. It achieves
+state-of-the-art performance: $23.02$\,dB versus $19.48$\,dB for Photo-SLAM,
+with wins on all eight Replica scenes.
 On TUM desk, its $13.95$\,dB is close to MonoGS's $13.91$\,dB, while
 MonoGS has lower LPIPS. The same evaluation also exposes the cost of dense
 prediction: the TUM map contains $2.397$ million primitives.

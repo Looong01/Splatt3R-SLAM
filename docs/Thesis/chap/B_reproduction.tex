@@ -109,18 +109,14 @@ the MonoGS adapter that produced $6.09$\,dB instead of $13.85$\,dB
 \section{Figures and independently formatted documents}
 
 The figure generators read saved JSON, PNG, and map evidence.
-The method overviews are native PowerPoint shapes with separate RA-L and MSc
-equation references. The older TikZ figure records the process and device
-layout. Captions, prose, numbering, classes, and bibliography styles remain
-independent.
+The RA-L and MSc method overviews are generated independently so that their
+section and equation references match each document. The TikZ implementation
+figure records the process and device layout. Captions, prose, numbering,
+classes, and bibliography styles remain independent.
 
 \begin{small}
 \begin{verbatim}
 python scripts/paper/make_ral_figures.py
-CUDA_VISIBLE_DEVICES=0 python \
-  scripts/paper/render_refinement_pair.py
-PYTHONPATH=/path/to/python-pptx python \
-  scripts/paper/make_overview_pptx.py
 cd docs/Thesis
 ./build.sh master
 ./build.sh ral

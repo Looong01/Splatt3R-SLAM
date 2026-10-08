@@ -1,16 +1,18 @@
 Splatt3R~\cite{smart2024splatt3r} adds a third head, in parallel to the
 pointmap and matching heads and using the same DPT decoder, which emits for
-every pixel a rotation quaternion $q\in\mathbb{R}^4$, a scale
-$s\in\mathbb{R}^3$, spherical-harmonic coefficients
-$S\in\mathbb{R}^{3\times d}$, an opacity $\alpha\in\mathbb{R}$ and a mean
-offset $\Delta\in\mathbb{R}^3$, so that the Gaussian centre is
+pixel $n$ a rotation quaternion $q_n\in\mathbb{R}^4$, a scale
+$s_n\in\mathbb{R}_{>0}^3$, spherical-harmonic coefficients
+$S_n\in\mathbb{R}^{3\times D_{\mathrm{SH}}}$, an opacity logit
+$\widetilde\alpha_n\in\mathbb{R}$, and a mean offset
+$\Delta_n\in\mathbb{R}^3$. The Gaussian centre and opacity are
 \begin{equation}
-\mu \;=\; x + \Delta, \qquad x \in X^i_i .
+\mu_n=x_n+\Delta_n,\quad x_n\in X_{\mathcal C_i}^{(i)},\qquad
+\alpha_n=\operatorname{sigmoid}(\widetilde\alpha_n).
 \label{eq:mu}
 \end{equation}
-Quaternions are normalised, scales use a positive exponential
-parameterisation, and opacities pass through a sigmoid. Offsets use a
-norm-dependent exponential rescaling of a signed vector, so their coordinates
+$D_{\mathrm{SH}}$ is the number of SH basis coefficients per colour channel.
+Quaternions are normalised and raw scale channels are exponentiated.
+Offsets use a norm-dependent exponential rescaling of a signed vector, so their coordinates
 are not restricted to positive values. In upstream training, \emph{only the Gaussian
 head is trained}: the encoder and decoder remain those of the pre-trained
 MASt3R model, and all Gaussian parameters are predicted in the first image's
@@ -24,12 +26,14 @@ step in between.
 Splatt3R is supervised only by novel-view renderings, under a mask $M$ of
 pixels visible in at least one context view:
 \begin{equation}
-\mathcal{L} = \lambda_{\text{MSE}}\,\mathcal{L}_{\text{MSE}}(M\!\odot\!\hat{I}, M\!\odot\!I)
-            + \lambda_{\text{LP}}\,\mathcal{L}_{\text{LPIPS}}(M\!\odot\!\hat{I}, M\!\odot\!I),
+\mathcal{L}_{\mathrm{head}}
+  =\mathcal{L}_{\mathrm{MSE},M}(\hat I,I)
+  +0.25\,\mathcal{L}_{\mathrm{LPIPS(VGG)},M}(\hat I,I),
 \label{eq:splatt3rloss}
 \end{equation}
-with $\lambda_{\text{LP}}{=}0.25$ in the released configuration. Two properties
-of \cref{eq:splatt3rloss} drive our method. It is \emph{purely photometric} ---
+where the subscript $M$ denotes spatial averaging over valid pixels.
+Two properties of \cref{eq:splatt3rloss} drive our method.
+It is \emph{purely photometric} ---
 depth enters only through the mask $M$ and through pair selection, never
 through a gradient on geometry --- and it is \emph{pairwise}: the loss never
 observes more than two context views, hence never observes a fused map.
@@ -38,7 +42,7 @@ In the released implementation the DC colour is anchored to the source image:
 the head predicts a residual which is added to the spherical-harmonic encoding
 of the input RGB value,
 \begin{equation}
-S_{\mathrm{DC}}(u)=S_{\mathrm{res}}(u)+\operatorname{RGB2SH}(I^i(u)).
+S_{\mathrm{DC}}(u)=S_{\mathrm{res}}(u)+\operatorname{RGB2SH}(I_i(u)).
 \label{eq:colorresidual}
 \end{equation}
 Colour is clamped during conversion; it is not sigmoid-bounded. The residual

@@ -41,7 +41,8 @@ substantially shorter.
 
 ## Figure revision
 
-`ral/fig/Splatt3R-SLAM-scientific-figures.pptx` contains six editable slides:
+`docs/EditableFigures/Splatt3R-SLAM-scientific-figures.pptx` contains seven
+editable slides:
 
 1. RA-L method navigation with section and equation references.
 2. MSc method navigation with chapter and equation references.
@@ -49,6 +50,7 @@ substantially shorter.
 4. TUM GT / Photo-SLAM / MonoGS / Ours comparison with identical crops.
 5. Replica multi-scene GT / Photo-SLAM / Ours comparison.
 6. All 12 opacity-attenuation cells and four refiner on/off controls.
+7. Editable paper teaser highlighting shared anchors and Replica performance.
 
 Text, boxes, connectors, camera symbols, Gaussian ellipses, and bars are native
 PowerPoint objects. Raster elements are measured input or rendered images.
@@ -56,8 +58,12 @@ The overview before/after pair is rendered from the saved unrefined and
 refined TUM maps at the same recorded camera. Metadata is stored in
 `ral/fig/overview_assets/metadata.json`.
 
-The RA-L and MSc overview PDFs are exported separately because their section
-and equation numbers differ.
+The manuscript versions of the RA-L and MSc overview figures are generated
+independently by `make_ral_figures.py`; their section and equation numbers
+differ. Neither manuscript imports or requires the PowerPoint file.
+The earlier process-level System Overview is also included in both manuscripts
+after the method navigation figure. It documents the two-GPU process layout,
+CUDA IPC state, CPU supervision pool, and versioned map publication.
 
 ## Evidence and scope
 

@@ -31,7 +31,10 @@ to local primitives without re-optimising their attributes.
 MonoGS~\cite{matsuki2024monogs} optimises Gaussians and camera poses jointly by
 gradient descent from monocular video. Photo-SLAM~\cite{huang2024photoslam}
 couples ORB-SLAM3~\cite{campos2021orbslam3} tracking with a
-Gaussian mapping thread. SplaTAM~\cite{keetha2024splatam} and
+Gaussian mapping thread. Splat-SLAM~\cite{sandstrom2025splatslam}
+deforms an RGB-only Gaussian map after global pose and depth updates.
+SEGS-SLAM~\cite{wen2025segsslam} builds structured anchors from a tracked
+point cloud and conditions appearance on camera motion. SplaTAM~\cite{keetha2024splatam} and
 Gaussian-SLAM~\cite{yugay2023gaussianslam} take related routes with RGB-D
 input. Unblur-SLAM~\cite{zhang2026unblur} combines feed-forward deblurring
 with rendering-based test-time refinement for blurred observations.

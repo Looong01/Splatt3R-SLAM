@@ -15,7 +15,8 @@ Setting & Value & Note \\
 Trainable module   & \texttt{gaussian\_dpt} only & Gaussian prediction \\
 Frozen             & encoder + decoder & checked unchanged \\
 Objective          & \cref{eq:splatt3rloss} & upstream, unchanged \\
-$\lambda_{\text{LP}}$ & $0.25$ & released configuration \\
+MSE weight         & $1.0$ & masked spatial average \\
+VGG-LPIPS weight   & $0.25$ & masked spatial average \\
 Optimiser          & Adam~\cite{kingma2015adam} & \\
 Granularity        & one checkpoint per dataset family & \\
 Families           & TUM, 7-Scenes, EuRoC, ETH3D, Replica & \\

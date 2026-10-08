@@ -4,10 +4,11 @@
 \label{sec:predict}
 A current image $I_f$ and keyframe image $I_k$ enter one shared, frozen
 network. Its pointmaps and matching features feed the MASt3R-SLAM tracker.
-Its Gaussian head predicts a primitive at each valid pixel, in the first
-camera's coordinates. A primitive has centre $\mu_n$, covariance $\Sigma_n$,
-opacity $\alpha_n$, and spherical-harmonic (SH) colour. For predicted point
-$x_n$, offset $\Delta_n$, positive scale $s_n$, and unit quaternion $q_n$,
+Its Gaussian head predicts a primitive for each valid pixel in both images;
+all primitives are expressed in the first camera's coordinates. A primitive
+has centre $\mu_n$, covariance $\Sigma_n$, activated opacity
+$\alpha_n\in(0,1)$, and spherical-harmonic (SH) colour. For predicted point
+$x_n$, offset $\Delta_n$, positive axis scale $s_n$, and unit quaternion $q_n$,
 \begin{equation}
   \mu_n=x_n+\Delta_n,\qquad
   \Sigma_n=R(q_n)\operatorname{diag}(s_n^2)R(q_n)^\top ,
@@ -15,34 +16,40 @@ $x_n$, offset $\Delta_n$, positive scale $s_n$, and unit quaternion $q_n$,
 \end{equation}
 The DC colour coefficient is a residual added to the SH encoding of input
 RGB; conversion clamps the resulting colour.
-The tracker maintains keyframe poses
-$T_k=(a_kR_k,t_k)\in\mathrm{Sim}(3)$, where $a_k>0$ allows local scale
-correction. Matching, pointmap fusion, and pose-graph optimisation follow
-MASt3R-SLAM. The mapping path reads these poses.
+We write $T_{AB}$ for the transform from coordinate frame $B$ to frame $A$.
+The tracker maintains camera-to-world keyframe poses
+$T_{W\mathcal C_k}=(a_kR_k,t_k)\in\mathrm{Sim}(3)$, where $a_k>0$ allows
+local scale correction. Matching, pointmap fusion, and pose-graph optimisation
+follow MASt3R-SLAM. The mapping path reads these poses.
 
 \subsection{Anchor: move the map and its observations together}
 \label{sec:anchor}
 Each keyframe stores its Gaussians in local coordinates. Rendering places
 them in the world with the current anchor pose:
 \begin{equation}
-  \mu_n^W=a_kR_k\mu_n^k+t_k,\qquad
-  \Sigma_n^W=a_k^2R_k\Sigma_n^kR_k^\top .
+  \mu_n^W=a_kR_k\mu_n^{\mathcal C_k}+t_k,\qquad
+  \Sigma_n^W=a_k^2R_k\Sigma_n^{\mathcal C_k}R_k^\top .
   \label{eq:anchor}
 \end{equation}
 A loop closure can then move a local map by updating one pose.
 The observation cameras must follow the same correction. For a tracked
 frame $f$ associated with keyframe $k$, we store its image and relative
-transform $T_{kf}$. Its current world pose is
+transform $T_{\mathcal C_k\mathcal C_f}$. Its current world pose is
 \begin{equation}
-  T_f^W=T_k^W T_{kf}.
+  T_{W\mathcal C_f}
+  =T_{W\mathcal C_k}T_{\mathcal C_k\mathcal C_f}.
   \label{eq:supervision}
 \end{equation}
 For this camera and a local map sharing anchor $k$, the anchor cancels:
 \begin{equation}
-  (T_f^W)^{-1}T_k^W=(T_k^WT_{kf})^{-1}T_k^W=T_{kf}^{-1}.
+  T_{W\mathcal C_f}^{-1}T_{W\mathcal C_k}
+  =(T_{W\mathcal C_k}T_{\mathcal C_k\mathcal C_f})^{-1}
+    T_{W\mathcal C_k}
+  =T_{\mathcal C_k\mathcal C_f}^{-1}.
   \label{eq:consistency}
 \end{equation}
-Thus their relative coordinates survive any invertible update of $T_k^W$.
+Thus their relative coordinates survive any invertible update of
+$T_{W\mathcal C_k}$.
 A fixed world-space supervision camera would break this relation.
 Equation~(\ref{eq:consistency}) concerns one shared anchor; overlapping maps
 with different anchors can still disagree.
@@ -60,6 +67,7 @@ colour with
 \end{equation}
 where the norm is mean absolute pixel error and SSIM follows
 \cite{wang2004ssim}. Gaussian centres are fixed in the external comparison.
+Higher-order SH coefficients, when present, remain fixed.
 Adam~\cite{kingma2015adam} uses learning rates $2.5{\times}10^{-3}$ for DC
 colour, $5{\times}10^{-2}$ for opacity, $5{\times}10^{-3}$ for scale, and
 $10^{-3}$ for rotation.
@@ -75,6 +83,18 @@ Gaussian records transfer once; current anchor poses are read at each step.
 The refiner publishes complete, versioned CPU snapshots for display.
 On one GPU, a duty cycle limits competition with tracking. An optional
 post-sequence \emph{polish} phase continues with the final pose graph.
+Figure~\ref{fig:system-overview} shows the process and memory boundaries.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.90\textwidth]{overview.pdf}
+  \caption{\textbf{System implementation.}
+  Tracking, pose-graph optimisation, and visualisation run on GPU~0.
+  The optional map refiner runs on GPU~1. SharedKeyframes uses CUDA IPC;
+  supervision frames and versioned refined-map snapshots use CPU shared
+  memory. Numbered arrows show the data flow and pose updates.}
+  \label{fig:system-overview}
+\end{figure*}
 
 \subsection{Improve the starting point}
 \label{sec:initialisation}
@@ -82,16 +102,17 @@ post-sequence \emph{polish} phase continues with the final pose graph.
 Different keyframes can predict the same surface. Their contributions
 interact when the renderer composites them. For projected opacity $b_n(u)$,
 \begin{equation}
-  \hat I(u)=\sum_n c_n(u)b_n(u)\prod_{j<n}(1-b_j(u)).
+  \hat I(u)=\sum_n \mathbf c_n(u)b_n(u)\prod_{j<n}(1-b_j(u)).
   \label{eq:compositing}
 \end{equation}
 Reducing opacity can reduce one layer's contribution and reveal layers
 behind it. We test this adjustment at map insertion.
-Let $\hat c_n\in[0,1]$ be the rank-normalised pointmap confidence within
-one keyframe. We initialise opacity as
+Let $r_n\in\{0,\ldots,N-1\}$ be the ascending rank of pointmap confidence
+$\gamma_n$ among the $N$ primitives of one keyframe, and define
+$\hat\gamma_n=r_n/\max(N-1,1)$. We initialise opacity as
 \begin{equation}
   \alpha'_n=\alpha_n
-    \operatorname{clip}\!\left(1-2\lambda(1-\hat c_n),\,0.1,\,1\right).
+    \operatorname{clip}\!\left(1-2\lambda(1-\hat\gamma_n),\,0.1,\,1\right).
   \label{eq:thin}
 \end{equation}
 Ranks avoid a calibration assumption across frames. The experiments compare
@@ -106,12 +127,13 @@ shared encoder and decoder remain unchanged. The upstream objective is
 \begin{equation}
   \begin{aligned}
   \mathcal L_{\mathrm{head}}={}&
-  \mathcal L_{\mathrm{MSE}}(M\odot\hat I,M\odot I)\\
-  &+0.25\,\mathcal L_{\mathrm{LPIPS}}(M\odot\hat I,M\odot I),
+  \mathcal L_{\mathrm{MSE},M}(\hat I,I)\\
+  &+0.25\,\mathcal L_{\mathrm{LPIPS(VGG)},M}(\hat I,I),
   \end{aligned}
   \label{eq:head}
 \end{equation}
-where $M$ selects target pixels visible from the context pair.
+where the subscript $M$ denotes spatial averaging over target pixels visible
+from the context pair. Evaluation instead uses LPIPS-AlexNet.
 Depth or pseudo-depth is used to construct samples and visibility masks.
 This loss fits rendered appearance without an explicit geometric error term.
 Head adaptation changes prediction, opacity attenuation changes insertion,

@@ -18,9 +18,10 @@ independent. This work is authorised, including deletion of the old draft.
 
 ## Content synchronised
 
-- New method/performance teaser in chapter 1; editable PowerPoint method
-  navigation in chapter 4; four-column TUM comparison, multi-scene Replica
-  comparison, and scene/map-budget chart in results.
+- New method/performance teaser in chapter 1; method navigation and
+  process-level System Overview in chapter 4; four-column TUM
+  comparison, multi-scene Replica comparison, and scene/map-budget chart in
+  results.
 - Fresh all-exported-SH results: Replica 23.019214 vs 19.482997 dB,
   LPIPS 0.134862 vs 0.162673, numerical wins 8/8 and 5/8. TUM desk:
   Ours 13.949010/0.411030; MonoGS 13.913588/0.395311;
@@ -66,7 +67,7 @@ boxes. MSc is 65 A4 pages with no LaTeX warnings or underfull boxes.
 Both RA-L PDFs remain seven Letter pages; minor underfull column notices
 remain. All fonts are embedded without Type 3.
 The MSc retains 12 chapters and four appendices. Its figures include the
-teaser, PowerPoint-derived overview, scene/budget evidence, Replica
+teaser, method-navigation overview, scene/budget evidence, Replica
 multi-scene panel, and four-column TUM comparison. The extended per-frame
 table is generated directly from the same fresh metrics JSON as the RA-L
 tables.

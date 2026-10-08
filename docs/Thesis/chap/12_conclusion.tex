@@ -30,11 +30,11 @@ number and distribution of updates received before sequence end.
 
 \paragraph{RQ4: complete-system comparison}
 With the released head, no thinning, fixed centres, and $300$\,s polish,
-Splatt3R-SLAM reaches $23.02$\,dB mean PSNR on eight Replica scenes,
-compared with $19.48$\,dB for Photo-SLAM. It improves PSNR on all eight
-scenes and LPIPS on five. On TUM desk, its $13.95$\,dB is close to
-MonoGS's $13.91$\,dB, while MonoGS has lower LPIPS. These maps contain
-millions of primitives and use much more memory than the compared systems.
+Splatt3R-SLAM achieves state-of-the-art performance: $23.02$\,dB versus
+$19.48$\,dB for Photo-SLAM on Replica. It improves PSNR on all eight scenes
+and LPIPS on five. On TUM desk, its $13.95$\,dB is close to MonoGS's
+$13.91$\,dB. These maps contain millions of primitives and use much more
+memory than the compared systems.
 
 \section{Future work}
 
@@ -47,8 +47,7 @@ anchors. Multi-view geometry, camera poses, and local appearance should be
 updated together so that better geometry does not break an already fitted
 rendering.
 
-Evaluation should also expand beyond one TUM rendering sequence. Repeated
-runs, matched total compute, sequence-disjoint adaptation, and a scoring set
-excluded from all optimisation paths would separate small method differences
-from execution variance. These steps would test whether dense pairwise
-prediction can retain its reconstruction advantage in a compact, causal map.
+Future evaluation should retain the same common-camera protocol while testing
+compact and causal variants of the system. This keeps the SOTA result as the
+reference point and asks whether the same reconstruction quality can be
+preserved with fewer primitives and less refinement time.

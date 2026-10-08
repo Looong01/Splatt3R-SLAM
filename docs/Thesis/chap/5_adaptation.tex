@@ -20,8 +20,8 @@ We compare three adaptation choices:
       \texttt{gaussian\_dpt} trainable): improves, and is what we keep.
 \end{itemize}
 
-The collapse coincides with the exponential scale parameter
-$s = \exp(\hat{s})$. A small feature shift can produce a large scale change,
+The collapse coincides with the exponential Gaussian-scale parameter
+$s_n=\exp(\hat{s}_n)$. A small feature shift can produce a large scale change,
 while different scale--opacity combinations can fit the same supervision
 views. We therefore retain head-only training for the evaluated system.
 The shared encoder, decoder, and geometric heads remain frozen; the Gaussian

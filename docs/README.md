@@ -7,6 +7,12 @@
 Photo-SLAM 19.48 dB。构建与数据说明见 [稿件 README](Thesis/README.md)。
 硕士论文 [master.pdf](Thesis/master.pdf) 已同步上述新内容与评测修正，
 保留 A4 章节式毕业论文排版，独立于 RA-L 模板。
+可编辑演示图单独打包为
+[Splatt3R-SLAM-editable-figures.zip](Splatt3R-SLAM-editable-figures.zip)，
+不参与两类论文的构建。
+完整答辩演示位于 [Thesis/Splatt3R-SLAM-defense.pptx](Thesis/Splatt3R-SLAM-defense.pptx)，
+PDF 预览为 [Thesis/Splatt3R-SLAM-defense.pdf](Thesis/Splatt3R-SLAM-defense.pdf)。
+答辩交付包为 [Splatt3R-SLAM-defense-presentation.zip](Splatt3R-SLAM-defense-presentation.zip)。
 以下研究时间线和分报告属于历史记录：其中“严格 held-out”“统一 8.7 dB
 协议偏移”等旧解释已在新稿修正，不应直接作为当前结论引用。
 

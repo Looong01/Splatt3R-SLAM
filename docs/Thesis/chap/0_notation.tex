@@ -7,15 +7,18 @@
 \toprule
 Symbol & Meaning \\
 \midrule
-$I_t$                  & RGB image of frame $t$ \\
-$\mathbf{X}_t$         & pointmap predicted for frame $t$, in some frame's coordinates \\
-$c_n,\hat{c}_n$        & raw confidence and its within-keyframe normalised rank \\
-$\alpha_n$             & predicted opacity of Gaussian $n$ \\
+$I_i$                  & RGB image $i$; $\mathcal C_i$ is its camera frame \\
+$X_{\mathcal C_a}^{(b)}$ & pointmap of image $b$, expressed in frame $\mathcal C_a$ \\
+$T_{AB}$               & transform that maps coordinates from frame $B$ to frame $A$ \\
+$T_{W\mathcal C_k}$    & camera-to-world pose of keyframe $k$ \\
+$a_k,R_k,t_k$          & similarity scale, rotation, and translation of keyframe $k$ \\
+$\mu_n,\Sigma_n,s_n$   & centre, covariance, and three axis scales of Gaussian $n$ \\
+$\gamma_n,\hat{\gamma}_n$ & pointmap confidence and its within-keyframe rank \\
+$\omega_{m,n}$         & matching confidence for correspondence $(m,n)$ \\
+$\alpha_n$             & activated opacity of Gaussian $n$ \\
 $\alpha'_n$            & opacity after injection-time thinning \\
 $\lambda$              & thinning strength, \texttt{--refiner-conf-fade} \\
 $\lambda_D$            & D-SSIM weight in the refinement objective \\
-$\mathbf{T}_{wc}$      & camera-to-world pose, $\mathrm{SE}(3)$ or $\mathrm{Sim}(3)$ \\
-$s_k$                  & scale of keyframe cluster $k$ \\
 $\mathcal{L}_{\text{ref}}$ & online refinement objective \\
 $\hat{I}$              & rendered image \\
 \midrule

@@ -11,19 +11,17 @@ Refiner on, TUM     & $+3.52$ & \\
 Refiner on, EuRoC   & $+1.00$ & \\
 \midrule
 Causal replay, 120 it. & $+1.21$ & TUM desk \\
-Second GPU, unthrottled & $+2.15$ & tracker 101 to 103\,ms \\
+Dual-GPU causal refinement & $+2.15$ & tracker 101 to 103\,ms \\
 \midrule
 Uniform vs.\ recency & $+0.34$ & held-out mean \\
 Voxel dedup, 10\,mm & $-0.53$ & $-27.6\%$ map size \\
 \bottomrule
 \end{tabular}
-\caption[Refinement ablations]{Refinement ablations. ATE is unchanged in every row
-($0.016975$ vs.\ a $0.0170$ baseline in the deterministic configuration): the
-map is strictly downstream of tracking, and the pre-registered failure
-condition ``ATE moves at all'' never fired. Earlier fixed-map probes favoured
-freezing centres at approximately 300 and 3000 steps; the broader causal study
-did not support making this a universal online default. The dedup row is a map-size
-control that costs quality when it fires without a recovery budget, not a
-quality feature.}
+\caption[Refinement ablations]{Refinement ablations from separate recorded
+studies. In the deterministic TUM desk control, ATE is $0.016975$\,m with
+refinement on and off, while map quality changes. Earlier fixed-map probes
+favoured freezing centres near 300 and 3000 steps; the broader causal study
+did not reproduce that preference. The deduplication row applies no recovery
+optimisation after removing primitives.}
 \label{tab:refiner}
 \end{table}

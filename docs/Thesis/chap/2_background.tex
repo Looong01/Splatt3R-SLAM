@@ -14,43 +14,46 @@ later experiments.
 set of anisotropic Gaussians. Primitive $n$ carries a centre
 $\mu_n\in\mathbb{R}^3$, a covariance $\Sigma_n\in\mathbb{R}^{3\times3}$, an
 opacity $\alpha_n\in(0,1)$ and a view-dependent colour encoded as
-spherical-harmonic coefficients. Its density at a world point $x$ is
+spherical-harmonic coefficients. Its unnormalised spatial influence at a
+world point $x$ is
 \begin{equation}
 G_n(x) \;=\; \exp\!\Bigl(-\tfrac{1}{2}(x-\mu_n)^{\!\top}\Sigma_n^{-1}(x-\mu_n)\Bigr).
 \label{eq:gaussian}
 \end{equation}
 A covariance must remain positive semi-definite under gradient descent.
 It is therefore factored into a rotation
-quaternion $q$ and a per-axis scale $s$:
+unit quaternion $q_n$ and positive per-axis scale $s_n$:
 \begin{equation}
-\Sigma \;=\; R(q)\,\mathrm{diag}(s)^2\,R(q)^\top .
+\Sigma_n \;=\; R(q_n)\,\operatorname{diag}(s_n^2)\,R(q_n)^\top .
 \label{eq:cov}
 \end{equation}
-The scale is parameterised as $s=\exp(\hat{s})$, which keeps it positive
-without a constraint. Large changes in $\hat{s}$ can therefore produce the
+The scale is parameterised as $s_n=\exp(\hat{s}_n)$ elementwise, which keeps
+it positive without a constraint. Large changes in $\hat{s}_n$ can produce the
 scale excursions measured in \cref{sec:neg:lora}.
 
 \subsection{Projection and rasterisation}
 
-Rendering projects each Gaussian to the image plane. Under a world-to-camera
-transform $W$ and the local affine approximation $J$ of the projective map ---
-the EWA splatting construction of \citet{zwicker2001ewa} --- the projected
-2D covariance is
+Rendering projects each Gaussian to the image plane. Let $R_{\mathcal CW}$ be
+the rotation from world coordinates to the rendering camera and let $J_n$ be
+the $2\times3$ Jacobian of perspective projection at the transformed centre.
+The EWA construction of \citet{zwicker2001ewa} gives
 \begin{equation}
-\Sigma' \;=\; J\,W\,\Sigma\,W^{\!\top}J^{\!\top},
+\Sigma_n^{2D}
+  =J_n R_{\mathcal CW}\Sigma_n^W R_{\mathcal CW}^{\top}J_n^{\top}.
 \label{eq:proj}
 \end{equation}
-of which the upper-left $2\times2$ block is used. The rasteriser sorts
-primitives by depth per screen tile and composites them front-to-back. Writing
-$c_k$ for the colour of the $k$-th primitive along a ray and $\alpha_k$ for its
-opacity multiplied by the evaluated 2D Gaussian, the pixel colour is
+The rasteriser sorts primitives by depth per screen tile and composites them
+front-to-back. Let $\mathbf c_\ell(u)$ be the SH-evaluated RGB colour and
+$b_\ell(u)\in[0,1]$ the opacity multiplied by the 2D Gaussian footprint of the
+$\ell$-th primitive along pixel ray $u$. The rendered colour is
 \begin{equation}
-c \;=\; \sum_{k} c_k\,\alpha_k \prod_{l<k}\bigl(1-\alpha_l\bigr),
+\hat I(u)=\sum_{\ell=1}^{K}\mathbf c_\ell(u)b_\ell(u)
+          \prod_{r<\ell}\bigl(1-b_r(u)\bigr),
 \label{eq:alphacomp}
 \end{equation}
 and the residual transmittance after all $K$ primitives is
 \begin{equation}
-T_{K} \;=\; \prod_{k\le K}\bigl(1-\alpha_k\bigr).
+\mathcal T_{K}(u)=\prod_{\ell=1}^{K}\bigl(1-b_\ell(u)\bigr).
 \label{eq:transmittance}
 \end{equation}
 
@@ -58,7 +61,8 @@ T_{K} \;=\; \prod_{k\le K}\bigl(1-\alpha_k\bigr).
 \label{sec:bg:black}
 
 \Cref{eq:transmittance} is where the background enters. A renderer composites
-$c \leftarrow c + T_K c_{\text{bg}}$, so with $c_{\text{bg}}=0$ the residual
+$\hat I(u)\leftarrow\hat I(u)+\mathcal T_K(u)\mathbf c_{\mathrm{bg}}$, so with
+$\mathbf c_{\mathrm{bg}}=0$ the residual
 transmittance contributes \emph{zero radiance}: whatever a ray fails to hit is
 black. For one isolated primitive with non-negative colour, increasing
 opacity increases its contribution against that background. A stack is more
@@ -98,19 +102,21 @@ Our online refiner (\cref{ch:refiner}) restores the image objective in
 \subsection{DUSt3R and MASt3R}
 
 DUSt3R~\cite{wang2024dust3r} maps an uncalibrated image pair
-$I^i, I^j \in \mathbb{R}^{H\times W\times 3}$ to pointmaps
-$X^i_i, X^j_i \in \mathbb{R}^{H\times W\times 3}$ with confidences
-$C^i_i, C^j_i$, where $X^i_j$ denotes the pointmap of image $i$ expressed in
-the frame of camera $j$. Both images pass through a shared ViT encoder; two
+$I_i,I_j\in\mathbb{R}^{H\times W\times3}$ to pointmaps
+$X_{\mathcal C_i}^{(i)},X_{\mathcal C_i}^{(j)}
+\in\mathbb{R}^{H\times W\times3}$ with confidences
+$C_{\mathcal C_i}^{(i)},C_{\mathcal C_i}^{(j)}$. Here
+$X_{\mathcal C_a}^{(b)}$ denotes image $b$'s pointmap expressed in camera
+frame $\mathcal C_a$. Both images pass through a shared ViT encoder; two
 decoders then attend to each other's tokens, so each view's prediction is
 conditioned on the other, and DPT heads regress the pointmaps. The output lives
 in the \emph{first} camera's frame, so a single forward pass already encodes
 the relative pose implicitly rather than as an explicit estimate.
 
 MASt3R~\cite{leroy2024mast3r} adds a matching head producing dense local
-features $D^i_i, D^j_i \in \mathbb{R}^{H\times W\times d}$, trained so that
+features $D^{(i)},D^{(j)}\in\mathbb{R}^{H\times W\times d}$, trained so that
 corresponding pixels are mutual nearest neighbours in feature space. We write
-$F_M(I^i, I^j)$ for one forward pass.
+$F_M(I_i,I_j)$ for one forward pass.
 
 Two properties of this family govern everything downstream. The prediction is
 \emph{scale-ambiguous up to a per-forward gauge} --- each independent pass
@@ -137,7 +143,8 @@ belongs to the context, not to the architecture.
 \section{SLAM with a pointmap prior}
 \label{sec:bg:slam}
 
-We use the front- and back-end of
+We use $T_{AB}$ for a transform that maps coordinates from frame $B$ to
+frame $A$. We use the front- and back-end of
 MASt3R-SLAM~\cite{murai2025mast3rslam}. This section summarises the tracking
 path whose trajectory accuracy is measured in \cref{ch:results}.
 
@@ -147,13 +154,12 @@ Because network predictions are scale-ambiguous, poses are $\mathrm{Sim}(3)$
 rather than $\mathrm{SE}(3)$, so that a per-keyframe scale is available to
 absorb the ambiguity:
 \begin{equation}
-T=\begin{bmatrix} sR & t\\ 0 & 1\end{bmatrix},\qquad
+T=\begin{bmatrix} aR & t\\ 0 & 1\end{bmatrix},\qquad
 T \leftarrow \tau \oplus T \triangleq \mathrm{Exp}(\tau)\circ T ,
 \label{eq:sim3}
 \end{equation}
-with $\tau\in\mathfrak{sim}(3)$. This is a load-bearing choice for this thesis:
-the scale degree of freedom that \cref{eq:sim3} grants each keyframe is exactly
-the one that absorbs per-forward gauge error, which is why
+with $a>0$ and $\tau\in\mathfrak{sim}(3)$. The scale degree of freedom
+absorbs per-forward gauge error. This is why
 \cref{sec:neg:frontend} finds that correcting the map's scales alone makes the
 rendering worse.
 
@@ -168,19 +174,26 @@ model through the ray map $\psi(X)=X/\lVert X\rVert$. Two rays differ by
 which is \emph{bounded}, whereas a 3D point error is not. Since pointmap
 predictions exhibit depth errors far more often than directional errors,
 tracking minimises a ray error rather than a point error. For matches
-$m_{f,k}$ between the current frame $f$ and keyframe $k$,
+$\mathcal M_{f,k}$ between the current frame $f$ and keyframe $k$,
 \begin{equation}
-E_r=\!\!\sum_{m,n\in m_{f,k}}\!\!
-\Bigl\lVert \frac{\psi(\tilde X^{k}_{k,n}) - \psi(T_{kf} X^{f}_{f,m})}{w(q_{m,n},\sigma_r^2)}\Bigr\rVert_\rho ,
+E_r=\!\!\sum_{m,n\in\mathcal M_{f,k}}\!\!
+\Bigl\lVert
+\frac{\psi(\widetilde X_{\mathcal C_k,n}^{(k)})
+ -\psi(T_{\mathcal C_k\mathcal C_f}X_{\mathcal C_f,m}^{(f)})}
+{w(\omega_{m,n},\sigma_r^2)}
+\Bigr\rVert_\rho ,
 \label{eq:trackray}
 \end{equation}
-with $\lVert\cdot\rVert_\rho$ a Huber norm and $w$ a match-confidence weight
-that rejects matches below a confidence floor. A small term on the difference
+with $\lVert\cdot\rVert_\rho$ a Huber norm, $\omega_{m,n}$ the match
+confidence, and $w$ its confidence-dependent noise scale; invalid matches
+receive infinite scale. A small term on the difference
 of distances from the camera centre keeps the pure-rotation case
 non-degenerate. The system is solved by Gauss--Newton in an
 iteratively-reweighted least-squares loop:
 \begin{equation}
-\bigl(J^{\!\top}WJ\bigr)\tau = -J^{\!\top}Wr, \qquad T_{kf}\leftarrow \tau\oplus T_{kf}.
+\bigl(J^{\!\top}WJ\bigr)\tau=-J^{\!\top}Wr,\qquad
+T_{\mathcal C_k\mathcal C_f}\leftarrow
+\tau\oplus T_{\mathcal C_k\mathcal C_f}.
 \label{eq:gn}
 \end{equation}
 Both the iterative projection and the feature-space refinement of matches are
@@ -193,10 +206,18 @@ A new keyframe is created when the number of valid matches, or of unique
 keyframe pixels among them, falls below a threshold. Each keyframe maintains a
 canonical pointmap updated by a confidence-weighted running average,
 \begin{equation}
-\tilde X^k_k \leftarrow
-\frac{\tilde C^k_k \tilde X^k_k + C^f_k\, T_{kf} X^f_k}{\tilde C^k_k + C^f_k},
-\qquad
-\tilde C^k_k \leftarrow \tilde C^k_k + C^f_k .
+\begin{aligned}
+\widetilde X_{\mathcal C_k}^{(k)}
+&\leftarrow
+\frac{\widetilde C_{\mathcal C_k}^{(k)}
+      \widetilde X_{\mathcal C_k}^{(k)}
+      +C_{\mathcal C_f}^{(k)}
+       T_{\mathcal C_k\mathcal C_f}X_{\mathcal C_f}^{(k)}}
+     {\widetilde C_{\mathcal C_k}^{(k)}+C_{\mathcal C_f}^{(k)}},\\
+\widetilde C_{\mathcal C_k}^{(k)}
+&\leftarrow\widetilde C_{\mathcal C_k}^{(k)}
+             +C_{\mathcal C_f}^{(k)} .
+\end{aligned}
 \label{eq:fusion}
 \end{equation}
 Filtering merges information from many viewpoints into geometry that no single
@@ -220,9 +241,15 @@ own encoder's features.
 Global consistency is obtained by minimising the same ray error over all edges
 $\mathcal{E}$ of the keyframe graph,
 \begin{equation}
-E_g=\sum_{i,j\in\mathcal{E}}\ \sum_{m,n\in m_{i,j}}
-\Bigl\lVert\frac{\psi(\tilde X^{i}_{i,m})-\psi(T_{ij}\tilde X^{j}_{j,n})}{w(q_{m,n},\sigma_r^2)}\Bigr\rVert_\rho,
-\qquad T_{ij}=T_{WC_i}^{-1}T_{WC_j},
+E_g=\sum_{(i,j)\in\mathcal{E}}\ \sum_{m,n\in\mathcal M_{i,j}}
+\Bigl\lVert
+\frac{\psi(\widetilde X_{\mathcal C_i,m}^{(i)})
+ -\psi(T_{\mathcal C_i\mathcal C_j}
+       \widetilde X_{\mathcal C_j,n}^{(j)})}
+{w(\omega_{m,n},\sigma_r^2)}
+\Bigr\rVert_\rho,
+\quad
+T_{\mathcal C_i\mathcal C_j}=T_{W\mathcal C_i}^{-1}T_{W\mathcal C_j},
 \label{eq:global}
 \end{equation}
 solved by second-order Gauss--Newton with sparse Cholesky over the $7N\times7N$
@@ -243,8 +270,8 @@ PSNR without changing structure --- which is why the protocol of
 \cref{ch:protocol} normalises exposure identically for every system before
 scoring. SSIM~\cite{wang2004ssim} compares local luminance, contrast and
 structure statistics. LPIPS~\cite{zhang2018lpips} compares deep features of a
-pre-trained network and correlates better with human judgement; we use the
-AlexNet variant throughout.
+pre-trained network. Reconstruction evaluation uses LPIPS-AlexNet; head
+adaptation retains the upstream VGG-based LPIPS loss.
 
 \looseness=-1
 We report PSNR and LPIPS together because they differ in

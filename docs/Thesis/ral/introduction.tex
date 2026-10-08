@@ -1,16 +1,15 @@
 \section{Introduction}
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\textwidth]{overview-ral.pdf}
+  \includegraphics[width=\textwidth]{method_overview_ral.pdf}
   \caption{\textbf{Predict, anchor, refine.}
   Real TUM frames enter a shared predictor. Its geometric outputs support
   tracking; its Gaussian outputs form local maps. A keyframe anchor carries
   each local map and its supervision cameras, so both follow pose corrections.
   The refiner samples tracked images, renders the assembled map, and updates
   Gaussian appearance. Section and equation references locate each step.
-  Insets show saved maps before and after refinement at the same camera.
-  Images are raster data; the diagram and labels are editable in PowerPoint.}
-  \label{fig:overview}
+  Insets show saved maps before and after refinement at the same camera.}
+  \label{fig:method-overview}
 \end{figure*}
 A robot revisiting a room needs a map that preserves both its layout and its
 appearance. Visual SLAM estimates the camera motion and scene geometry;
@@ -36,7 +35,7 @@ preserved. This lets a separate refiner improve appearance while tracking
 continues to estimate motion.
 
 Splatt3R-SLAM follows three steps: predict local Gaussians, anchor them to
-the pose graph, and refine the assembled map (Fig.~\ref{fig:overview}).
+the pose graph, and refine the assembled map (Fig.~\ref{fig:method-overview}).
 The main contribution is this shared-anchor mapping and supervision design.
 We then study two ways to improve its starting point: adapting only the
 Gaussian head and reducing opacity when predictions enter the map.
@@ -62,14 +61,10 @@ tracking and evaluate trajectory accuracy as a control.
 MonoGS~\cite{matsuki2024monogs} estimates motion and appearance with Gaussian
 splatting. Photo-SLAM~\cite{huang2024photoslam} combines an ORB-SLAM3-based
 geometric system~\cite{campos2021orbslam3} with photorealistic mapping.
+Splat-SLAM~\cite{sandstrom2025splatslam} deforms an RGB-only Gaussian map
+after global pose and depth updates.
 SplaTAM~\cite{keetha2024splatam} and Gaussian-SLAM~\cite{yugay2023gaussianslam}
 study Gaussian reconstruction with RGB-D input. These systems allocate and
 optimise primitives during mapping. Our map starts with dense predictions
 and refines their parameters after assembly. This reduces the need to grow
 geometry from sparse seeds, but retains many overlapping primitives.
-
-Unblur-SLAM~\cite{zhang2026unblur} combines learned deblurring with
-rendering-based test-time refinement. It addresses degraded input images;
-we address the placement and refinement of pairwise predictions under pose
-corrections. The shared-anchor construction is the link between the learned
-initial estimate and sequence-level optimisation in our system.

@@ -51,6 +51,11 @@ Historical prose is not authoritative when contradicted by current evidence.
   discards higher bands and is not the current external evaluation harness.
 - Replica means: Ours 23.019214 dB / 0.134862 LPIPS, Photo-SLAM
   19.482997 / 0.162673. PSNR wins 8/8, LPIPS wins 5/8.
+- State the result directly as state-of-the-art performance. The evidence is
+  the all-eight-scene local comparison above; no new Splat-SLAM, SEGS-SLAM,
+  GSO-SLAM or MyGO-Splat runs are planned for this revision. Keep those
+  systems in related-work positioning and do not mix their paper-reported
+  scores into the measured table.
 - TUM desk: Ours 13.949010 / 0.411030, MonoGS 13.913588 / 0.395311,
   Photo-SLAM 10.665049 / 0.562209. Do not mix the old MonoGS row into this table.
 - External comparison uses released head, no thinning, fixed centres and

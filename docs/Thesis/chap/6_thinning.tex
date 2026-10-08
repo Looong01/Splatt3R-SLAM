@@ -40,11 +40,12 @@ to how little the pointmap confidence vouches for it.
 
 Confidences are not calibrated across keyframes, so we rank-normalise
 \emph{within} each keyframe. For a keyframe with $N$ Gaussians and confidence
-values $\{c_n\}$, let $r_n$ be the rank of $c_n$ and
-$\hat{c}_n = r_n/(N-1) \in [0,1]$. The injected opacity is
+values $\{\gamma_n\}$, let $r_n\in\{0,\ldots,N-1\}$ be the ascending rank of
+$\gamma_n$ and define
+$\hat{\gamma}_n=r_n/\max(N-1,1)\in[0,1]$. The injected opacity is
 \begin{equation}
 \alpha'_n \;=\; \alpha_n \cdot
-\mathrm{clip}\Bigl(1 - 2\lambda\,(1-\hat{c}_n),\; 0.1,\; 1\Bigr),
+\mathrm{clip}\Bigl(1-2\lambda(1-\hat{\gamma}_n),\;0.1,\;1\Bigr),
 \label{eq:thin}
 \end{equation}
 with dose $\lambda{=}0.45$ in the thinning experiments. External comparisons
