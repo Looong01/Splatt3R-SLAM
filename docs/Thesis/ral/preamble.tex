@@ -4,7 +4,7 @@
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx,booktabs,array}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,calc,backgrounds}
+\usetikzlibrary{arrows.meta,calc,backgrounds,positioning,arrows,fit,shapes.geometric}
 \usepackage{cite}
 \usepackage{balance}
 \usepackage{capt-of}
@@ -25,13 +25,12 @@
   \begin{minipage}{\textwidth}
     \centering
     \includegraphics[width=\textwidth]{teaser.pdf}
-    \captionof{figure}{\textbf{Pairwise predictions become a persistent map.}
-    (a) A pose correction moves a local map and its observation cameras
-    together; grey shows their previous positions.
-    (b) Common-camera renderings with identical crops.
-    (c) Mean PSNR on all eight Replica scenes: 23.02\,dB for Splatt3R-SLAM
-    versus 19.48\,dB for Photo-SLAM, with eight scene wins.
-    Results use 300\,s polish, non-keyframe cameras and full exported SH.}
+    \captionof{figure}{\textbf{Image pairs become a persistent map.}
+    Left: two images pass one shared predictor; a keyframe anchor links the
+    local Gaussian map and the cameras that observe it, so a pose correction
+    moves both together. Right: the map drawn as individual Gaussian
+    primitives and renders from held-out views on real ETH3D and TUM.
+    On real TUM desk the refined map is $+3.28$\,dB over Photo-SLAM.}
     \label{fig:teaser}
   \end{minipage}\vspace{10pt}%
 }

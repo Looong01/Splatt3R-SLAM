@@ -24,7 +24,7 @@ the refined map; Fig.~\ref{fig:system-overview} gives the process layout.
   enter a shared predictor. Geometry feeds tracking, while local Gaussians
   attach to keyframe anchors. The same anchors carry supervision cameras.
   A separate process samples observations, renders the map, and updates its
-  appearance. Insets show saved maps before and after refinement. Chapter and
+  appearance. Chapter and
   equation labels point to the detailed derivation.}
   \label{fig:method-overview}
 \end{figure}
@@ -46,11 +46,14 @@ published through a CPU snapshot buffer. These are distinct storage paths.
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{ral/fig/overview.pdf}
-  \caption[System implementation architecture]{System implementation.
+  \caption[System overview]{System overview.
   Tracking, backend optimisation, and visualisation run on GPU~0; the map
   refiner runs on GPU~1. SharedKeyframes uses CUDA IPC, while supervision
   frames and versioned refined-map snapshots use CPU shared memory.
-  Numbered arrows show data flow and pose updates.}
+  Numbered arrows show RGB, predicted pointmaps, local Gaussians, supervision
+  and refined-map flow; dashed arrows denote pose updates. Thumbnails use
+  real TUM desk predictions and recorded maps. Before/after renders share
+  one camera; the backend inset shows recorded keyframe camera centres.}
   \label{fig:system-overview}
 \end{figure}
 

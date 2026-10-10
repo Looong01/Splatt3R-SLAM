@@ -30,7 +30,7 @@ def package():
     files.extend(ROOT / "scripts/paper" / name for name in (
         "make_ral_figures.py", "draw_paper_diagrams.py",
         "build_overview.py", "render_comparisons.py",
-        "render_refinement_pair.py",
+        "render_refinement_pair.py", "render_system_stages.py", "draw_revised_figures.py",
         "package_ral.py"))
     files.extend(p for p in (ROOT/"logs/paper_ral_20261007").rglob("*")
                  if p.suffix in (".json", ".png"))

@@ -87,12 +87,16 @@ Figure~\ref{fig:system-overview} shows the process and memory boundaries.
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=0.90\textwidth]{overview.pdf}
-  \caption{\textbf{System implementation.}
+  \includegraphics[width=0.80\textwidth]{overview.pdf}
+  \caption{\textbf{System overview.}
   Tracking, pose-graph optimisation, and visualisation run on GPU~0.
   The optional map refiner runs on GPU~1. SharedKeyframes uses CUDA IPC;
   supervision frames and versioned refined-map snapshots use CPU shared
-  memory. Numbered arrows show the data flow and pose updates.}
+  memory. Numbered arrows show RGB, predicted pointmaps, local Gaussians,
+  supervision and refined-map flow; dashed arrows denote pose updates.
+  Thumbnails use real TUM desk predictions and recorded maps.
+  Before/after renders share one camera; the backend inset shows recorded
+  keyframe camera centres.}
   \label{fig:system-overview}
 \end{figure*}
 

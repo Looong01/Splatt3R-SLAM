@@ -34,9 +34,9 @@ class Drawing:
         self.items.append(dict(kind='text', x=x, y=y, value=value, size=size,
                                color=color, bold=bold, align=align, ppt=ppt, runs=runs))
 
-    def rect(self, x, y, w, h, color=INK, fill='white', lw=.7):
+    def rect(self, x, y, w, h, color=INK, fill='white', lw=.7, zorder=2):
         self.items.append(dict(kind='rect', x=x, y=y, w=w, h=h,
-                               color=color, fill=fill, lw=lw))
+                               color=color, fill=fill, lw=lw, zorder=zorder))
 
     def ellipse(self, x, y, w, h, angle=0, color=TEAL, fill='white', lw=.7):
         self.items.append(dict(kind='ellipse', x=x, y=y, w=w, h=h, angle=angle,
@@ -78,7 +78,7 @@ class Drawing:
                 elif k == 'rect':
                     ax.add_patch(Rectangle((o['x'], o['y']), o['w'], o['h'],
                         facecolor=o['fill'], edgecolor=o['color'],
-                        linewidth=o['lw'], zorder=2))
+                        linewidth=o['lw'], zorder=o.get('zorder', 2)))
                 elif k == 'ellipse':
                     ax.add_patch(Ellipse((o['x'], o['y']), o['w'], o['h'],
                         angle=o['angle'], edgecolor=o['color'],
@@ -280,7 +280,7 @@ def method(variant):
         'master':('Ch. 2 · Eq. (2.7)','Ch. 4 · Eqs. (4.1–4.3)',
                   'Ch. 7 · Eq. (7.1)','Chs. 5–6 · Eq. (6.1)'),
     }[variant]
-    d = Drawing(7.15,3.65)
+    d = Drawing(7.15,2.55)
     for x,label,ref in zip((.06,2.53,4.77),('(a) Predict','(b) Anchor','(c) Refine'),refs):
         d.heading(x,.13,label,ref)
     d.line([(.06,.46),(7.09,.46)],RULE,.5)
@@ -329,19 +329,6 @@ def method(variant):
     d.text(6.47,1.28,r'$\nabla_\theta\mathcal{L}$',8,ppt='∇θ L',align='right')
     d.line([(6.18,.87),(4.43,.87),(4.43,1.51),(4.18,1.51)],TEAL,arrow=True)
     d.text(5.22,.73,r'Update $\theta$',8,TEAL,ppt='Update θ',align='center')
-    d.line([(.06,2.65),(7.09,2.65)],RULE,.5)
-    for x,fname,label in [(.06,'before.png','Before refinement'),(1.52,'after.png','After refinement')]:
-        d.image(ASSET/fname,x,2.86,.94)
-        d.text(x+.47,2.76,label,7.5,align='center')
-    d.line([(1.00,3.20),(1.52,3.20)],TEAL,arrow=True)
-    d.text(3.05,2.83,'Shared-anchor relation',8.1,bold=True)
-    d.text(3.05,3.06,r'$T_{W\mathcal{C}_f}^{-1}T_{W\mathcal{C}_k}=T_{\mathcal{C}_k\mathcal{C}_f}^{-1}$',
-           10,ppt='T_WCf^-1 T_WCk = T_CkCf^-1',
-           runs=[('T',0),('WCf',-25000),('−1',35000),
-                 (' T',0),('WCk',-25000),(' = T',0),
-                 ('CkCf',-25000),('−1',35000)])
-    d.text(3.05,3.31,'Pose corrections move map and cameras together.',7.8)
-    d.text(3.05,3.53,'Optional initialisation: '+refs[3],7.5,MUTED)
     return d
 
 

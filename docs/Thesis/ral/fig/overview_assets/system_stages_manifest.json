@@ -1,0 +1,34 @@
+{
+  "scene": "TUM freiburg1_desk",
+  "prediction_frame": 452,
+  "head": "released",
+  "prediction_path": "splatt3r_inference_mono + splatt3r_render",
+  "local_gaussian_visual": "predicted Gaussian centres coloured by source RGB",
+  "pointmap_visual": "predicted z, 2%-98% colour range",
+  "keyframe_visual": "recorded keyframe centres, not inferred graph edges",
+  "recorded_run": "logs/ref_onoff_tum_on",
+  "refinement_protocol": {
+    "scene": "TUM freiburg1_desk",
+    "evaluation_frame_index": 452,
+    "selection": {
+      "rule": "two middle ranks of ours-minus-mono PSNR",
+      "row_indices": [
+        92,
+        46
+      ]
+    },
+    "camera_source": "GT camera transformed with the recorded Ours Sim(3)",
+    "before_map": "logs/ref_onoff_tum_on/rgbd_dataset_freiburg1_desk_gaussians.ply",
+    "after_map": "logs/ref_onoff_tum_on/rgbd_dataset_freiburg1_desk_refined.ply"
+  },
+  "sha256": {
+    "stage_keyframes.png": "003348f1e1ab7d2746af39fc234be17dfbf685a3444cd2d6a42675a3fde538b2",
+    "stage_local_gaussians.png": "a1cd4d8e436c6fab5b639378475218cf13b452f31fe44d5a9cbb468cfea660be",
+    "stage_local_render.png": "4bbe7d2c9a2dfd9ee95aef82f817490fcf387f322fb636dc73301e73bf94a573",
+    "stage_pointmap.png": "e3696fcab4620a5bb22a88f43d30baf224cb605ee85b62a97ef370927efbfdf9",
+    "stage_rgb.png": "eae42d1887667086238c7a9078c456ed7122c04395a74768d84f8398b6703395",
+    "stage_trajectory.png": "c7b0cb2794d8a7a57d0fc32452b5848bb325f17de3b407c1cd8ef968759bab97",
+    "before.png": "4a0be273283b4bfb678eee86cf40747ef1dea30f618f6ed076fe8e8c7ec196ba",
+    "after.png": "bd916dcbb222c30c84435b4baeb354b5bfcafc31de83b79f7a88fbe9e6f9c3f4"
+  }
+}

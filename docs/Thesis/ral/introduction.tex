@@ -7,8 +7,7 @@
   tracking; its Gaussian outputs form local maps. A keyframe anchor carries
   each local map and its supervision cameras, so both follow pose corrections.
   The refiner samples tracked images, renders the assembled map, and updates
-  Gaussian appearance. Section and equation references locate each step.
-  Insets show saved maps before and after refinement at the same camera.}
+  Gaussian appearance. Section and equation references locate each step.}
   \label{fig:method-overview}
 \end{figure*}
 A robot revisiting a room needs a map that preserves both its layout and its
@@ -34,8 +33,12 @@ the local scene and the cameras that observe it. Their relative transform is
 preserved. This lets a separate refiner improve appearance while tracking
 continues to estimate motion.
 
-Splatt3R-SLAM follows three steps: predict local Gaussians, anchor them to
-the pose graph, and refine the assembled map (Fig.~\ref{fig:method-overview}).
+Splatt3R-SLAM follows three steps: predict local Gaussians with a shared
+frozen Splatt3R head, anchor them and their supervision cameras to the pose
+graph, and refine the assembled map (Fig.~\ref{fig:method-overview}). The
+anchor makes the design explicit: for keyframe~$k$ and supervision frame~$f$,
+$T_{WC_f}^{-1}T_{WC_k}=T_{C_kC_f}^{-1}$ stays fixed, so a pose correction moves
+the local map and the cameras that observe it together.
 The main contribution is this shared-anchor mapping and supervision design.
 We then study two ways to improve its starting point: adapting only the
 Gaussian head and reducing opacity when predictions enter the map.

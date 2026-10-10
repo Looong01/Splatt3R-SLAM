@@ -1,0 +1,11 @@
+{
+  "local_gaussians_crop": [
+    180,
+    56,
+    477,
+    387
+  ],
+  "source": "stage_local_gaussians.png",
+  "trajectory_source": "logs/ref_onoff_tum_on/rgbd_dataset_freiburg1_desk.txt",
+  "trajectory_axes": "recorded camera x,z; display aspect adjusted for wide panel"
+}

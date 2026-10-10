@@ -99,26 +99,28 @@ Both outperform Photo-SLAM on this sequence.
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\textwidth]{qualitative_tum.pdf}
-  \caption{\textbf{Related-work comparison on TUM desk.}
-  Each method occupies one column; each view is followed by an identically
-  located crop (orange box). The two views are the middle ranks of the
-  per-frame Ours-minus-MonoGS PSNR difference among the 100 common evaluation
-  frames. All columns use the same target camera and image scale.
-  The close quantitative comparison is reflected in remaining blur and
-  geometric distortion in both MonoGS and our renderings.}
+  \includegraphics[width=\textwidth]{qualitative_multi.pdf}
+  \caption{\textbf{Real-world reconstructions across datasets.}
+  Top: TUM desk compared against ground truth, Photo-SLAM, and MonoGS; all
+  columns share the camera and image scale. Numbered insets (1: game
+  controllers; 2: keyboard) zoom the same two thin-structure regions in every
+  method, where remaining blur and geometric distortion are most visible.
+  Bottom: additional real sequences from TUM and ETH3D, with ground truth
+  above each rendering.}
   \label{fig:qualitative}
 \end{figure*}
 
 \begin{figure*}[t]
   \centering
   \includegraphics[width=\textwidth]{evidence.pdf}
-  \caption{\textbf{Quality distribution and map budget.}
-  (a) Fresh full-SH scene PSNR differences on Replica; o/r denote office/room.
-  (b) A separate recorded study retaining the highest-opacity primitives in
-  four of our maps, without re-optimisation. The final marker is each full
-  map, containing 2.0--3.0 million Gaussians. The study measures post-hoc
-  removal from maps optimised at full size.}
+  \caption{\textbf{Beyond Photo-SLAM.}
+  (a) Per-scene PSNR improvement of our full-SH map over Photo-SLAM. Teal bars
+  are Replica scenes (synthetic); the blue bar is real TUM desk, where the
+  gain is $+3.3$\,dB. Gains are largest in office4 and room0 and smallest in
+  room1, so the improvement is scene dependent.
+  (b) Post-hoc truncation keeps the highest-opacity primitives of four maps
+  without re-optimisation; quality falls off below about one million
+  Gaussians, with the final marker denoting each full map.}
   \label{fig:evidence}
 \end{figure*}
 

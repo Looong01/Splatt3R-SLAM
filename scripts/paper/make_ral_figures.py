@@ -107,9 +107,8 @@ def qualitative_replica():
 
 
 def overview():
-    from draw_paper_diagrams import system, write_system_tikz
+    # The system overview is an independent TikZ figure; render it directly.
     from build_overview import build_overview
-    write_system_tikz(system())
     build_overview()
 
 
@@ -233,12 +232,14 @@ if __name__ == "__main__":
     DATA = args.data.resolve()
     FIG.mkdir(parents=True, exist_ok=True)
     records = {s: json.loads((DATA/s/"metrics.json").read_text()) for s in SCENES+["desk"]}
-    teaser(records)
     method_overview("ral")
     method_overview("master")
     overview()
-    qualitative()
     qualitative_replica()
-    evidence(records)
     tables(records)
+    # Teaser, cross-dataset qualitative and the two-panel evidence figure are the
+    # revised real-data versions; delegate so this script reproduces exactly the
+    # figures used in the manuscript rather than the earlier drafts above.
+    import draw_revised_figures
+    draw_revised_figures.render_all()
     print(f"Generated figures and tables in {PAPER}")

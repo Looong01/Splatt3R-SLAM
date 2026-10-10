@@ -106,12 +106,12 @@ $7.64$\,dB on room0. Replica optimisation budgets are not matched.
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{ral/fig/evidence.pdf}
-  \caption[Scene dependence and map truncation]{(a) Fresh full-SH Replica
-  scene PSNR differences; o/r denote office/room. (b) A separate recorded
-  experiment retaining the highest-opacity primitives in four of our maps,
-  without re-optimisation. Final markers denote full maps. The truncation
-  curve measures sensitivity to this procedure, not optimal quality under
-  each primitive budget.}
+  \caption[Beyond Photo-SLAM]{(a)~Per-scene PSNR improvement over Photo-SLAM.
+  Teal bars are Replica scenes (synthetic); the blue bar is real TUM desk at
+  $+3.3$\,dB. Gains range from $+0.2$ to $+7.6$\,dB and are scene dependent.
+  (b)~Post-hoc truncation of four maps to their highest-opacity primitives
+  without re-optimisation; quality falls off below about one million
+  Gaussians, the final marker denoting each full map.}
   \label{fig:evidence}
 \end{figure}
 
@@ -155,13 +155,13 @@ comparison covers one TUM sequence.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{ral/fig/qualitative_tum.pdf}
-  \caption[Four-column TUM reconstruction comparison]{Ground truth,
-  Photo-SLAM, MonoGS and Ours, at two common TUM desk cameras. Each full
-  view is followed by an identical crop, indicated in orange. Views occupy
-  the two middle ranks of Ours-minus-MonoGS per-frame PSNR. Remaining blur
-  and geometric distortion are visible in both MonoGS and our maps.
-  No per-image score labels are used.}
+  \includegraphics[width=\linewidth]{ral/fig/qualitative_multi.pdf}
+  \caption[Real reconstructions across datasets]{Top: TUM desk compared with
+  ground truth, Photo-SLAM, and MonoGS at a common camera. Numbered insets
+  (1: game controllers; 2: keyboard) zoom the same two thin-structure regions
+  across every method. Bottom: further TUM and ETH3D sequences with ground
+  truth above each rendering. Thin structures retain the most blur and
+  geometric distortion.}
   \label{fig:qualitative}
 \end{figure}
 
