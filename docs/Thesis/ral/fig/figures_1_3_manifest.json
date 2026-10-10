@@ -1,0 +1,60 @@
+{
+  "generator": "scripts/paper/draw_paper_diagrams.py",
+  "teaser": {
+    "scene": "office0",
+    "view": "view0",
+    "selection": {
+      "rule": "two middle ranks of ours-minus-photo PSNR",
+      "row_indices": [
+        9,
+        66
+      ]
+    },
+    "identical_crop_xywh": [
+      76,
+      84,
+      300,
+      112
+    ]
+  },
+  "drawings": {
+    "teaser": {
+      "size_inches": [
+        7.15,
+        2.23
+      ],
+      "minimum_label_pt": 7.3,
+      "continuous_arrows": 1
+    },
+    "method_overview_ral": {
+      "size_inches": [
+        7.15,
+        3.65
+      ],
+      "minimum_label_pt": 7.5,
+      "continuous_arrows": 14
+    },
+    "method_overview_master": {
+      "size_inches": [
+        7.15,
+        3.65
+      ],
+      "minimum_label_pt": 7.5,
+      "continuous_arrows": 14
+    }
+  },
+  "figure_3": {
+    "source": "docs/Thesis/ral/fig/overview.tikz",
+    "generator": "scripts/paper/build_overview.py",
+    "status": "restored original system implementation figure"
+  },
+  "images": {
+    "docs/Thesis/ral/fig/overview_assets/after.png": "bd916dcbb222c30c84435b4baeb354b5bfcafc31de83b79f7a88fbe9e6f9c3f4",
+    "docs/Thesis/ral/fig/overview_assets/before.png": "4a0be273283b4bfb678eee86cf40747ef1dea30f618f6ed076fe8e8c7ec196ba",
+    "docs/Thesis/ral/fig/overview_assets/target.png": "d33150cdf4cb41ad691edd8140f09010133ac538fd62f1aa579042bc9d790d95",
+    "logs/paper_ral_20261007/desk/view1_gt.png": "696aaca83f16451c51d4140b3ad27654c03c92d81abf29f95de9e26ac5c98be4",
+    "logs/paper_ral_20261007/office0/view0_ours.png": "2912cf084c1a1f850bfd61f07d78f36bab937eeed9052bf104cedd6053d6780f",
+    "logs/paper_ral_20261007/office0/view0_photo.png": "56d247119c9f4f89fdbd2ddc388ba164615624f4fb746d2747ac85858b87e1e8"
+  },
+  "image_edits": "uniform display scaling and identical explicitly marked crops only"
+}

@@ -177,81 +177,9 @@ def add_title(slide, title, subtitle):
 
 
 def overview_slide(prs, master=False):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    refs = {
-        "predict": "Ch. 2 / Eq. (2.7)" if master else "Sec. III-A / Eq. (1)",
-        "anchor": "Ch. 4 / Eqs. (4.1-4.3)" if master else "Sec. III-B / Eqs. (2-4)",
-        "refine": "Ch. 7 / Eq. (7.1)" if master else "Sec. III-C / Eq. (5)",
-        "init": "Chs. 5-6 / Eq. (6.1)" if master else "Sec. III-D / Eqs. (7-8)",
-    }
-    add_title(
-        slide,
-        "Predict, anchor, refine",
-        "MSc method navigation" if master else "RA-L method navigation",
-    )
-
-    add_text(slide, 0.35, 0.72, 2.0, 0.25, "1  IMAGE PAIR", 11, BLUE, True)
-    add_picture_cover(slide, ASSET / "target.png", 0.35, 1.03, 1.58, 1.18, BLUE)
-    keyframe = DATA / "desk/view1_gt.png"
-    add_picture_cover(slide, keyframe, 0.72, 1.63, 1.58, 1.18, GREEN)
-    add_text(slide, 0.35, 2.92, 1.95, 0.34,
-             "current frame + keyframe", 9, MUTED, False, PP_ALIGN.CENTER)
-
-    add_line(slide, 2.38, 1.85, 2.70, 1.85, BLUE)
-    add_box(slide, 2.72, 1.03, 2.12, 1.62, "Shared predictor",
-            "Frozen MASt3R features\nPointmap + matching\nGaussian DPT head",
-            BLUE_BG, BLUE)
-    add_text(slide, 2.82, 2.75, 1.95, 0.32, refs["predict"], 8.5, BLUE,
-             True, PP_ALIGN.CENTER)
-
-    add_line(slide, 4.84, 1.47, 5.18, 1.47, BLUE)
-    add_box(slide, 5.20, 0.92, 2.25, 1.12, "Geometry lane",
-            "tracking -> keyframes -> pose graph", BLUE_BG, BLUE)
-    add_line(slide, 4.84, 2.28, 5.18, 2.28, GREEN)
-    add_box(slide, 5.20, 2.15, 2.25, 1.08, "Gaussian lane",
-            "local means, shape, color, opacity", GREEN_BG, GREEN)
-
-    add_line(slide, 7.48, 1.55, 7.79, 1.55, ORANGE)
-    add_box(slide, 7.82, 0.92, 2.08, 2.31, "Shared keyframe anchor",
-            "Current pose moves both:\n  local Gaussian map\n  supervision cameras",
-            ORANGE_BG, ORANGE)
-    add_camera(slide, 8.10, 2.34, 0.95, ORANGE)
-    add_gaussians(slide, 8.68, 2.25, 0.85)
-    add_text(slide, 7.92, 3.33, 1.88, 0.32, refs["anchor"], 8.5, ORANGE,
-             True, PP_ALIGN.CENTER)
-    add_line(slide, 7.45, 2.67, 7.80, 2.67, GREEN)
-
-    add_line(slide, 9.92, 1.97, 10.25, 1.97, MAGENTA)
-    add_box(slide, 10.28, 0.92, 2.68, 2.31, "Photometric refinement",
-            "sample tracked RGB\nrender current map\nL1 + SSIM loss\nAdam update",
-            MAGENTA_BG, MAGENTA)
-    add_text(slide, 10.40, 3.33, 2.42, 0.32, refs["refine"], 8.5, MAGENTA,
-             True, PP_ALIGN.CENTER)
-
-    add_text(slide, 0.35, 3.66, 2.8, 0.27, "2  REAL DATA FLOW", 11, GREEN, True)
-    add_picture_cover(slide, ASSET / "before.png", 0.35, 4.02, 3.35, 2.20, MUTED)
-    add_picture_cover(slide, ASSET / "after.png", 4.02, 4.02, 3.35, 2.20, GREEN)
-    add_text(slide, 0.35, 6.28, 3.35, 0.30, "predicted map", 10, MUTED, True,
-             PP_ALIGN.CENTER)
-    add_text(slide, 4.02, 6.28, 3.35, 0.30, "same camera after refinement",
-             10, GREEN, True, PP_ALIGN.CENTER)
-    add_line(slide, 3.72, 5.12, 3.99, 5.12, GREEN)
-
-    add_box(slide, 7.82, 4.02, 2.08, 2.20, "Supervision sampler",
-            "200-frame reservoir\n64 recent frames\n30% recent sampling",
-            GREEN_BG, GREEN)
-    add_camera(slide, 8.15, 5.45, 1.1, GREEN)
-    add_camera(slide, 8.75, 5.37, 1.1, BLUE)
-    add_line(slide, 9.92, 5.12, 10.25, 5.12, MAGENTA)
-    add_box(slide, 10.28, 4.02, 2.68, 2.20, "Optional initialisation",
-            "head-only adaptation\nopacity attenuation\n\nExternal comparison:\nreleased head; attenuation off",
-            ORANGE_BG, ORANGE)
-    add_text(slide, 10.40, 6.28, 2.42, 0.30, refs["init"], 8.5, ORANGE,
-             True, PP_ALIGN.CENTER)
-    add_text(slide, 0.35, 6.92, 12.6, 0.28,
-             "Pose updates change anchors; appearance gradients never update the tracker.",
-             10, INK, True, PP_ALIGN.CENTER)
-    return slide
+    from draw_paper_diagrams import method
+    return method("master" if master else "ral").add_slide(
+        prs, x=.30, y=.40, width=12.73)
 
 
 def anchor_slide(prs):
@@ -432,58 +360,9 @@ def ablation_slide(prs):
 
 
 def teaser_slide(prs):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_title(slide, "Pairwise predictions become a persistent map",
-              "Editable paper teaser")
-    add_box(slide, 0.40, 0.86, 2.18, 1.05, "Predict local map",
-            "one network pass", BLUE_BG, BLUE)
-    add_line(slide, 2.60, 1.38, 2.93, 1.38, BLUE)
-    add_box(slide, 2.96, 0.86, 2.18, 1.05, "Shared anchors",
-            "map + cameras move together", GREEN_BG, GREEN)
-    add_line(slide, 5.16, 1.38, 5.49, 1.38, GREEN)
-    add_box(slide, 5.52, 0.86, 2.18, 1.05, "Refine appearance",
-            "tracking stays geometric", GREEN_BG, GREEN)
-
-    add_text(slide, 0.40, 2.12, 3.45, 0.28, "Photo-SLAM", 11, MUTED, True,
-             PP_ALIGN.CENTER)
-    add_text(slide, 4.05, 2.12, 3.45, 0.28, "Splatt3R-SLAM", 11, GREEN, True,
-             PP_ALIGN.CENTER)
-    add_picture_cover(slide, DATA / "office0/view0_photo.png",
-                      0.40, 2.48, 3.45, 2.56, MUTED)
-    add_picture_cover(slide, DATA / "office0/view0_ours.png",
-                      4.05, 2.48, 3.45, 2.56, GREEN)
-
-    add_text(slide, 8.08, 0.86, 4.75, 0.35,
-             "LEADING REPLICA RECONSTRUCTION", 13, INK, True,
-             PP_ALIGN.CENTER)
-    chart_y, chart_h = 5.22, 3.42
-    for x, value, label, color in [
-            (8.68, 19.48, "Photo-SLAM", MUTED),
-            (10.68, 23.02, "Splatt3R-SLAM", GREEN)]:
-        height = chart_h * value / 27.0
-        bar = slide.shapes.add_shape(
-            MSO_AUTO_SHAPE_TYPE.RECTANGLE,
-            Inches(x), Inches(chart_y - height), Inches(1.26), Inches(height),
-        )
-        bar.fill.solid()
-        bar.fill.fore_color.rgb = rgb(color)
-        bar.line.fill.background()
-        add_text(slide, x, chart_y - height - 0.34, 1.26, 0.28,
-                 f"{value:.2f}", 14, color, True, PP_ALIGN.CENTER)
-        add_text(slide, x - 0.20, chart_y + 0.05, 1.66, 0.28,
-                 label, 9, INK, False, PP_ALIGN.CENTER)
-    add_text(slide, 8.05, 5.88, 4.80, 0.40,
-             "+3.54 dB vs Photo-SLAM", 19, GREEN, True, PP_ALIGN.CENTER)
-    add_text(slide, 8.05, 6.35, 4.80, 0.36,
-             "PSNR lead on all 8 Replica scenes", 13, GREEN, True,
-             PP_ALIGN.CENTER)
-    add_text(slide, 0.40, 5.35, 7.10, 0.65,
-             "One keyframe anchor carries both the local Gaussian map and "
-             "the cameras that refine it.",
-             13, INK, True, PP_ALIGN.CENTER)
-    add_text(slide, 0.40, 6.42, 7.10, 0.30,
-             "Real office0 render at a common evaluation camera",
-             9, MUTED, False, PP_ALIGN.CENTER)
+    from draw_paper_diagrams import teaser, SCENES
+    records = {s: json.loads((DATA/s/"metrics.json").read_text()) for s in SCENES}
+    return teaser(records).add_slide(prs, x=.30, y=1.72, width=12.73)
 
 
 def main():

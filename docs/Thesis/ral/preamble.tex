@@ -26,11 +26,12 @@
     \centering
     \includegraphics[width=\textwidth]{teaser.pdf}
     \captionof{figure}{\textbf{Pairwise predictions become a persistent map.}
-    Shared keyframe anchors move local Gaussians and their observation cameras
-    together after pose corrections, while a separate process refines
-    appearance. On eight Replica scenes, Splatt3R-SLAM reaches 23.02\,dB,
-    exceeds Photo-SLAM by 3.54\,dB, and leads PSNR on every scene.
-    Results use common non-keyframe cameras and full exported SH.}
+    (a) A pose correction moves a local map and its observation cameras
+    together; grey shows their previous positions.
+    (b) Common-camera renderings with identical crops.
+    (c) Mean PSNR on all eight Replica scenes: 23.02\,dB for Splatt3R-SLAM
+    versus 19.48\,dB for Photo-SLAM, with eight scene wins.
+    Results use 300\,s polish, non-keyframe cameras and full exported SH.}
     \label{fig:teaser}
   \end{minipage}\vspace{10pt}%
 }

@@ -35,7 +35,7 @@ def package():
                      if p.is_file() and p.suffix in suffixes
                      and p.name not in PPT_ONLY)
     files.extend(ROOT / "scripts/paper" / name for name in (
-        "make_ral_figures.py", "build_overview.py",
+        "make_ral_figures.py", "draw_paper_diagrams.py", "build_overview.py",
         "render_refinement_pair.py"))
     files.extend(p for p in (ROOT / "logs/paper_ral_20261007").rglob("*")
                  if p.suffix in {".json", ".png"})

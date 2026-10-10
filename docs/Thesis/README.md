@@ -50,6 +50,17 @@ LaTeX/TikZ。论文构建不依赖 PowerPoint。全部字体嵌入 PDF。
 
 ## 图与数值来源
 
+Fig. 1–2 已重画为白底线图，去掉圆角卡片、彩色面板和断开的连线。
+Fig. 3 保留原系统实现图，继续使用双 GPU / CPU 共享内存分区和编号数据流。
+独立预览见 [Figures 1–3 PDF](Splatt3R-SLAM-figures-1-3.pdf)，
+可编辑对象见 [Figures 1–3 PPTX](Splatt3R-SLAM-figures-1-3.pptx)；
+第 4 页为硕士论文的公式编号版本。
+Fig. 1–2 图源为 `scripts/paper/draw_paper_diagrams.py`；Fig. 3 图源仍为
+`ral/fig/overview.tikz`，由 `scripts/paper/build_overview.py` 导出。
+图像来源、裁剪与字号记录在
+[figures_1_3_manifest.json](ral/fig/figures_1_3_manifest.json)。
+论文只读取独立 PDF 图，不依赖 PPT 导出。
+
 | 图 | 可编辑文件 | 内容 |
 |---|---|---|
 | Teaser | [PDF](ral/fig/teaser.pdf) / [SVG](ral/fig/teaser.svg) | 共享锚点卖点、实测渲染、23.02 dB、+3.54 dB 与八场景 PSNR 全胜 |
@@ -89,7 +100,7 @@ cd docs/Thesis
 ```
 
 论文使用独立生成的 `method_overview_ral.pdf` 和
-`method_overview_master.pdf`。旧实现图可用
+`method_overview_master.pdf`。系统实现图可用
 `python scripts/paper/build_overview.py` 单独导出。
 
 重新渲染需要现有 `splatt3r-slam` 环境、数据集和外部系统地图：

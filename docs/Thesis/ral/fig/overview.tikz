@@ -4,10 +4,10 @@
 \begin{tikzpicture}[
   x=1cm,y=1cm,
   font=\sffamily\fontsize{9}{11}\selectfont,
-  ovbox/.style={draw=ovblue,fill=white,rounded corners=2pt,
+  ovbox/.style={draw=ovblue,fill=white,
     line width=.65pt,align=center,inner sep=4pt},
   ovflow/.style={-{Latex[length=2mm,width=1.35mm]},line width=.75pt,
-    draw=ovink,rounded corners=2pt},
+    draw=ovink},
   ovpose/.style={ovflow,draw=ovblue,dashed},
   ovmap/.style={ovflow,draw=ovteal},
   ovlabel/.style={font=\sffamily\fontsize{7.7}{9}\selectfont,
@@ -61,11 +61,11 @@
 
 % Hardware/storage regions sit behind nodes and connections.
 \begin{scope}[on background layer]
-  \filldraw[draw=ovblue,fill=ovblue!4,rounded corners=4pt,line width=.8pt]
+  \filldraw[draw=ovblue,fill=ovblue!4,line width=.8pt]
     (0,3.94) rectangle (18.2,10.14);
-  \filldraw[draw=ovteal,fill=ovteal!4,rounded corners=4pt,line width=.8pt]
+  \filldraw[draw=ovteal,fill=ovteal!4,line width=.8pt]
     (0,.62) rectangle (10.55,3.36);
-  \filldraw[draw=ovamber,fill=ovamber!5,rounded corners=4pt,line width=.8pt]
+  \filldraw[draw=ovamber,fill=ovamber!5,line width=.8pt]
     (11.10,.02) rectangle (18.2,3.36);
 \end{scope}
 \node[ovtitle,text=ovblue] at (.25,9.77) {GPU 0: SLAM and visualisation};

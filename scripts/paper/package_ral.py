@@ -28,7 +28,8 @@ def package():
     files.extend(p for p in (PAPER/"ral").rglob("*")
                  if p.is_file() and p.name not in PPT_ONLY)
     files.extend(ROOT / "scripts/paper" / name for name in (
-        "make_ral_figures.py", "build_overview.py", "render_comparisons.py",
+        "make_ral_figures.py", "draw_paper_diagrams.py",
+        "build_overview.py", "render_comparisons.py",
         "render_refinement_pair.py",
         "package_ral.py"))
     files.extend(p for p in (ROOT/"logs/paper_ral_20261007").rglob("*")

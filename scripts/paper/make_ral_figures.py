@@ -11,7 +11,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch, Rectangle
+from matplotlib.patches import Rectangle
 import numpy as np
 from PIL import Image
 
@@ -50,25 +50,6 @@ def text(ax, x, y, label, size=8, **kw):
     ax.text(x, y, label, fontsize=size, va="center", **kw)
 
 
-def box(ax, x, y, w, h, title, subtitle=None, color=TEAL, fill="#EDF7F5",
-        size=8, dashed=False):
-    ax.add_patch(FancyBboxPatch(
-        (x, y), w, h, boxstyle="round,pad=0.015,rounding_size=0.05",
-        linewidth=.85, edgecolor=color, facecolor=fill,
-        linestyle="--" if dashed else "-"))
-    text(ax, x+w/2, y+h/2+(0.095 if subtitle else 0), title, size,
-         ha="center", fontweight="bold")
-    if subtitle:
-        text(ax, x+w/2, y+h/2-.12, subtitle, size-1, ha="center")
-
-
-def arrow(ax, start, end, color=GRAY, dashed=False, style="-|>", rad=0):
-    ax.add_patch(FancyArrowPatch(
-        start, end, arrowstyle=style, mutation_scale=8, linewidth=.9,
-        color=color, linestyle="--" if dashed else "-",
-        connectionstyle=f"arc3,rad={rad}"))
-
-
 def image(fig, path, rect, crop=None, outline=None, roi=None):
     ax = fig.add_axes(rect)
     a = np.asarray(Image.open(path))
@@ -89,109 +70,16 @@ def image(fig, path, rect, crop=None, outline=None, roi=None):
 
 
 def teaser(records):
-    w, h = 7.15, 2.23
-    f, a = canvas(w, h)
-    text(a, .02, 2.12, "(a) Pairwise predictions become a persistent map", 8.2,
-         fontweight="bold")
-    box(a, .03, 1.35, 1.32, .54, "Predict local map", "one network pass",
-        color=BLUE, fill="#EEF3F9", size=7.7)
-    box(a, 1.63, 1.35, 1.42, .54, "Shared anchors", "map + cameras move together",
-        size=7.7)
-    box(a, 3.34, 1.35, 1.26, .54, "Refine appearance", "tracking stays geometric",
-        size=7.7)
-    arrow(a, (1.37, 1.62), (1.60, 1.62))
-    arrow(a, (3.08, 1.62), (3.31, 1.62))
-    # Real views at the two middle delta ranks; retain the complete frame.
-    for x, method, label in [
-            (0.04, "photo", "Photo-SLAM"),
-            (2.35, "ours", "Splatt3R-SLAM")]:
-        image(f, DATA / "office0" / f"view0_{method}.png",
-              [x/w, .02/h, 2.22/w, 1.13/h])
-        text(a, x+1.11, 1.24, label, 7.8, ha="center",
-             color=TEAL if method == "ours" else GRAY, fontweight="bold")
-    text(a, 4.87, 2.12, "(b) Leading Replica reconstruction", 8.2,
-         fontweight="bold")
-    mean = {m: np.mean([records[s]["methods"][m]["full_sh"]["psnr"]
-                        for s in SCENES]) for m in ("photo", "ours")}
-    c = f.add_axes([5.05/w, .53/h, 1.98/w, 1.28/h])
-    c.bar([0, 1], [mean["photo"], mean["ours"]], color=[GRAY, TEAL], width=.58)
-    c.set(ylim=(0, 29), yticks=[0, 10, 20], xticks=[0, 1],
-          xticklabels=["Photo-SLAM", "Ours"], ylabel="PSNR (dB) ↑")
-    c.tick_params(labelsize=7, length=2)
-    c.spines["left"].set_visible(False)
-    c.yaxis.grid(True, lw=.4, color="#D8E0E5")
-    c.set_axisbelow(True)
-    for i, m in enumerate(("photo", "ours")):
-        c.text(i, mean[m]+.7, f"{mean[m]:.2f}", ha="center", fontsize=9,
-               fontweight="bold", color=TEAL if m == "ours" else GRAY)
-    text(a, 6.03, .18,
-         f"+{mean['ours']-mean['photo']:.2f} dB  ·  best PSNR on all 8",
-         8.7, ha="center", fontweight="bold", color=TEAL)
-    save(f, "teaser")
+    import draw_paper_diagrams as diagrams
+    diagrams.DATA = DATA
+    diagrams.teaser(records).render("teaser")
+    diagrams.write_manifest(records)
 
 
 def method_overview(variant):
-    refs = {
-        "ral": ("Sec. III-A / Eq. (1)", "Sec. III-B / Eqs. (2-4)",
-                "Sec. III-C / Eq. (5)", "Sec. III-D / Eqs. (7-8)"),
-        "master": ("Ch. 2 / Eq. (2.7)", "Ch. 4 / Eqs. (4.1-4.3)",
-                   "Ch. 7 / Eq. (7.1)", "Chs. 5-6 / Eq. (6.1)"),
-    }[variant]
-    w, h = 7.15, 3.55
-    f, a = canvas(w, h)
-    text(a, .05, 3.42, "Predict, anchor, refine", 10, fontweight="bold")
-    text(a, 7.05, 3.42, f"{variant.upper()} method navigation", 6.5,
-         ha="right", color=GRAY)
-
-    image(f, ASSET / "target.png", [.05/w, 2.25/h, .86/w, .65/h], outline=BLUE)
-    image(f, DATA / "desk/view1_gt.png",
-          [.28/w, 2.02/h, .86/w, .65/h], outline=TEAL)
-    text(a, .58, 1.91, "real image pair", 6.5, ha="center", color=GRAY)
-    arrow(a, (1.17, 2.42), (1.38, 2.42), color=BLUE)
-
-    box(a, 1.40, 2.08, 1.18, .74, "Shared predictor",
-        "pointmaps + matching\nGaussian attributes", color=BLUE,
-        fill="#EEF3F9", size=7.2)
-    text(a, 1.99, 1.91, refs[0], 6.2, ha="center", color=BLUE)
-    arrow(a, (2.60, 2.58), (2.83, 2.58), color=BLUE)
-    arrow(a, (2.60, 2.26), (2.83, 2.26), color=TEAL)
-
-    box(a, 2.85, 2.48, 1.05, .42, "Geometry",
-        "tracker + pose graph", color=BLUE, fill="#EEF3F9", size=6.8)
-    box(a, 2.85, 1.95, 1.05, .42, "Gaussians",
-        "local map", color=TEAL, fill="#EDF7F5", size=6.8)
-    text(a, 3.37, 1.77, f"optional init.  {refs[3]}", 5.8,
-         ha="center", color=ORANGE)
-    arrow(a, (3.92, 2.42), (4.14, 2.42), color=ORANGE)
-
-    box(a, 4.16, 2.05, 1.30, .85, "Shared anchor",
-        "map + cameras\nfollow pose updates", color=ORANGE,
-        fill="#FBF0E8", size=7.2)
-    text(a, 4.81, 1.91, refs[1], 6.2, ha="center", color=ORANGE)
-    arrow(a, (5.48, 2.42), (5.70, 2.42), color=MAGENTA)
-    box(a, 5.72, 2.05, 1.36, .85, "Map refinement",
-        "render -> loss -> Adam", color=MAGENTA,
-        fill="#F8EDF3", size=7.2)
-    text(a, 6.40, 1.91, refs[2], 6.2, ha="center", color=MAGENTA)
-
-    image(f, ASSET / "before.png", [.08/w, .18/h, 2.02/w, 1.28/h],
-          outline=GRAY)
-    image(f, ASSET / "after.png", [2.32/w, .18/h, 2.02/w, 1.28/h],
-          outline=TEAL)
-    text(a, 1.09, .08, "predicted map", 6.6, ha="center", color=GRAY)
-    text(a, 3.33, .08, "same camera after refinement", 6.6,
-         ha="center", color=TEAL, fontweight="bold")
-    arrow(a, (2.12, .82), (2.30, .82), color=TEAL)
-
-    box(a, 4.62, .25, 1.10, 1.10, "Sampler",
-        "200 historical\n64 recent", color=TEAL, fill="#EDF7F5", size=7.0)
-    arrow(a, (5.74, .80), (5.96, .80), color=MAGENTA)
-    box(a, 5.98, .25, 1.10, 1.10, "Render + loss",
-        "L1 + SSIM\nAdam update", color=MAGENTA,
-        fill="#F8EDF3", size=7.0)
-    arrow(a, (5.96, 1.50), (4.38, 1.50), color=MAGENTA)
-    text(a, 6.53, .08, refs[2], 6.2, ha="center", color=MAGENTA)
-    save(f, f"method_overview_{variant}")
+    import draw_paper_diagrams as diagrams
+    diagrams.DATA = DATA
+    diagrams.method(variant).render(f"method_overview_{variant}")
 
 
 def qualitative_replica():
@@ -219,7 +107,9 @@ def qualitative_replica():
 
 
 def overview():
+    from draw_paper_diagrams import system, write_system_tikz
     from build_overview import build_overview
+    write_system_tikz(system())
     build_overview()
 
 

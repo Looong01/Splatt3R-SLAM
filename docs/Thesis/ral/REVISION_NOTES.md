@@ -190,3 +190,26 @@ The RA-L abstract is approximately 155 words. Fine-grained tables now include
 all 12 recorded opacity-attenuation cells and the 120/500/1000/3000 iteration
 control. The paper remains seven pages in both IEEEtran and anonymous
 ieeeconf formats.
+
+## Figure 1--2 redraw, 2026-10-10
+
+The teaser now separates the shared-anchor schematic, common-camera image
+comparison with identical crops, and the eight-scene Replica mean. Grey marks
+the old schematic pose; blue marks camera geometry and green marks the map.
+The image and chart panels have separate gutters.
+
+The method figure now has explicit geometry and Gaussian branches, a shared
+map/camera state, and one connected Render -> Loss -> Adam -> map loop. It
+retains actual before/after images and separate RA-L/MSc equation references.
+The earlier experiment that also redrew Fig. 3 was reverted at the user's
+request. Fig. 3 remains the original TikZ process diagram with GPU 0, GPU 1,
+CPU shared-memory regions, rounded process nodes, and numbered flows.
+
+`scripts/paper/draw_paper_diagrams.py` defines the Fig. 1--2 geometry, exports
+Matplotlib PDF/SVG/PNG figures, and optionally exports native editable
+PowerPoint objects. `make_ral_figures.py` uses it for Figures 1--2 and only
+builds the existing Fig. 3 TikZ source. Paper builds remain independent of
+PowerPoint. Exact image
+hashes, the shared teaser crop, nominal sizes and minimum label sizes are
+recorded in `ral/fig/figures_1_3_manifest.json`. Experimental values and
+representative-view selection are unchanged.
