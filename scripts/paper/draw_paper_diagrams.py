@@ -9,7 +9,7 @@ import json
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse, Rectangle, Polygon, PathPatch
+from matplotlib.patches import Ellipse, Rectangle, Polygon, PathPatch, FancyBboxPatch
 from matplotlib.path import Path as MplPath
 import numpy as np
 from PIL import Image
@@ -30,9 +30,14 @@ class Drawing:
         self.items = []
 
     def text(self, x, y, value, size: float=8, color=INK, bold=False, align='left',
-             ppt=None, runs=None):
+             ppt=None, runs=None, rotation=0):
         self.items.append(dict(kind='text', x=x, y=y, value=value, size=size,
-                               color=color, bold=bold, align=align, ppt=ppt, runs=runs))
+                               color=color, bold=bold, align=align, ppt=ppt, runs=runs, rotation=rotation))
+
+    def ui_shape(self, kind, x, y, w, h, color=INK, fill='white', lw=.7, zorder=0):
+        """Native reference-style cards, pills, loss blocks and stores."""
+        self.items.append(dict(kind=kind, x=x, y=y, w=w, h=h, color=color,
+                               fill=fill, lw=lw, zorder=zorder))
 
     def rect(self, x, y, w, h, color=INK, fill='white', lw=.7, zorder=2):
         self.items.append(dict(kind='rect', x=x, y=y, w=w, h=h,
@@ -74,7 +79,8 @@ class Drawing:
                     labels.append(ax.text(o['x'], o['y'], o['value'],
                         fontsize=o['size'], color=o['color'],
                         fontweight='bold' if o['bold'] else 'normal',
-                        ha=o['align'], va='center', linespacing=1.22, zorder=4))
+                        ha=o['align'], va='center', linespacing=1.22,
+                        rotation=o.get('rotation', 0), zorder=4))
                 elif k == 'rect':
                     ax.add_patch(Rectangle((o['x'], o['y']), o['w'], o['h'],
                         facecolor=o['fill'], edgecolor=o['color'],
@@ -83,6 +89,25 @@ class Drawing:
                     ax.add_patch(Ellipse((o['x'], o['y']), o['w'], o['h'],
                         angle=o['angle'], edgecolor=o['color'],
                         facecolor=o['fill'], linewidth=o['lw'], zorder=3))
+                elif k in ('roundrect', 'pill', 'loss', 'cylinder'):
+                    x, y, w, h = o['x'], o['y'], o['w'], o['h']
+                    style = dict(facecolor=o['fill'], edgecolor=o['color'],
+                                 linewidth=o['lw'], zorder=o['zorder'])
+                    if k in ('roundrect', 'pill'):
+                        radius = min(w, h)/2 if k == 'pill' else .09
+                        ax.add_patch(FancyBboxPatch((x,y),w,h,
+                            boxstyle=f'round,pad=0,rounding_size={radius}',**style))
+                    elif k == 'loss':
+                        ax.add_patch(Polygon([(x+.14,y),(x+w,y),(x+w-.14,y+h),(x,y+h)],**style))
+                    else:
+                        cap = min(.22, h*.22)
+                        ax.add_patch(Ellipse((x+w/2,y+h-cap/2),w,cap,**style))
+                        ax.add_patch(Rectangle((x,y+cap/2),w,h-cap,
+                            facecolor=o['fill'],edgecolor='none',zorder=o['zorder']))
+                        for side in (x,x+w):
+                            ax.plot([side,side],[y+cap/2,y+h-cap/2],
+                                    color=o['color'],lw=o['lw'],zorder=o['zorder'])
+                        ax.add_patch(Ellipse((x+w/2,y+cap/2),w,cap,**style))
                 elif k == 'line':
                     pts = np.array(o['points'], dtype=float)
                     ax.add_patch(PathPatch(MplPath(pts,
@@ -138,6 +163,7 @@ class Drawing:
                 '{http://schemas.openxmlformats.org/presentationml/2006/main}style')
             if style is not None:
                 shape._element.remove(style)
+        groups = {}
         for o in self.items:
             k = o['kind']
             if k == 'text':
@@ -152,6 +178,7 @@ class Drawing:
                                   tw if o['align']=='right' else 0)
                 shape = slide.shapes.add_textbox(*xy(left, o['y']-th/2),
                     Inches(tw*scale), Inches(th*scale))
+                shape.rotation = -o.get('rotation', 0)
                 tf = shape.text_frame
                 tf.margin_left = tf.margin_right = 0
                 tf.margin_top = tf.margin_bottom = 0
@@ -171,15 +198,25 @@ class Drawing:
                         run.font.color.rgb = color(o['color'])
                         if baseline:
                             run._r.get_or_add_rPr().set('baseline', str(baseline))
-            elif k in ('rect', 'ellipse'):
+            elif k in ('rect', 'ellipse', 'roundrect', 'pill', 'loss', 'cylinder'):
                 px, py = o['x'], o['y']
                 if k=='ellipse':
                     px -= o['w']/2
                     py -= o['h']/2
-                shape = slide.shapes.add_shape(
-                    MSO_AUTO_SHAPE_TYPE.RECTANGLE if k=='rect' else
-                    MSO_AUTO_SHAPE_TYPE.OVAL, *xy(px, py),
+                types = {'rect': MSO_AUTO_SHAPE_TYPE.RECTANGLE,
+                    'ellipse': MSO_AUTO_SHAPE_TYPE.OVAL,
+                    'roundrect': MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,
+                    'pill': MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,
+                    'loss': MSO_AUTO_SHAPE_TYPE.PARALLELOGRAM,
+                    'cylinder': MSO_AUTO_SHAPE_TYPE.CAN}
+                shape = slide.shapes.add_shape(types[k], *xy(px, py),
                     Inches(o['w']*scale), Inches(o['h']*scale))
+                if k in ('roundrect', 'pill'):
+                    shape.adjustments[0] = .5 if k=='pill' else min(.35,.09/min(o['w'],o['h']))
+                if k == 'loss':
+                    shape.adjustments[0] = .14/min(o['w'],o['h'])
+                if k == 'cylinder':
+                    shape.adjustments[0] = min(.22,o['h']*.22)/min(o['w'],o['h'])
                 if o['fill']=='none':
                     shape.fill.background()
                 else:
@@ -212,6 +249,11 @@ class Drawing:
                     cx, cy, cw, ch = o['crop']
                     shape.crop_left, shape.crop_right = cx/iw, (iw-cx-cw)/iw
                     shape.crop_top, shape.crop_bottom = cy/ih, (ih-cy-ch)/ih
+            if o.get('group'):
+                groups.setdefault(o['group'], []).append(shape)
+        for name, shapes in groups.items():
+            group = slide.shapes.add_group_shape(shapes)
+            group.name = name
         return slide
 
 
@@ -333,60 +375,44 @@ def method(variant):
 
 
 def render_all(records):
-    teaser(records).render('teaser')
-    for variant in ('ral','master'):
-        method(variant).render(f'method_overview_{variant}')
-    from build_overview import build_overview
-    build_overview()
+    from draw_revised_figures import render_all as render_current
+    render_current()
     write_manifest(records)
 
 
 def write_manifest(records):
     import hashlib
-    drawings = {'teaser': teaser(records), 'method_overview_ral': method('ral'),
-                'method_overview_master': method('master')}
+    from draw_revised_figures import teaser_real, qualitative_multi
+    from draw_contribution_overview import overview
+    drawings = {'teaser': teaser_real(), 'system_overview_ral': overview('ral'),
+                'qualitative_multi': qualitative_multi()}
     images = sorted({o['path'] for d in drawings.values()
                      for o in d.items if o['kind']=='image'})
     manifest = {
-        'generator': 'scripts/paper/draw_paper_diagrams.py',
-        'teaser': {'scene': 'office0', 'view': 'view0',
-                   'selection': records['office0']['selection'],
-                   'identical_crop_xywh': TEASER_ROI},
-        'drawings': {name: {'size_inches': [d.width, d.height],
-                            'minimum_label_pt': min(o['size'] for o in d.items
-                                                     if o['kind']=='text'),
-                            'continuous_arrows': sum(o.get('arrow',False)
-                                                     for o in d.items)}
-                     for name,d in drawings.items()},
-        'figure_3': {
-            'source': 'docs/Thesis/ral/fig/overview.tikz',
-            'generator': 'scripts/paper/build_overview.py',
-            'status': 'restored original system implementation figure',
-        },
-        'images': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+        'generators': ['draw_revised_figures.py','draw_contribution_overview.py'],
+        'selection': json.loads((FIG/'publication_assets/selection.json').read_text()),
+        'drawings': {n: {'size_inches': [d.width,d.height]} for n,d in drawings.items()},
+        'images': {str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()
                    for p in images},
-        'image_edits': 'uniform display scaling and identical explicitly marked crops only',
+        'image_edits': 'common crops and display scaling; no generative enhancement',
+        'archived_implementation_source': 'docs/Thesis/ral/fig/overview.tikz',
     }
-    (FIG/'figures_1_3_manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
+    (FIG/'figures_1_3_manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 
 
 def editable_deck():
+    from draw_revised_figures import teaser_real, qualitative_multi
+    from draw_contribution_overview import overview
     from pptx import Presentation
     from pptx.util import Inches
-    records = {s:json.loads((DATA/s/'metrics.json').read_text()) for s in SCENES}
     prs = Presentation()
-    prs.slide_width,prs.slide_height = Inches(13.333),Inches(7.5)
-    prs.core_properties.title = 'Splatt3R-SLAM — Figures 1–3'
-    for drawing in (teaser(records), method('ral')):
-        scale = 12.8/drawing.width
-        drawing.add_slide(prs,x=.2665,y=(7.5-drawing.height*scale)/2,width=12.8)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    slide.shapes.add_picture(
-        str(FIG/'overview.png'), Inches(.2665), Inches(.755),
-        width=Inches(12.8), height=Inches(5.99))
-    drawing = method('master')
-    scale = 12.8/drawing.width
-    drawing.add_slide(prs,x=.2665,y=(7.5-drawing.height*scale)/2,width=12.8)
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    prs.core_properties.title = 'Splatt3R-SLAM — current paper figures'
+    for drawing in (teaser_real(), overview('ral'), qualitative_multi()):
+        width = min(12.6, 6.8*drawing.width/drawing.height)
+        scale = width/drawing.width
+        drawing.add_slide(prs, x=(13.333-width)/2,
+                          y=(7.5-drawing.height*scale)/2, width=width)
     out = ROOT/'docs/Thesis/Splatt3R-SLAM-figures-1-3.pptx'
     prs.save(out)
     print(out)

@@ -100,13 +100,15 @@ Both outperform Photo-SLAM on this sequence.
 \begin{figure*}[t]
   \centering
   \includegraphics[width=\textwidth]{qualitative_multi.pdf}
-  \caption{\textbf{Real-world reconstructions across datasets.}
-  Top: TUM desk compared against ground truth, Photo-SLAM, and MonoGS; all
-  columns share the camera and image scale. Numbered insets (1: game
-  controllers; 2: keyboard) zoom the same two thin-structure regions in every
-  method, where remaining blur and geometric distortion are most visible.
-  Bottom: additional real sequences from TUM and ETH3D, with ground truth
-  above each rendering.}
+  \caption{\textbf{Clear real-data reconstruction examples.}
+  Top: TUM desk frame 24, with identical cameras and two shared crop regions
+  (keyboard and equipment) across all four methods. The two region-2 crops
+  beneath the Photo-SLAM and Ours columns exchange display positions: the
+  left exchanged crop is ours and the right is Photo-SLAM. Bottom: TUM fr1/360 and
+  ETH3D table, each shown as ground truth beside our rendering at full aspect
+  ratio. Views are selected for high absolute reconstruction PSNR; they are
+  illustrative examples, not median performance. Blur and geometric errors
+  remain visible.}
   \label{fig:qualitative}
 \end{figure*}
 
@@ -124,9 +126,13 @@ Both outperform Photo-SLAM on this sequence.
   \label{fig:evidence}
 \end{figure*}
 
-Fig.~\ref{fig:qualitative} shows the two middle-ranked views by per-frame
-PSNR difference against MonoGS. The teaser uses the same rule against
-Photo-SLAM on office0. All methods share crop coordinates.
+The teaser uses two temporally separated TUM desk views ranked by our
+absolute PSNR, rather than by the margin over a baseline. TUM desk's mean
+paired-frame PSNR gain over Photo-SLAM is $3.53$\,dB across all 100 frames;
+the $3.28$\,dB scene difference uses mean MSE before the logarithm. Neither
+number is a multi-sequence TUM average. Qualitative panels are re-rendered
+at $640\!\times\!480$ on TUM desk; quantitative tables retain their original
+$512\!\times\!384$ evaluation. No map parameters or reported scores change.
 
 \subsection{Trajectory accuracy}
 \begin{table}[t]

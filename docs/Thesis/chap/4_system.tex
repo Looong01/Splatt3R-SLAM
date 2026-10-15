@@ -14,18 +14,17 @@ candidates and solves \cref{eq:global}. The \emph{refiner}
 while the other two run. The \emph{visualiser} renders the current map and
 subscribes to refined snapshots. Both headless experiments and GUI-enabled
 dual-GPU delivery measurements are reported, with their regimes identified.
-Figure~\ref{fig:method-overview} gives the method path from image pairs to
-the refined map; Fig.~\ref{fig:system-overview} gives the process layout.
+Figure~\ref{fig:system-overview} unifies the method and execution paths.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{ral/fig/method_overview_master.pdf}
-  \caption[Predict, anchor, and refine]{Method navigation. Real input frames
-  enter a shared predictor. Geometry feeds tracking, while local Gaussians
-  attach to keyframe anchors. The same anchors carry supervision cameras.
-  A separate process samples observations, renders the map, and updates its
-  appearance. Chapter and
-  equation labels point to the detailed derivation.}
+  \includegraphics[width=\linewidth]{ral/fig/system_overview_master.pdf}
+  \caption[System overview]{Frozen prediction, geometric tracking (blue)
+  and Gaussian mapping (red). The two cylinders hold a local Gaussian map and
+  anchor-relative supervision cameras. Both use one current pose snapshot and
+  move with the same keyframe correction. Photometric gradients update only
+  Gaussian parameters; tracking poses and the frozen backbone are excluded.}
+  \label{fig:system-overview}
   \label{fig:method-overview}
 \end{figure}
 
@@ -43,19 +42,7 @@ anchor poses. Separately, tracked RGB supervision and anchor-relative camera
 transforms live in the CPU SupervisionFrames pool. Complete refined maps are
 published through a CPU snapshot buffer. These are distinct storage paths.
 
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{ral/fig/overview.pdf}
-  \caption[System overview]{System overview.
-  Tracking, backend optimisation, and visualisation run on GPU~0; the map
-  refiner runs on GPU~1. SharedKeyframes uses CUDA IPC, while supervision
-  frames and versioned refined-map snapshots use CPU shared memory.
-  Numbered arrows show RGB, predicted pointmaps, local Gaussians, supervision
-  and refined-map flow; dashed arrows denote pose updates. Thumbnails use
-  real TUM desk predictions and recorded maps. Before/after renders share
-  one camera; the backend inset shows recorded keyframe camera centres.}
-  \label{fig:system-overview}
-\end{figure}
+
 
 \section{Anchor-carried map composition}
 \label{sec:system:anchor}

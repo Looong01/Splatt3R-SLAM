@@ -83,22 +83,12 @@ Gaussian records transfer once; current anchor poses are read at each step.
 The refiner publishes complete, versioned CPU snapshots for display.
 On one GPU, a duty cycle limits competition with tracking. An optional
 post-sequence \emph{polish} phase continues with the final pose graph.
-Figure~\ref{fig:system-overview} shows the process and memory boundaries.
+Figure~\ref{fig:system-overview} unifies this execution path with the
+map--camera coupling. A single cloned keyframe-pose snapshot supplies both
+(\ref{eq:anchor}) and (\ref{eq:supervision}) in each optimisation step;
+this prevents map composition and supervision from using different updates.
 
-\begin{figure*}[t]
-  \centering
-  \includegraphics[width=0.80\textwidth]{overview.pdf}
-  \caption{\textbf{System overview.}
-  Tracking, pose-graph optimisation, and visualisation run on GPU~0.
-  The optional map refiner runs on GPU~1. SharedKeyframes uses CUDA IPC;
-  supervision frames and versioned refined-map snapshots use CPU shared
-  memory. Numbered arrows show RGB, predicted pointmaps, local Gaussians,
-  supervision and refined-map flow; dashed arrows denote pose updates.
-  Thumbnails use real TUM desk predictions and recorded maps.
-  Before/after renders share one camera; the backend inset shows recorded
-  keyframe camera centres.}
-  \label{fig:system-overview}
-\end{figure*}
+
 
 \subsection{Improve the starting point}
 \label{sec:initialisation}

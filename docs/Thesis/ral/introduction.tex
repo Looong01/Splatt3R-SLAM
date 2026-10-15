@@ -1,13 +1,14 @@
 \section{Introduction}
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\textwidth]{method_overview_ral.pdf}
-  \caption{\textbf{Predict, anchor, refine.}
-  Real TUM frames enter a shared predictor. Its geometric outputs support
-  tracking; its Gaussian outputs form local maps. A keyframe anchor carries
-  each local map and its supervision cameras, so both follow pose corrections.
-  The refiner samples tracked images, renders the assembled map, and updates
-  Gaussian appearance. Section and equation references locate each step.}
+  \includegraphics[width=\textwidth]{system_overview_ral.pdf}
+  \caption{\textbf{System overview: a shared frame for map and observations.}
+  Frozen Splatt3R supplies geometry to the blue tracking module and local
+  Gaussians to the red mapping module. Cylinders hold the local map and its
+  supervision cameras. Both read one keyframe-pose snapshot and undergo the
+  same anchor correction. The renderer and photometric loss update Gaussian
+  parameters; tracking poses and the backbone remain outside that optimisation.}
+  \label{fig:system-overview}
   \label{fig:method-overview}
 \end{figure*}
 A robot revisiting a room needs a map that preserves both its layout and its
@@ -39,7 +40,9 @@ graph, and refine the assembled map (Fig.~\ref{fig:method-overview}). The
 anchor makes the design explicit: for keyframe~$k$ and supervision frame~$f$,
 $T_{WC_f}^{-1}T_{WC_k}=T_{C_kC_f}^{-1}$ stays fixed, so a pose correction moves
 the local map and the cameras that observe it together.
-The main contribution is this shared-anchor mapping and supervision design.
+The main contribution is this shared-anchor mapping and supervision design,
+including the use of one current pose snapshot for both map composition and
+observation-camera reconstruction.
 We then study two ways to improve its starting point: adapting only the
 Gaussian head and reducing opacity when predictions enter the map.
 Finally, controlled component studies and common-camera comparisons test
@@ -65,7 +68,14 @@ MonoGS~\cite{matsuki2024monogs} estimates motion and appearance with Gaussian
 splatting. Photo-SLAM~\cite{huang2024photoslam} combines an ORB-SLAM3-based
 geometric system~\cite{campos2021orbslam3} with photorealistic mapping.
 Splat-SLAM~\cite{sandstrom2025splatslam} deforms an RGB-only Gaussian map
-after global pose and depth updates.
+after global pose and depth updates using a proxy-depth and DSPO pipeline.
+Map deformation and photometric refinement are therefore shared capabilities,
+not contributions by themselves. Our design uses pairwise learned Gaussian
+initialisation and explicitly stores non-keyframe RGB observations in the
+same local anchor frame as the map. Both are recomposed from one pose snapshot
+at each refinement step; no photometric gradient updates tracking poses.
+This distinguishes the parameterisation and supervision path, without claiming
+that pose correction or Gaussian optimisation is new.
 SplaTAM~\cite{keetha2024splatam} and Gaussian-SLAM~\cite{yugay2023gaussianslam}
 study Gaussian reconstruction with RGB-D input. These systems allocate and
 optimise primitives during mapping. Our map starts with dense predictions

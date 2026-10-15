@@ -1,0 +1,106 @@
+[
+  {
+    "source_method": "gt",
+    "display_column": "gt",
+    "roi_number": 1,
+    "crop": [
+      22,
+      297,
+      160,
+      120
+    ],
+    "file": "desk_24_gt.png",
+    "crop_rgb_sha256": "1ad4dab427c6b11be9876d8459340e3b1e04f8e56b245a1d8e41dc74fd663895"
+  },
+  {
+    "source_method": "gt",
+    "display_column": "gt",
+    "roi_number": 2,
+    "crop": [
+      350,
+      40,
+      160,
+      120
+    ],
+    "file": "desk_24_gt.png",
+    "crop_rgb_sha256": "ea12330599784941434ab62db423d787477e6271805fb4eebce3979407af9795"
+  },
+  {
+    "source_method": "photo",
+    "display_column": "photo",
+    "roi_number": 1,
+    "crop": [
+      22,
+      297,
+      160,
+      120
+    ],
+    "file": "desk_24_photo.png",
+    "crop_rgb_sha256": "164b0f734d345e62a483169b4bcd6dfb754658d75e9615cf5de33345d042c13c"
+  },
+  {
+    "source_method": "ours",
+    "display_column": "photo",
+    "roi_number": 2,
+    "crop": [
+      350,
+      40,
+      160,
+      120
+    ],
+    "file": "desk_24_ours.png",
+    "crop_rgb_sha256": "d662302430849f0474a1d5e41f491ef8cb1a2652e81ed386f6eec96a6f6816b5"
+  },
+  {
+    "source_method": "mono",
+    "display_column": "mono",
+    "roi_number": 1,
+    "crop": [
+      22,
+      297,
+      160,
+      120
+    ],
+    "file": "desk_24_mono.png",
+    "crop_rgb_sha256": "0e788b758f1dabbd3e89ed913f3e380bfda3b78a293e97e92d05f969f6799bb0"
+  },
+  {
+    "source_method": "mono",
+    "display_column": "mono",
+    "roi_number": 2,
+    "crop": [
+      350,
+      40,
+      160,
+      120
+    ],
+    "file": "desk_24_mono.png",
+    "crop_rgb_sha256": "08fc236a83826680c36a6f00ae3da525122974ceb2705ab1a427897e409daac5"
+  },
+  {
+    "source_method": "ours",
+    "display_column": "ours",
+    "roi_number": 1,
+    "crop": [
+      22,
+      297,
+      160,
+      120
+    ],
+    "file": "desk_24_ours.png",
+    "crop_rgb_sha256": "83536dfe101ce94f4d97de10f22ba45638dfaf44f74d622f883d9bb61b60debd"
+  },
+  {
+    "source_method": "photo",
+    "display_column": "ours",
+    "roi_number": 2,
+    "crop": [
+      350,
+      40,
+      160,
+      120
+    ],
+    "file": "desk_24_photo.png",
+    "crop_rgb_sha256": "6b32788692ef3b67d6b6e219619204a2d4360bcd4d8f4f5459bc255256cb307e"
+  }
+]

@@ -1,8 +1,5 @@
-"""Revised figures (2026-10): real-data teaser | multi-dataset qualitative |
-'Beyond Photo-SLAM' bars kept beside the original post-hoc truncation line
-chart. Reuses the editable ``Drawing`` framework so panels can export as
-editable PPT shapes. The system overview stays an independent TikZ figure
-(see docs/Thesis/ral/fig/overview.tikz); it is intentionally not built here.
+"""Current figures: real-data teaser, selected qualitative views, and evidence.
+The combined method/system overview is in draw_contribution_overview.py.
 """
 import json
 import sys
@@ -18,7 +15,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from PIL import Image
 
-from draw_paper_diagrams import (Drawing, camera, gaussians, INK, MUTED, RULE,
+from draw_paper_diagrams import (Drawing, camera, gaussians, INK, RULE,
                                  TEAL, BLUE)
 
 FIG = ROOT / 'docs/Thesis/ral/fig'
@@ -45,100 +42,71 @@ def tag(d, x, y, text, color=INK, size=7.3, align='left'):
 
 # ---------------------------------------------------------------------------
 def teaser_real():
-    d = Drawing(7.15, 2.60)
-    # Left: idea
-    d.text(1.20, .16, 'Image pairs to a persistent map', size=8.5,
-           bold=True, align='center')
-    # pair
-    cover(d, REAL/'desk/cand0_gt.png', .07, .52, .52, .38)
-    cover(d, REAL/'desk/cand1_gt.png', .07, .94, .52, .38)
-    d.line([(.61,.91),(.82,.91)], INK, 1.0, True)
-    # shared anchor
-    cx, cy = 1.14, .91
-    d.rect(cx-.05,cy-.05,.10,.10,INK,'white')
-    camera(d,cx+.04,cy-.34,.62,BLUE)
-    gaussians(d,cx+.10,cy+.30,.62,TEAL)
-    d.line([(cx,cy),(cx+.17,cy-.22)],BLUE,.8)
-    d.line([(cx,cy),(cx+.22,cy+.22)],TEAL,.8)
-    tag(d,cx,1.44,'shared anchor',TEAL,7.1,'center')
-    d.line([(cx+.31,.91),(1.50,.91)],INK,1.0,True)
-    # persistent map
-    cover(d,REAL/'fr1_360/cand9_ours.png',1.52,.55,.62,.62)
-    tag(d,1.83,.47,'persistent map',TEAL,7.1,'center')
-    # claim + body
-    d.text(1.20,1.72,'Map + cameras move together.',size=8.0,bold=True,
-           align='center')
-    d.text(1.20,2.02,'One network predicts geometry and\nappearance; pose corrections move\nevery linked Gaussian.',
-           size=7.5,color=MUTED,align='center')
-    d.rect(.06,2.49,.13,.10,BLUE,BLUE); tag(d,.23,2.54,'cameras',MUTED,7.2)
-    d.rect(.86,2.49,.13,.10,TEAL,TEAL); tag(d,1.03,2.54,'Gaussians',MUTED,7.2)
-
-    # ---- Right: two light-background renders, then dark 3D-primitive panel ----
-    d.text(4.79,.16,'One Gaussian map, many rendered views',size=8.6,
-           bold=True,align='center')
-    # Two held-out renders on a light background (no dark panel).
-    xr=2.52
-    cover(d,REAL/'table_3/cand2_ours.png',xr,.52,1.74,.80)
-    tag(d,xr+.87,.44,'ETH3D render',MUTED,7.1,'center')
-    cover(d,REAL/'fr1_360/cand9_ours.png',xr,1.52,1.74,.80)
-    tag(d,xr+.87,1.44,'TUM render',MUTED,7.1,'center')
-    d.text(xr+.87,2.46,'TUM desk: +3.28 dB\nvs. Photo-SLAM',size=7.0,
-           color=TEAL,bold=True,align='center')
-    # Dark panel ONLY behind the 3D primitives, far right.
-    px=4.46
-    d.rect(px,.30,2.63,2.26,PANEL_DARK,PANEL_DARK,zorder=0)
-    cover(d,FIG/'gauss_cloud.png',px+.08,.60,2.47,1.70)
-    tag(d,px+1.31,.47,'3D Gaussian primitives','#C9D2D6',7.3,'center')
-    tag(d,px+1.31,2.42,'one explicit map behind every view','#9FB0B6',7.0,'center')
+    d = Drawing(7.15, 2.98)
+    a = FIG/'publication_assets'
+    left_c, comparison_c = 1.05, 3.755
+    d.text(left_c,.15,'Pairs to a persistent 3D map',8.3,bold=True,align='center')
+    # Centre the frame pair on the same axis as the persistent map.
+    d.image(a/'desk_24_gt.png',.38,.44,.62,.465)
+    d.image(a/'desk_377_gt.png',1.10,.44,.62,.465)
+    d.text(left_c,1.06,'shared map–camera anchor',7.2,TEAL,align='center')
+    d.image(a/'desk_orbit_300.png',.06,1.26,1.98,1.485)
+    d.text(comparison_c,.15,'TUM desk: matched camera views',8.3,bold=True,align='center')
+    for x,name,label in [(2.18,'photo','Photo-SLAM'),(3.81,'ours','Ours')]:
+        d.text(x+.76,.43,label,7.8,TEAL if name=='ours' else INK,bold=True,align='center')
+        for y,frame in [(.60,24),(1.78,377)]:
+            d.image(a/f'desk_{frame}_{name}.png',x,y,1.52,1.14)
+    # Make room for the bottom statistic by using compact paired views.
+    for o in d.items:
+        if o['kind']=='image' and o['x']>2:
+            o['w']=1.52; o['h']=1.02
+            o['crop']=(0,25,640,430)
+            if o['y']>1:o['y']=1.70
+    d.rect(5.52,.35,1.57,2.37,PANEL_DARK,PANEL_DARK,zorder=0)
+    d.text(6.305,.52,'3D Gaussians',7.6,'#C9D2D6',align='center')
+    cover(d,FIG/'gauss_cloud.png',5.59,.78,1.43,1.61)
+    d.text(6.305,2.53,'TUM desk map',6.8,'#C9D2D6',align='center')
+    d.text(comparison_c,2.87,'Mean paired-frame ΔPSNR: +3.53 dB  ·  100 frames',7.1,TEAL,bold=True,align='center')
     return d
 
 
-# ---------------------------------------------------------------------------
 def qualitative_multi():
-    d = Drawing(7.15, 4.03)
-    d.text(3.575,.13,'Real-world reconstructions across datasets',
-           size=8.8,bold=True,align='center')
-    tag(d,3.575,.35,'TUM desk: identical views and numbered detail crops',
-        BLUE,7.3,'center')
-    cols=[('GT',OLDDATA/'desk/view0_gt.png'),
-          ('Photo-SLAM',OLDDATA/'desk/view0_photo.png'),
-          ('MonoGS',OLDDATA/'desk/view0_mono.png'),
-          ('Ours',OLDDATA/'desk/view0_ours.png')]
-    x0,gap=.06,.07
-    cw=(7.15-2*x0-3*gap)/4
-    ih=cw*.75
-    sy0, sh = 0, 384
-    rois=[(150,205,120,90),(358,148,120,90)]   # controllers | keyboard keys
-    iw2=(cw-.05)/2; ih2=iw2*90/120              # two 4:3 insets per column
-    main_y=.64
-    iy=main_y+ih+.07
-    for i,(lab,p) in enumerate(cols):
+    d=Drawing(7.15,5.20)
+    a=FIG/'publication_assets'
+    d.text(3.575,.14,'Real-data reconstruction and matched details',8.8,bold=True,align='center')
+    x0,gap=.06,.08; cw=(7.15-2*x0-3*gap)/4; ih=cw*.75
+    rois=[(22,297,160,120),(350,40,160,120)]
+    methods=[('gt','Ground truth'),('photo','Photo-SLAM'),('mono','MonoGS'),('ours','Ours')]
+    labels=dict(methods)
+    for i,(method,label) in enumerate(methods):
+        x=x0+i*(cw+gap);path=a/f'desk_24_{method}.png'
+        d.text(x+cw/2,.42,label,7.7,TEAL if method=='ours' else INK,align='center')
+        d.image(path,x,.58,cw,ih)
+        for j,(rx,ry,rw,rh) in enumerate(rois):
+            bx=x+rx/640*cw;by=.58+ry/480*ih
+            d.rect(bx,by,rw/640*cw,rh/480*ih,ORANGE,'none',.7,zorder=3)
+            d.text(bx+.03,by+.065,str(j+1),6.2,ORANGE,bold=True)
+    # Insets remain a separate display row. Moving a tile never changes its
+    # recorded method attribution.
+    for i,(slot,_) in enumerate(methods):
         x=x0+i*(cw+gap)
-        cover(d,p,x,main_y,cw,ih)
-        tag(d,x+cw/2,.52,lab,TEAL if lab=='Ours' else INK,7.1,'center')
-        for j,(px,py,pw,ph) in enumerate(rois):
-            bx=x+px/512*cw; by=main_y+(py-sy0)/sh*ih
-            bw=pw/512*cw; bh=ph/sh*ih
-            d.rect(bx,by,bw,bh,ORANGE,'none',.9,zorder=3)
-            d.text(bx+.015,by+.085,str(j+1),size=6.6,color=ORANGE,bold=True)
-            ix=x+j*(iw2+.05)
-            d.image(p,ix,iy,iw2,ih2,crop=(px,py,pw,ph))
-            d.rect(ix,iy,iw2,ih2,ORANGE,'none',.8,zorder=3)
-            d.text(ix+.015,iy+.08,str(j+1),size=6.4,color=ORANGE,bold=True)
-    yr=iy+ih2+.12
-    d.line([(.06,yr),(7.09,yr)],RULE,.5)
-    tag(d,3.575,yr+.13,'More real scenes: ground truth (top), ours (bottom)',
-        MUTED,7.4,'center')
-    scenes=[('TUM fr1/360',REAL/'fr1_360/cand9'),
-            ('ETH3D table',REAL/'table_3/cand2'),
-            ('TUM controller',REAL/'fr1_360/cand0')]
-    cw2=(7.15-2*x0-2*gap)/3
-    ys=yr+.32
-    for i,(lab,base) in enumerate(scenes):
-        x=x0+i*(cw2+gap)
-        tag(d,x+cw2/2,ys,lab,BLUE,7.1,'center')
-        cover(d,str(base)+'_gt.png',x,ys+.14,cw2,.39)
-        cover(d,str(base)+'_ours.png',x,ys+.14+.39+.05,cw2,.39)
+        for j,roi in enumerate(rois):
+            source={'photo':'ours','ours':'photo'}.get(slot,slot) if j==1 else slot
+            wi=(cw-.06)/2;xi=x+j*(wi+.06);yi=2.19
+            start=len(d.items)
+            d.image(a/f'desk_24_{source}.png',xi,yi,wi,wi*.75,crop=roi)
+            d.items[-1].update(source_method=source,display_column=slot,roi_number=j+1)
+            d.rect(xi,yi,wi,wi*.75,ORANGE,'none',.65,zorder=3)
+            d.text(xi+.035,yi+.07,str(j+1),6.2,ORANGE,bold=True)
+            for item in d.items[start:]:
+                item['group']=f'Detail {j+1}: {labels[source]} (display slot {slot})'
+    d.text(3.575,3.03,'Additional real-data reconstructions',8.1,bold=True,align='center')
+    for k,(scene,base) in enumerate([('TUM fr1/360',a/'extra_360'),('ETH3D table',a/'extra_table')]):
+        d.text((1.78 if k==0 else 5.37),3.26,scene,7.6,BLUE,align='center')
+        for j,m in enumerate(['gt','ours']):
+            x=x0+(2*k+j)*(cw+gap)
+            d.text(x+cw/2,3.51,'Ground truth' if m=='gt' else 'Ours',7.1,TEAL if m=='ours' else INK,align='center')
+            d.image(str(base)+f'_{m}.png',x,3.69,cw,ih)
     return d
 
 
@@ -193,10 +161,13 @@ def evidence():
 
 
 def render_all():
+    from draw_contribution_overview import overview
     teaser_real().render('teaser')
     qualitative_multi().render('qualitative_multi')
+    for variant in ('ral','master'):
+        overview(variant).render(f'system_overview_{variant}')
     evidence()
-    print('revised figures rendered (teaser, qualitative_multi, evidence)')
+    print('current paper figures rendered')
 
 
 if __name__ == '__main__':

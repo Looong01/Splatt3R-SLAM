@@ -26,11 +26,12 @@
     \centering
     \includegraphics[width=\textwidth]{teaser.pdf}
     \captionof{figure}{\textbf{Image pairs become a persistent map.}
-    Left: two images pass one shared predictor; a keyframe anchor links the
-    local Gaussian map and the cameras that observe it, so a pose correction
-    moves both together. Right: the map drawn as individual Gaussian
-    primitives and renders from held-out views on real ETH3D and TUM.
-    On real TUM desk the refined map is $+3.28$\,dB over Photo-SLAM.}
+    Left: input pairs and a pulled-back 3D view of the saved TUM desk map.
+    Centre: Photo-SLAM and ours at the same two cameras; right: Gaussian
+    primitives of the same scene. Across all 100 evaluation frames on TUM
+    desk, the mean paired-frame PSNR gain is $+3.53$\,dB. The scene-aggregated
+    PSNR difference is $+3.28$\,dB. Displayed views are selected for high
+    absolute reconstruction fidelity; these averages use the full frame set.}
     \label{fig:teaser}
   \end{minipage}\vspace{10pt}%
 }

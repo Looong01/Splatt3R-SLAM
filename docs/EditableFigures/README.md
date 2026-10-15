@@ -17,11 +17,17 @@ The first command requires the full datasets and saved maps. The manuscript
 figures are generated separately by `scripts/paper/make_ral_figures.py`; no
 paper build reads this directory.
 
-The method-navigation slides and teaser now share the white-background
-Figure 1--2 geometry in `scripts/paper/draw_paper_diagrams.py`.
-The dedicated four-slide deck is `docs/Thesis/Splatt3R-SLAM-figures-1-3.pptx`
-(RA-L Figures 1--2, the restored Fig. 3 preview, then the MSc method variant).
-Rebuild it with `python scripts/paper/draw_paper_diagrams.py --pptx`.
-Fig. 1--2 labels, arrows, diagrams and crop frames are native editable
-objects. Fig. 3 remains editable in `docs/Thesis/ral/fig/overview.tikz`;
-its PowerPoint page is a preview. The paper does not depend on this export.
+The current manuscript has one combined method/system overview. Its native
+editable source is `scripts/paper/draw_contribution_overview.py`.
+`docs/Thesis/Splatt3R-SLAM-figures-1-3.pptx` now contains:
+
+1. TUM desk teaser with Photo-SLAM comparisons and a pulled-back 3D map.
+2. Combined overview centred on coupled map–camera anchors.
+3. Selected real-data qualitative views with shared detail crops.
+
+Rebuild with `python scripts/paper/draw_paper_diagrams.py --pptx`.
+Text, arrows, camera symbols, Gaussians and crop frames are native editable
+objects; experimental renderings remain embedded images.
+Selection and metric provenance: `docs/Thesis/ral/fig/publication_assets/selection.json`.
+The old GPU/CPU implementation diagram remains in `ral/fig/overview.tikz` as
+archived editable source; it is not a second overview in the manuscript.

@@ -25,8 +25,13 @@ PPT_OUTPUTS = {
 def package():
     files = [FIG / name for name in PPT_OUTPUTS if (FIG / name).is_file()]
     files.extend(p for p in PAPER_ASSET.rglob("*") if p.is_file())
+    files.extend(p for p in (ROOT/"docs/Thesis/ral/fig/publication_assets").rglob("*") if p.is_file())
+    files.extend([ROOT/"docs/Thesis/ral/fig/gauss_cloud.png",
+                  ROOT/"docs/Thesis/FIGURE_REVISION_NOTES.md",
+                  ROOT/"docs/Thesis/FIGURE_LAYOUT_CHECK.md"])
     files.extend(ROOT / "scripts/paper" / name for name in (
-        "make_overview_pptx.py", "draw_paper_diagrams.py", "render_refinement_pair.py"))
+        "make_overview_pptx.py", "draw_paper_diagrams.py", "render_refinement_pair.py",
+        "draw_revised_figures.py", "draw_contribution_overview.py", "select_publication_views.py"))
     files.extend(ROOT / "docs/Thesis" / name for name in (
         "Splatt3R-SLAM-figures-1-3.pptx", "Splatt3R-SLAM-figures-1-3.pdf"))
     files.extend(p for p in (ROOT / "logs/paper_ral_20261007").rglob("*")
@@ -47,7 +52,9 @@ To regenerate the deck, install python-pptx and run:
     CUDA_VISIBLE_DEVICES=0 python scripts/paper/render_refinement_pair.py
     python scripts/paper/make_overview_pptx.py
 
-The revised Figures 1--3 deck uses the same drawing geometry as the paper:
+The current Figures 1--3 deck contains the TUM/Photo-SLAM teaser, ONE combined
+method/system overview, and selected real-data qualitative views. All three
+use the same native Drawing geometry as the paper:
 
     python scripts/paper/draw_paper_diagrams.py --pptx
 

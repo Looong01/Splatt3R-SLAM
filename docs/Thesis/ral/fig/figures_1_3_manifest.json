@@ -1,60 +1,153 @@
 {
-  "generator": "scripts/paper/draw_paper_diagrams.py",
-  "teaser": {
-    "scene": "office0",
-    "view": "view0",
-    "selection": {
-      "rule": "two middle ranks of ours-minus-photo PSNR",
-      "row_indices": [
-        9,
-        66
-      ]
+  "generators": [
+    "draw_revised_figures.py",
+    "draw_contribution_overview.py"
+  ],
+  "selection": {
+    "selection_rule": "descending ours absolute PSNR; >=80 frame separation; no baseline-margin ranking",
+    "evaluation_source": "logs/paper_ral_20261007/desk/metrics.json",
+    "display_resolution": [
+      640,
+      480
+    ],
+    "scoring_resolution": [
+      384,
+      512
+    ],
+    "reported_metrics_unchanged": true,
+    "scope": "TUM freiburg1_desk only, 100 common non-keyframes",
+    "scene_delta_psnr": 3.283960849074795,
+    "mean_paired_frame_delta_psnr": 3.5328544656138114,
+    "median_paired_frame_delta_psnr": 3.622303343434849,
+    "selected": [
+      {
+        "row": 5,
+        "frame": 24,
+        "ours_psnr": 17.664494643582266
+      },
+      {
+        "row": 76,
+        "frame": 377,
+        "ours_psnr": 17.446891357428953
+      },
+      {
+        "row": 26,
+        "frame": 120,
+        "ours_psnr": 16.206778087633868
+      },
+      {
+        "row": 98,
+        "frame": 478,
+        "ours_psnr": 16.087850264490736
+      },
+      {
+        "row": 42,
+        "frame": 204,
+        "ours_psnr": 13.935313995443623
+      }
+    ],
+    "artifacts": {
+      "photo": {
+        "ply": {
+          "path": "tmp/Photo-SLAM/results/fr1_desk/4181_shutdown/ply/point_cloud/iteration_4181/point_cloud.ply",
+          "bytes": 8946642,
+          "sha256": "a8f523e438e5e9c22d873e989a6dc78377ae08d48b8f980d91d41102d4dc0da8"
+        },
+        "traj": {
+          "path": "tmp/Photo-SLAM/results/fr1_desk/KeyFrameTrajectory_TUM.txt",
+          "bytes": 9348,
+          "sha256": "256b940f885ff8929bc5b436441305ca3620ff1076e7f0997591ebc09803cbed"
+        }
+      },
+      "mono": {
+        "ply": {
+          "path": "tmp/MonoGS/results/tum_rgbd_dataset_freiburg1_desk/2026-08-17-22-47-19/point_cloud/final/point_cloud.ply",
+          "bytes": 1565707,
+          "sha256": "c584ceb83eeb11e91886c13eb30e9aff7756bfd93611ee2f77296fbff183eefa"
+        },
+        "mono_json": {
+          "path": "tmp/MonoGS/results/tum_rgbd_dataset_freiburg1_desk/2026-08-17-22-47-19/plot/trj_final.json",
+          "bytes": 168299,
+          "sha256": "ace1f66ff1042bb79dd1b4a14e46ee9a718c672a5790f701b0931c73340c9673"
+        }
+      },
+      "ours": {
+        "ply": {
+          "path": "logs/ref_onoff_tum_on/rgbd_dataset_freiburg1_desk_refined.ply",
+          "bytes": 170180377,
+          "sha256": "599f0000a45710bbe3843fbb86b4899e60c34255cac9f9647ccf76f4961896c0"
+        },
+        "traj": {
+          "path": "logs/ref_onoff_tum_on/rgbd_dataset_freiburg1_desk.txt",
+          "bytes": 2094,
+          "sha256": "a8738cd556fb1b05e5dc61e81eb15d3d8c7baf2064d46ed0342c85682e8779f7"
+        }
+      }
     },
-    "identical_crop_xywh": [
-      76,
-      84,
-      300,
-      112
-    ]
+    "additional_scenes": {
+      "rule": "highest PSNR against saved GT among 12 uniformly sampled candidates per scene; separate recorded family-head runs",
+      "files": [
+        {
+          "source": "logs/paper_real_20261010/fr1_360/cand11_gt.png",
+          "asset": "extra_360_gt.png",
+          "sha256": "d24fc935d3d92bd5846f7876d57e7e4f03dd7c58bc9ab44bdd3b0ad026971ffe"
+        },
+        {
+          "source": "logs/paper_real_20261010/fr1_360/cand11_ours.png",
+          "asset": "extra_360_ours.png",
+          "sha256": "97fe4e7bace08b4fa196e456753427e41c1dc2dbd400edae29ee35c012fdd3f9"
+        },
+        {
+          "source": "logs/paper_real_20261010/table_3/cand6_gt.png",
+          "asset": "extra_table_gt.png",
+          "sha256": "ae15461124ae5d351500ed03c1d02031d06f972843a52cd8dd9c69691f5d6079"
+        },
+        {
+          "source": "logs/paper_real_20261010/table_3/cand6_ours.png",
+          "asset": "extra_table_ours.png",
+          "sha256": "da0670e8734203b28f2631c3065c55feee12aa273121ec9adabaf9c4dfde50fb"
+        }
+      ]
+    }
   },
   "drawings": {
     "teaser": {
       "size_inches": [
         7.15,
-        2.23
-      ],
-      "minimum_label_pt": 7.3,
-      "continuous_arrows": 1
+        2.98
+      ]
     },
-    "method_overview_ral": {
+    "system_overview_ral": {
+      "size_inches": [
+        9.2,
+        3.72
+      ]
+    },
+    "qualitative_multi": {
       "size_inches": [
         7.15,
-        3.65
-      ],
-      "minimum_label_pt": 7.5,
-      "continuous_arrows": 14
-    },
-    "method_overview_master": {
-      "size_inches": [
-        7.15,
-        3.65
-      ],
-      "minimum_label_pt": 7.5,
-      "continuous_arrows": 14
+        5.2
+      ]
     }
   },
-  "figure_3": {
-    "source": "docs/Thesis/ral/fig/overview.tikz",
-    "generator": "scripts/paper/build_overview.py",
-    "status": "restored original system implementation figure"
-  },
   "images": {
-    "docs/Thesis/ral/fig/overview_assets/after.png": "bd916dcbb222c30c84435b4baeb354b5bfcafc31de83b79f7a88fbe9e6f9c3f4",
-    "docs/Thesis/ral/fig/overview_assets/before.png": "4a0be273283b4bfb678eee86cf40747ef1dea30f618f6ed076fe8e8c7ec196ba",
-    "docs/Thesis/ral/fig/overview_assets/target.png": "d33150cdf4cb41ad691edd8140f09010133ac538fd62f1aa579042bc9d790d95",
-    "logs/paper_ral_20261007/desk/view1_gt.png": "696aaca83f16451c51d4140b3ad27654c03c92d81abf29f95de9e26ac5c98be4",
-    "logs/paper_ral_20261007/office0/view0_ours.png": "2912cf084c1a1f850bfd61f07d78f36bab937eeed9052bf104cedd6053d6780f",
-    "logs/paper_ral_20261007/office0/view0_photo.png": "56d247119c9f4f89fdbd2ddc388ba164615624f4fb746d2747ac85858b87e1e8"
+    "docs/Thesis/ral/fig/gauss_cloud.png": "40a35b699fe4402a5cba3add73dd3a65d1d93a0f784a1e6e0b3582bd764a1b54",
+    "docs/Thesis/ral/fig/overview_assets/stage_local_gaussians_tight.png": "5aac8ade87a85e8d8f415638a02d5e3218d977139dfb3ff63fb98d9d0373ae61",
+    "docs/Thesis/ral/fig/overview_assets/stage_pointmap.png": "e3696fcab4620a5bb22a88f43d30baf224cb605ee85b62a97ef370927efbfdf9",
+    "docs/Thesis/ral/fig/publication_assets/desk_24_gt.png": "629100e36c879c33ea683edf1b12634a87b4b800b945a02a20798860f3ae6b59",
+    "docs/Thesis/ral/fig/publication_assets/desk_24_mono.png": "51f988b5e7a62dce7559a2458ff102e8041823efac79496afa318c2835dba2ee",
+    "docs/Thesis/ral/fig/publication_assets/desk_24_ours.png": "3a12a9823c722287bcac88e508d49426d7ad4331a3a8e4446087a5d1821afe35",
+    "docs/Thesis/ral/fig/publication_assets/desk_24_photo.png": "f93710079b6e2c215f03dfeedf306c2039f6d0498a55fb4c67c08d06a1412969",
+    "docs/Thesis/ral/fig/publication_assets/desk_377_gt.png": "59306520acc372e2d8ba66182b90eb4e80e57d85b75eaab3d91c9010b24fef49",
+    "docs/Thesis/ral/fig/publication_assets/desk_377_ours.png": "e31191069a1ac45cec076306b61a0325265f94b2ea0e6eff762b57aa0b4a8c5c",
+    "docs/Thesis/ral/fig/publication_assets/desk_377_photo.png": "58b35918f8c552076cc891292355d97f8bf02fae7175a2bd327dfefeee8f3704",
+    "docs/Thesis/ral/fig/publication_assets/desk_478_gt.png": "5c5e427acd236ed166706740721b20d7e49f77d35b8afdd9c24a1659e36a418f",
+    "docs/Thesis/ral/fig/publication_assets/desk_orbit_0.png": "fde5affaf4a03893f52e035aec7f1c9e77d34d186a6b08eadf55898ade6d2449",
+    "docs/Thesis/ral/fig/publication_assets/extra_360_gt.png": "d24fc935d3d92bd5846f7876d57e7e4f03dd7c58bc9ab44bdd3b0ad026971ffe",
+    "docs/Thesis/ral/fig/publication_assets/extra_360_ours.png": "97fe4e7bace08b4fa196e456753427e41c1dc2dbd400edae29ee35c012fdd3f9",
+    "docs/Thesis/ral/fig/publication_assets/extra_table_gt.png": "ae15461124ae5d351500ed03c1d02031d06f972843a52cd8dd9c69691f5d6079",
+    "docs/Thesis/ral/fig/publication_assets/extra_table_ours.png": "da0670e8734203b28f2631c3065c55feee12aa273121ec9adabaf9c4dfde50fb"
   },
-  "image_edits": "uniform display scaling and identical explicitly marked crops only"
+  "image_edits": "common crops and display scaling; no generative enhancement",
+  "archived_implementation_source": "docs/Thesis/ral/fig/overview.tikz"
 }

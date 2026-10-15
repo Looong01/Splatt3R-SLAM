@@ -1,0 +1,27 @@
+{
+  "status": "layout draft; visible draft banner, explanation strip, and detail labels removed",
+  "region_2_display_order": [
+    {
+      "display_position": "photo",
+      "source_method": "ours",
+      "image": "desk_24_ours.png",
+      "crop": [
+        350,
+        40,
+        160,
+        120
+      ]
+    },
+    {
+      "display_position": "ours",
+      "source_method": "photo",
+      "image": "desk_24_photo.png",
+      "crop": [
+        350,
+        40,
+        160,
+        120
+      ]
+    }
+  ]
+}

@@ -24,7 +24,7 @@ def package():
         "master.tex", "master.pdf", "main.bib", "build.sh",
         "MASTER_SYNC_NOTES.md", "NARRATIVE_AUDIT.md",
         "MATHEMATICAL_CONSISTENCY_AUDIT.md",
-        "SOTA_EVIDENCE_PLAN.md",
+        "SOTA_EVIDENCE_PLAN.md", "FIGURE_REVISION_NOTES.md", "FIGURE_LAYOUT_CHECK.md",
         "ral/overview-standalone.tex")]
     for folder, suffixes in (
         ("chap", {".tex"}), ("tab", {".tex"}),
@@ -36,7 +36,8 @@ def package():
                      and p.name not in PPT_ONLY)
     files.extend(ROOT / "scripts/paper" / name for name in (
         "make_ral_figures.py", "draw_paper_diagrams.py", "build_overview.py",
-        "render_refinement_pair.py", "render_system_stages.py", "draw_revised_figures.py"))
+        "render_refinement_pair.py", "render_system_stages.py", "draw_revised_figures.py",
+        "draw_contribution_overview.py", "select_publication_views.py"))
     files.extend(p for p in (ROOT / "logs/paper_ral_20261007").rglob("*")
                  if p.suffix in {".json", ".png"})
     prefix = "Splatt3R-SLAM-MSc/"

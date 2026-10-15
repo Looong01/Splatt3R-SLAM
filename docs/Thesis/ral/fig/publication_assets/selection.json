@@ -1,0 +1,107 @@
+{
+  "selection_rule": "descending ours absolute PSNR; >=80 frame separation; no baseline-margin ranking",
+  "evaluation_source": "logs/paper_ral_20261007/desk/metrics.json",
+  "display_resolution": [
+    640,
+    480
+  ],
+  "scoring_resolution": [
+    384,
+    512
+  ],
+  "reported_metrics_unchanged": true,
+  "scope": "TUM freiburg1_desk only, 100 common non-keyframes",
+  "scene_delta_psnr": 3.283960849074795,
+  "mean_paired_frame_delta_psnr": 3.5328544656138114,
+  "median_paired_frame_delta_psnr": 3.622303343434849,
+  "selected": [
+    {
+      "row": 5,
+      "frame": 24,
+      "ours_psnr": 17.664494643582266
+    },
+    {
+      "row": 76,
+      "frame": 377,
+      "ours_psnr": 17.446891357428953
+    },
+    {
+      "row": 26,
+      "frame": 120,
+      "ours_psnr": 16.206778087633868
+    },
+    {
+      "row": 98,
+      "frame": 478,
+      "ours_psnr": 16.087850264490736
+    },
+    {
+      "row": 42,
+      "frame": 204,
+      "ours_psnr": 13.935313995443623
+    }
+  ],
+  "artifacts": {
+    "photo": {
+      "ply": {
+        "path": "tmp/Photo-SLAM/results/fr1_desk/4181_shutdown/ply/point_cloud/iteration_4181/point_cloud.ply",
+        "bytes": 8946642,
+        "sha256": "a8f523e438e5e9c22d873e989a6dc78377ae08d48b8f980d91d41102d4dc0da8"
+      },
+      "traj": {
+        "path": "tmp/Photo-SLAM/results/fr1_desk/KeyFrameTrajectory_TUM.txt",
+        "bytes": 9348,
+        "sha256": "256b940f885ff8929bc5b436441305ca3620ff1076e7f0997591ebc09803cbed"
+      }
+    },
+    "mono": {
+      "ply": {
+        "path": "tmp/MonoGS/results/tum_rgbd_dataset_freiburg1_desk/2026-08-17-22-47-19/point_cloud/final/point_cloud.ply",
+        "bytes": 1565707,
+        "sha256": "c584ceb83eeb11e91886c13eb30e9aff7756bfd93611ee2f77296fbff183eefa"
+      },
+      "mono_json": {
+        "path": "tmp/MonoGS/results/tum_rgbd_dataset_freiburg1_desk/2026-08-17-22-47-19/plot/trj_final.json",
+        "bytes": 168299,
+        "sha256": "ace1f66ff1042bb79dd1b4a14e46ee9a718c672a5790f701b0931c73340c9673"
+      }
+    },
+    "ours": {
+      "ply": {
+        "path": "logs/ref_onoff_tum_on/rgbd_dataset_freiburg1_desk_refined.ply",
+        "bytes": 170180377,
+        "sha256": "599f0000a45710bbe3843fbb86b4899e60c34255cac9f9647ccf76f4961896c0"
+      },
+      "traj": {
+        "path": "logs/ref_onoff_tum_on/rgbd_dataset_freiburg1_desk.txt",
+        "bytes": 2094,
+        "sha256": "a8738cd556fb1b05e5dc61e81eb15d3d8c7baf2064d46ed0342c85682e8779f7"
+      }
+    }
+  },
+  "additional_scenes": {
+    "rule": "highest PSNR against saved GT among 12 uniformly sampled candidates per scene; separate recorded family-head runs",
+    "files": [
+      {
+        "source": "logs/paper_real_20261010/fr1_360/cand11_gt.png",
+        "asset": "extra_360_gt.png",
+        "sha256": "d24fc935d3d92bd5846f7876d57e7e4f03dd7c58bc9ab44bdd3b0ad026971ffe"
+      },
+      {
+        "source": "logs/paper_real_20261010/fr1_360/cand11_ours.png",
+        "asset": "extra_360_ours.png",
+        "sha256": "97fe4e7bace08b4fa196e456753427e41c1dc2dbd400edae29ee35c012fdd3f9"
+      },
+      {
+        "source": "logs/paper_real_20261010/table_3/cand6_gt.png",
+        "asset": "extra_table_gt.png",
+        "sha256": "ae15461124ae5d351500ed03c1d02031d06f972843a52cd8dd9c69691f5d6079"
+      },
+      {
+        "source": "logs/paper_real_20261010/table_3/cand6_ours.png",
+        "asset": "extra_table_ours.png",
+        "sha256": "da0670e8734203b28f2631c3065c55feee12aa273121ec9adabaf9c4dfde50fb"
+      }
+    ]
+  }
+}

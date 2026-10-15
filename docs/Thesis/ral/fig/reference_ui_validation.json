@@ -1,0 +1,17 @@
+{
+  "system_overview_ral": {
+    "text_collisions": []
+  },
+  "qualitative_multi": {
+    "text_collisions": []
+  },
+  "crop_attribution": {
+    "verified": 8,
+    "reordered_with_source_labels": 2
+  },
+  "pptx_layout": {
+    "automatic_flags": 9,
+    "status": "heuristic warnings remain for grouped endpoints and polyline bounding boxes",
+    "visual_export_review": "slides 2 and 3 checked; routes, labels and source attribution match"
+  }
+}

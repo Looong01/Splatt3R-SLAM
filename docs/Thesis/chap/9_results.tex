@@ -136,10 +136,12 @@ the higher PSNR on $24$ frames.
   \label{tab:frame-distribution}
 \end{table}
 
-Representative images use the two middle ranks of these paired differences.
-The office0 teaser and TUM qualitative figure therefore show typical
-differences under a reproducible selection rule, rather than the largest
-positive margins.
+The teaser and qualitative figure now use clear views ranked by our
+absolute PSNR, with temporal separation on TUM desk. Selection does not use
+the margin over a competing method. These examples do not represent the
+median of the frame distribution. Across all 100 desk frames, the mean
+paired-frame PSNR gain over Photo-SLAM is $3.53$\,dB; the scene-aggregated
+difference is $3.28$\,dB. Neither is a multi-sequence TUM average.
 
 \section{Rendering: TUM desk and optimisation budget}
 \label{sec:exp:tum}
@@ -156,12 +158,15 @@ comparison covers one TUM sequence.
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{ral/fig/qualitative_multi.pdf}
-  \caption[Real reconstructions across datasets]{Top: TUM desk compared with
-  ground truth, Photo-SLAM, and MonoGS at a common camera. Numbered insets
-  (1: game controllers; 2: keyboard) zoom the same two thin-structure regions
-  across every method. Bottom: further TUM and ETH3D sequences with ground
-  truth above each rendering. Thin structures retain the most blur and
-  geometric distortion.}
+  \caption[Real reconstructions across datasets]{High-fidelity examples
+  selected by our absolute PSNR. Top: TUM desk with shared keyboard and
+  equipment crops for ground truth, Photo-SLAM, MonoGS and ours. The two
+  region-2 crops beneath the Photo-SLAM and Ours columns exchange display
+  positions: the left exchanged crop is ours and the right is Photo-SLAM. Bottom:
+  TUM fr1/360 and ETH3D table with ground truth beside each rendering.
+  Displayed TUM desk images use $640\times480$; the quantitative evaluation
+  remains at $512\times384$. These are selected illustrations, not median
+  performance; blur and geometric errors remain.}
   \label{fig:qualitative}
 \end{figure}
 

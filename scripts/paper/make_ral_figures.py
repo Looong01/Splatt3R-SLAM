@@ -70,16 +70,13 @@ def image(fig, path, rect, crop=None, outline=None, roi=None):
 
 
 def teaser(records):
-    import draw_paper_diagrams as diagrams
-    diagrams.DATA = DATA
-    diagrams.teaser(records).render("teaser")
-    diagrams.write_manifest(records)
+    from draw_revised_figures import teaser_real
+    teaser_real().render('teaser')
 
 
 def method_overview(variant):
-    import draw_paper_diagrams as diagrams
-    diagrams.DATA = DATA
-    diagrams.method(variant).render(f"method_overview_{variant}")
+    from draw_contribution_overview import overview
+    overview(variant).render(f'system_overview_{variant}')
 
 
 def qualitative_replica():
